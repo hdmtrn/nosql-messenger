@@ -1,0 +1,74 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>ws demo</title>
+<style>
+  body { font: 14px/1.5 monospace; max-width: 640px; margin: 24px auto; }
+  #log { border: 1px solid #999; height: 320px; overflow-y: auto; padding: 8px; margin: 12px 0; }
+  #log div { margin-bottom: 4px; }
+  .sys { color: #888; }
+  .me { color: #06c; }
+  input, button { font: inherit; padding: 4px 8px; }
+  #text { width: 420px; }
+</style>
+
+<p>
+  user <input id="user" value="alice" size="8">
+  channel <input id="channel" value="c1" size="6">
+  <button id="connect">connect</button>
+  <span id="status" class="sys">disconnected</span>
+</p>
+
+<div id="log"></div>
+
+<p>
+  <input id="text" placeholder="message" disabled>
+  <button id="send" disabled>send</button>
+</p>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  let ws = null;
+
+  function add(text, cls) {
+    const d = document.createElement('div');
+    d.textContent = text;
+    if (cls) d.className = cls;
+    $('log').append(d);
+    $('log').scrollTop = $('log').scrollHeight;
+  }
+
+  $('connect').onclick = () => {
+    if (ws) { ws.close(); return; }
+
+    const user = encodeURIComponent($('user').value);
+    const channel = encodeURIComponent($('channel').value);
+    ws = new WebSocket(`ws://${location.host}/ws?user=${user}&channel=${channel}`);
+
+    ws.onopen = () => {
+      $('status').textContent = 'connected';
+      $('connect').textContent = 'disconnect';
+      $('text').disabled = $('send').disabled = false;
+      add('— connection opened —', 'sys');
+    };
+
+    ws.onmessage = (e) => {
+      const m = JSON.parse(e.data);
+      const mine = m.from === $('user').value;
+      add(`[${m.at.slice(11, 19)}] ${m.from}: ${m.text}`, mine ? 'me' : null);
+    };
+
+    ws.onclose = () => {
+      $('status').textContent = 'disconnected';
+      $('connect').textContent = 'connect';
+      $('text').disabled = $('send').disabled = true;
+      add('— connection closed —', 'sys');
+      ws = null;
+    };
+  };
+
+  function send() {
+    if (ws && $('text').value) { ws.send($('text').value); $('text').value = ''; }
+  }
+  $('send').onclick = send;
+  $('text').onkeydown = (e) => { if (e.key === 'Enter') send(); };
+</script>
