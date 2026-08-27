@@ -3,7 +3,6 @@ module messenger
 go 1.26.6
 
 require (
-	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/gorilla/websocket v1.5.3
 	go.mongodb.org/mongo-driver/v2 v2.8.0
 	golang.org/x/crypto v0.33.0

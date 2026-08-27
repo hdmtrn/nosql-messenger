@@ -69,8 +69,9 @@
   // авторизованы ли мы — спросить сервер.
   async function checkSession() {
     const r = await fetch('/auth/me');
-    if (r.ok) showChat((await r.json()).username);
-    else showAuth();
+    if (r.ok) { showChat((await r.json()).username); return true; }
+    showAuth();
+    return false;
   }
 
   async function auth(path) {
@@ -81,8 +82,13 @@
     });
     const body = await r.json();
     if (!r.ok) { $('authErr').textContent = body.error; return; }
-    // Токен из body игнорируем: браузер уже получил куку в Set-Cookie.
-    showChat(body.user.username);
+    // Не доверяем телу ответа: проверяем, что кука действительно прижилась
+    // и сессия работает. Иначе при отброшенной куке (например Secure по http)
+    // страница показала бы чат, который молча не работает.
+    if (!await checkSession()) {
+      $('authErr').textContent =
+        'сервер принял вход, но кука не сохранилась — вероятно Secure по http';
+    }
   }
 
   $('login').onclick = () => auth('/auth/login');
@@ -114,6 +120,8 @@
       const mine = m.from === $('who').textContent;
       add(`[${m.at.slice(11, 19)}] ${m.from}: ${m.text}`, mine ? 'me' : null);
     };
+
+    ws.onerror = () => add('— handshake failed (not authenticated?) —', 'err');
 
     ws.onclose = () => {
       $('status').textContent = 'disconnected';

@@ -55,6 +55,7 @@ func run(ctx context.Context) error {
 		IdleTimeout:       60 * time.Second,
 	}
 
+	log.Printf("cookies: Secure=%v (set COOKIE_SECURE=false for plain http)", secureCookies)
 	log.Println("listening on", srv.Addr)
 	return srv.ListenAndServe()
 }
