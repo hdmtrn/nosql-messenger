@@ -7,23 +7,40 @@
   #log div { margin-bottom: 4px; }
   .sys { color: #888; }
   .me { color: #06c; }
+  .err { color: #c00; }
   input, button { font: inherit; padding: 4px 8px; }
   #text { width: 420px; }
+  .hidden { display: none; }
 </style>
 
-<p>
-  user <input id="user" value="alice" size="8">
-  channel <input id="channel" value="c1" size="6">
-  <button id="connect">connect</button>
-  <span id="status" class="sys">disconnected</span>
-</p>
+<div id="auth">
+  <p>
+    user <input id="user" value="alice" size="10">
+    password <input id="pass" type="password" value="correct horse battery" size="20">
+  </p>
+  <p>
+    <button id="login">log in</button>
+    <button id="register">register</button>
+    <span id="authErr" class="err"></span>
+  </p>
+</div>
 
-<div id="log"></div>
+<div id="chat" class="hidden">
+  <p>
+    signed in as <b id="who"></b>
+    <button id="logout">log out</button>
+    channel <input id="channel" value="c1" size="6">
+    <button id="connect">connect</button>
+    <span id="status" class="sys">disconnected</span>
+  </p>
 
-<p>
-  <input id="text" placeholder="message" disabled>
-  <button id="send" disabled>send</button>
-</p>
+  <div id="log"></div>
+
+  <p>
+    <input id="text" placeholder="message" disabled>
+    <button id="send" disabled>send</button>
+  </p>
+</div>
 
 <script>
   const $ = (id) => document.getElementById(id);
@@ -37,12 +54,53 @@
     $('log').scrollTop = $('log').scrollHeight;
   }
 
+  function showChat(username) {
+    $('who').textContent = username;
+    $('auth').classList.add('hidden');
+    $('chat').classList.remove('hidden');
+  }
+
+  function showAuth() {
+    $('auth').classList.remove('hidden');
+    $('chat').classList.add('hidden');
+  }
+
+  // Кука HttpOnly, JavaScript её не видит. Единственный способ узнать,
+  // авторизованы ли мы — спросить сервер.
+  async function checkSession() {
+    const r = await fetch('/auth/me');
+    if (r.ok) showChat((await r.json()).username);
+    else showAuth();
+  }
+
+  async function auth(path) {
+    $('authErr').textContent = '';
+    const r = await fetch(path, {
+      method: 'POST',
+      body: JSON.stringify({ username: $('user').value, password: $('pass').value }),
+    });
+    const body = await r.json();
+    if (!r.ok) { $('authErr').textContent = body.error; return; }
+    // Токен из body игнорируем: браузер уже получил куку в Set-Cookie.
+    showChat(body.user.username);
+  }
+
+  $('login').onclick = () => auth('/auth/login');
+  $('register').onclick = () => auth('/auth/register');
+
+  $('logout').onclick = async () => {
+    if (ws) ws.close();
+    await fetch('/auth/logout', { method: 'POST' });
+    $('log').innerHTML = '';
+    showAuth();
+  };
+
   $('connect').onclick = () => {
     if (ws) { ws.close(); return; }
 
-    const user = encodeURIComponent($('user').value);
     const channel = encodeURIComponent($('channel').value);
-    ws = new WebSocket(`ws://${location.host}/ws?user=${user}&channel=${channel}`);
+    // Ни ника, ни токена в URL: куку браузер приложит к рукопожатию сам.
+    ws = new WebSocket(`ws://${location.host}/ws?channel=${channel}`);
 
     ws.onopen = () => {
       $('status').textContent = 'connected';
@@ -53,7 +111,7 @@
 
     ws.onmessage = (e) => {
       const m = JSON.parse(e.data);
-      const mine = m.from === $('user').value;
+      const mine = m.from === $('who').textContent;
       add(`[${m.at.slice(11, 19)}] ${m.from}: ${m.text}`, mine ? 'me' : null);
     };
 
@@ -71,4 +129,6 @@
   }
   $('send').onclick = send;
   $('text').onkeydown = (e) => { if (e.key === 'Enter') send(); };
+
+  checkSession();
 </script>

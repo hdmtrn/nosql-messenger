@@ -26,12 +26,17 @@ type outMsg struct {
 	At   string `json:"at"`
 }
 
-func handleWS(hub *Hub) http.HandlerFunc {
+func handleWS(hub *Hub, sessions *sessionStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID := r.URL.Query().Get("user")
 		chID := r.URL.Query().Get("channel")
-		if userID == "" || chID == "" {
-			http.Error(w, "user and channel parameters are required", http.StatusBadRequest)
+		if chID == "" {
+			http.Error(w, "channel parameter is required", http.StatusBadRequest)
+			return
+		}
+
+		sess, err := sessions.ByToken(r.Context(), tokenFromRequest(r))
+		if err != nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 
@@ -40,17 +45,18 @@ func handleWS(hub *Hub) http.HandlerFunc {
 			return
 		}
 
-		c := &Subscriber{userID: userID, send: make(chan []byte, sendBuffer)}
+		userID := sess.UserID.Hex()
+		c := &Subscriber{userID: userID, username: sess.Username, send: make(chan []byte, sendBuffer)}
 
 		n := hub.register(chID, c)
-		log.Printf("+ %s joined %s (subscribers: %d)", userID, chID, n)
+		log.Printf("+ %s joined %s (subscribers: %d)", sess.Username, chID, n)
 
 		go c.writePump(conn)
 
 		c.readPump(conn, hub, chID)
 
 		n = hub.unregister(chID, c)
-		log.Printf("- %s left %s (subscribers: %d)", userID, chID, n)
+		log.Printf("- %s left %s (subscribers: %d)", sess.Username, chID, n)
 	}
 }
 
@@ -71,7 +77,7 @@ func (c *Subscriber) readPump(conn *websocket.Conn, hub *Hub, chID string) {
 		}
 
 		out, err := json.Marshal(outMsg{
-			From: c.userID,
+			From: c.username,
 			Text: string(data),
 			At:   time.Now().Format(time.RFC3339),
 		})

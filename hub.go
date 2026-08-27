@@ -3,7 +3,8 @@ package main
 import "sync"
 
 type Subscriber struct {
-	userID string
+	userID   string
+	username string
 
 	send chan []byte
 }

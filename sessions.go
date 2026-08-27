@@ -17,6 +17,8 @@ import (
 const (
 	sessionLength = 30 * 24 * time.Hour
 	tokenBytes    = 32
+	cacheTTL      = 10 * time.Minute
+	sweepInterval = time.Minute
 )
 
 var touchThreshold = max(min(sessionLength/100, 24*time.Hour), 5*time.Minute)
@@ -37,18 +39,22 @@ func (s Session) expired() bool { return time.Now().After(s.ExpiresAt) }
 
 var errSessionNotFound = errors.New("session not found or expired")
 
+type cachedSession struct {
+	sess     Session
+	cachedAt time.Time
+}
+
 type sessionStore struct {
 	col *mongo.Collection
 
-	mu sync.RWMutex
-
-	cache map[string]Session
+	mu    sync.RWMutex
+	cache map[string]cachedSession
 }
 
 func newSessionStore(db *mongo.Database) *sessionStore {
 	return &sessionStore{
 		col:   db.Collection("sessions"),
-		cache: make(map[string]Session),
+		cache: make(map[string]cachedSession),
 	}
 }
 
@@ -75,6 +81,18 @@ func newToken() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
+func (s *sessionStore) put(sess Session) {
+	s.mu.Lock()
+	s.cache[sess.Token] = cachedSession{sess: sess, cachedAt: time.Now()}
+	s.mu.Unlock()
+}
+
+func (s *sessionStore) evict(token string) {
+	s.mu.Lock()
+	delete(s.cache, token)
+	s.mu.Unlock()
+}
+
 func (s *sessionStore) Create(ctx context.Context, u *User, userAgent string) (Session, error) {
 	token, err := newToken()
 	if err != nil {
@@ -99,27 +117,29 @@ func (s *sessionStore) Create(ctx context.Context, u *User, userAgent string) (S
 		sess.ID = oid
 	}
 
-	s.mu.Lock()
-	s.cache[token] = sess
-	s.mu.Unlock()
+	s.put(sess)
 	return sess, nil
 }
 
 func (s *sessionStore) ByToken(ctx context.Context, token string) (Session, error) {
+	if token == "" {
+		return Session{}, errSessionNotFound
+	}
+
 	s.mu.RLock()
-	sess, hit := s.cache[token]
+	entry, hit := s.cache[token]
 	s.mu.RUnlock()
 
-	if !hit {
+	sess := entry.sess
+	if !hit || time.Since(entry.cachedAt) >= cacheTTL {
 		if err := s.col.FindOne(ctx, bson.M{"token": token}).Decode(&sess); err != nil {
 			if errors.Is(err, mongo.ErrNoDocuments) {
+				s.evict(token)
 				return Session{}, errSessionNotFound
 			}
 			return Session{}, fmt.Errorf("looking up session: %w", err)
 		}
-		s.mu.Lock()
-		s.cache[token] = sess
-		s.mu.Unlock()
+		s.put(sess)
 	}
 
 	if sess.expired() {
@@ -150,17 +170,37 @@ func (s *sessionStore) touch(ctx context.Context, sess Session) {
 		return
 	}
 
-	s.mu.Lock()
-	s.cache[sess.Token] = sess
-	s.mu.Unlock()
+	s.put(sess)
 }
 
 func (s *sessionStore) Delete(ctx context.Context, token string) error {
 	_, err := s.col.DeleteOne(ctx, bson.M{"token": token})
-
-	s.mu.Lock()
-	delete(s.cache, token)
-	s.mu.Unlock()
-
+	s.evict(token)
 	return err
+}
+
+func (s *sessionStore) sweepCache(ctx context.Context) {
+	ticker := time.NewTicker(sweepInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.mu.Lock()
+			for token, entry := range s.cache {
+				if time.Since(entry.cachedAt) >= cacheTTL {
+					delete(s.cache, token)
+				}
+			}
+			s.mu.Unlock()
+		}
+	}
+}
+
+func (s *sessionStore) cacheSize() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.cache)
 }

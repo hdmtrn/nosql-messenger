@@ -5,6 +5,8 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 	"unicode/utf8"
 )
@@ -17,7 +19,45 @@ const (
 
 	hashConcurrency = 6
 	hashWaitTimeout = 2 * time.Second
+
+	sessionCookie = "session"
 )
+
+var secureCookies = os.Getenv("COOKIE_SECURE") != "false"
+
+func tokenFromRequest(r *http.Request) string {
+	if h := r.Header.Get("Authorization"); len(h) > 7 && strings.EqualFold(h[:7], "Bearer ") {
+		return h[7:]
+	}
+	if c, err := r.Cookie(sessionCookie); err == nil {
+		return c.Value
+	}
+	return ""
+}
+
+func setSessionCookie(w http.ResponseWriter, token string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookie,
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   secureCookies,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(sessionLength.Seconds()),
+	})
+}
+
+func clearSessionCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookie,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   secureCookies,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
+	})
+}
 
 type auth struct {
 	users    *userStore
@@ -182,6 +222,8 @@ func (a *auth) respondWithToken(w http.ResponseWriter, r *http.Request, code int
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	setSessionCookie(w, sess.Token)
+
 	var resp authResponse
 	resp.Token = sess.Token
 	resp.User.ID = u.ID.Hex()
@@ -199,4 +241,31 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 func writeError(w http.ResponseWriter, code int, msg string) {
 	writeJSON(w, code, map[string]string{"error": msg})
+}
+
+func (a *auth) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if token := tokenFromRequest(r); token != "" {
+		if err := a.sessions.Delete(r.Context(), token); err != nil {
+			log.Printf("deleting session: %v", err)
+		}
+	}
+	clearSessionCookie(w)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+type meResponse struct {
+	ID       string `json:"id"`
+	Username string `json:"username"`
+}
+
+func (a *auth) handleMe(w http.ResponseWriter, r *http.Request) {
+	sess, err := a.sessions.ByToken(r.Context(), tokenFromRequest(r))
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "not authenticated")
+		return
+	}
+	writeJSON(w, http.StatusOK, meResponse{
+		ID:       sess.UserID.Hex(),
+		Username: sess.Username,
+	})
 }
