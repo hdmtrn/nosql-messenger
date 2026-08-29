@@ -45,6 +45,11 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("creating channels indexes: %w", err)
 	}
 
+	messages := newMessageStore(db)
+	if err := messages.ensureIndexes(ctx); err != nil {
+		return fmt.Errorf("creating messages indexes: %w", err)
+	}
+
 	authSvc, err := newAuth(users, sessions)
 	if err != nil {
 		return fmt.Errorf("initializing auth: %w", err)
