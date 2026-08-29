@@ -40,6 +40,11 @@ func run(ctx context.Context) error {
 	}
 	go sessions.sweepCache(ctx)
 
+	channels := newChannelStore(db)
+	if err := channels.ensureIndexes(ctx); err != nil {
+		return fmt.Errorf("creating channels indexes: %w", err)
+	}
+
 	authSvc, err := newAuth(users, sessions)
 	if err != nil {
 		return fmt.Errorf("initializing auth: %w", err)
@@ -69,5 +74,5 @@ func routes(mongoClient *mongo.Client, hub *Hub, a *auth, sessions *sessionStore
 	mux.HandleFunc("GET /auth/me", a.handleMe)
 	mux.HandleFunc("GET /ws", handleWS(hub, sessions))
 	mux.Handle("GET /", http.FileServer(http.Dir("static")))
-	return mux
+	return withLogging(mux)
 }
