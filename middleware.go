@@ -25,7 +25,7 @@ func requireAuth(sessions *sessionStore, next authedHandler) http.HandlerFunc {
 func withLogging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		rec := newResponseRecorder(w)
 
 		next.ServeHTTP(rec, r)
 
@@ -40,23 +40,39 @@ func withLogging(next http.Handler) http.Handler {
 	})
 }
 
-type statusRecorder struct {
+type responseRecorder struct {
 	http.ResponseWriter
-	status int
+	status   int
+	hijacker http.Hijacker
+	flusher  http.Flusher
 }
 
-func (r *statusRecorder) WriteHeader(code int) {
+func newResponseRecorder(w http.ResponseWriter) *responseRecorder {
+	hijacker, _ := w.(http.Hijacker)
+	flusher, _ := w.(http.Flusher)
+	return &responseRecorder{
+		ResponseWriter: w,
+		status:         http.StatusOK,
+		hijacker:       hijacker,
+		flusher:        flusher,
+	}
+}
+
+func (r *responseRecorder) WriteHeader(code int) {
 	r.status = code
 	r.ResponseWriter.WriteHeader(code)
 }
 
-func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
-
-func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	h, ok := r.ResponseWriter.(http.Hijacker)
-	if !ok {
-		return nil, nil, errors.New("underlying ResponseWriter is not a http.Hijacker")
+func (r *responseRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if r.hijacker == nil {
+		return nil, nil, errors.New("wrapped ResponseWriter does not support Hijack")
 	}
 	r.status = http.StatusSwitchingProtocols
-	return h.Hijack()
+	return r.hijacker.Hijack()
+}
+
+func (r *responseRecorder) Flush() {
+	if r.flusher != nil {
+		r.flusher.Flush()
+	}
 }

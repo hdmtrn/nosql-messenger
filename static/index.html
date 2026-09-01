@@ -65,8 +65,6 @@
     $('chat').classList.add('hidden');
   }
 
-  // Кука HttpOnly, JavaScript её не видит. Единственный способ узнать,
-  // авторизованы ли мы — спросить сервер.
   async function checkSession() {
     const r = await fetch('/auth/me');
     if (r.ok) { showChat((await r.json()).username); return true; }
@@ -82,12 +80,9 @@
     });
     const body = await r.json();
     if (!r.ok) { $('authErr').textContent = body.error; return; }
-    // Не доверяем телу ответа: проверяем, что кука действительно прижилась
-    // и сессия работает. Иначе при отброшенной куке (например Secure по http)
-    // страница показала бы чат, который молча не работает.
     if (!await checkSession()) {
       $('authErr').textContent =
-        'сервер принял вход, но кука не сохранилась — вероятно Secure по http';
+        'server accepted the login but the cookie was not stored (Secure over plain http?)';
     }
   }
 
@@ -105,7 +100,6 @@
     if (ws) { ws.close(); return; }
 
     const channel = encodeURIComponent($('channel').value);
-    // Ни ника, ни токена в URL: куку браузер приложит к рукопожатию сам.
     ws = new WebSocket(`ws://${location.host}/ws?channel=${channel}`);
 
     ws.onopen = () => {

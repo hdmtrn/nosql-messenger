@@ -198,9 +198,3 @@ func (s *sessionStore) sweepCache(ctx context.Context) {
 		}
 	}
 }
-
-func (s *sessionStore) cacheSize() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return len(s.cache)
-}
