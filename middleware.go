@@ -11,9 +11,9 @@ import (
 
 type authedHandler func(w http.ResponseWriter, r *http.Request, sess Session)
 
-func requireAuth(sessions *sessionStore, next authedHandler) http.HandlerFunc {
+func (s *server) requireAuth(next authedHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		sess, err := sessions.ByToken(r.Context(), tokenFromRequest(r))
+		sess, err := s.sessions.ByToken(r.Context(), tokenFromRequest(r))
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, "not authenticated")
 			return

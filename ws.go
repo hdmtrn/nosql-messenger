@@ -26,38 +26,36 @@ type outMsg struct {
 	At   string `json:"at"`
 }
 
-func handleWS(hub *Hub, sessions *sessionStore) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		chID := r.URL.Query().Get("channel")
-		if chID == "" {
-			http.Error(w, "channel parameter is required", http.StatusBadRequest)
-			return
-		}
-
-		sess, err := sessions.ByToken(r.Context(), tokenFromRequest(r))
-		if err != nil {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			return
-		}
-
-		userID := sess.UserID.Hex()
-		c := &Subscriber{userID: userID, username: sess.Username, send: make(chan []byte, sendBuffer)}
-
-		n := hub.register(chID, c)
-		log.Printf("+ %s joined %s (subscribers: %d)", sess.Username, chID, n)
-
-		go c.writePump(conn)
-
-		c.readPump(conn, hub, chID)
-
-		n = hub.unregister(chID, c)
-		log.Printf("- %s left %s (subscribers: %d)", sess.Username, chID, n)
+func (s *server) handleWS(w http.ResponseWriter, r *http.Request) {
+	chID := r.URL.Query().Get("channel")
+	if chID == "" {
+		http.Error(w, "channel parameter is required", http.StatusBadRequest)
+		return
 	}
+
+	sess, err := s.sessions.ByToken(r.Context(), tokenFromRequest(r))
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+
+	userID := sess.UserID.Hex()
+	c := &Subscriber{userID: userID, username: sess.Username, send: make(chan []byte, sendBuffer)}
+
+	n := s.hub.register(chID, c)
+	log.Printf("+ %s joined %s (subscribers: %d)", sess.Username, chID, n)
+
+	go c.writePump(conn)
+
+	c.readPump(conn, s.hub, chID)
+
+	n = s.hub.unregister(chID, c)
+	log.Printf("- %s left %s (subscribers: %d)", sess.Username, chID, n)
 }
 
 func (c *Subscriber) readPump(conn *websocket.Conn, hub *Hub, chID string) {
