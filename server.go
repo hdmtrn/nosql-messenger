@@ -25,7 +25,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /auth/logout", s.auth.handleLogout)
 	mux.HandleFunc("GET /auth/me", s.auth.handleMe)
 
-	mux.HandleFunc("GET /ws", s.handleWS)
+	mux.HandleFunc("GET /ws", s.requireAuth(s.handleWS))
 
 	mux.Handle("GET /", http.FileServer(http.Dir("static")))
 
