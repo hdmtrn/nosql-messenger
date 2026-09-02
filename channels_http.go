@@ -6,8 +6,6 @@ import (
 	"log"
 	"net/http"
 	"unicode/utf8"
-
-	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
 type createChannelRequest struct {
@@ -54,20 +52,35 @@ func (s *server) handleListChannels(w http.ResponseWriter, r *http.Request, sess
 	writeJSON(w, http.StatusOK, channels)
 }
 
+type joinChannelRequest struct {
+	Code string `json:"code"`
+}
+
 func (s *server) handleJoinChannel(w http.ResponseWriter, r *http.Request, sess Session) {
-	id, err := bson.ObjectIDFromHex(r.PathValue("id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "malformed channel id")
+	var req joinChannelRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "malformed JSON")
 		return
 	}
 
-	switch err := s.channels.AddMember(r.Context(), id, sess); {
+	ch, err := s.channels.ByInviteCode(r.Context(), req.Code)
+	if errors.Is(err, errChannelNotFound) {
+		writeError(w, http.StatusNotFound, "invite code not found")
+		return
+	}
+	if err != nil {
+		log.Printf("looking up invite code: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	switch err := s.channels.AddMember(r.Context(), ch.ID, sess); {
 	case err == nil:
 	case errors.Is(err, errAlreadyMember):
 		writeError(w, http.StatusConflict, "already a member of this channel")
 		return
 	case errors.Is(err, errChannelNotFound):
-		writeError(w, http.StatusNotFound, "channel not found")
+		writeError(w, http.StatusNotFound, "invite code not found")
 		return
 	default:
 		log.Printf("joining channel: %v", err)
@@ -75,6 +88,6 @@ func (s *server) handleJoinChannel(w http.ResponseWriter, r *http.Request, sess 
 		return
 	}
 
-	s.hub.Subscribe(sess.UserID.Hex(), id.Hex())
-	writeJSON(w, http.StatusOK, map[string]string{"status": "joined"})
+	s.hub.Subscribe(sess.UserID.Hex(), ch.ID.Hex())
+	writeJSON(w, http.StatusOK, map[string]string{"status": "joined", "channel_id": ch.ID.Hex()})
 }

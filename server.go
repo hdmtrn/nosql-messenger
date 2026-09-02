@@ -27,7 +27,7 @@ func (s *server) routes() http.Handler {
 
 	mux.HandleFunc("POST /channels", s.requireAuth(s.handleCreateChannel))
 	mux.HandleFunc("GET /channels", s.requireAuth(s.handleListChannels))
-	mux.HandleFunc("POST /channels/{id}/join", s.requireAuth(s.handleJoinChannel))
+	mux.HandleFunc("POST /channels/join", s.requireAuth(s.handleJoinChannel))
 
 	mux.HandleFunc("GET /ws", s.requireAuth(s.handleWS))
 

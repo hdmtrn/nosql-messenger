@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"time"
@@ -32,6 +33,8 @@ type Channel struct {
 	CreatedBy bson.ObjectID   `bson:"created_by"    json:"created_by"`
 	CreatedAt time.Time       `bson:"created_at"    json:"created_at"`
 	Members   []ChannelMember `bson:"members"       json:"members,omitempty"`
+
+	InviteCode string `bson:"invite_code,omitempty" json:"invite_code,omitempty"`
 }
 
 var (
@@ -49,8 +52,14 @@ func newChannelStore(db *mongo.Database) *channelStore {
 }
 
 func (s *channelStore) ensureIndexes(ctx context.Context) error {
-	_, err := s.col.Indexes().CreateOne(ctx, mongo.IndexModel{
-		Keys: bson.D{{Key: "members.user_id", Value: 1}},
+	_, err := s.col.Indexes().CreateMany(ctx, []mongo.IndexModel{
+		{
+			Keys: bson.D{{Key: "members.user_id", Value: 1}},
+		},
+		{
+			Keys:    bson.D{{Key: "invite_code", Value: 1}},
+			Options: options.Index().SetUnique(true).SetSparse(true),
+		},
 	})
 	return err
 }
@@ -58,9 +67,10 @@ func (s *channelStore) ensureIndexes(ctx context.Context) error {
 func (s *channelStore) Create(ctx context.Context, name string, creator Session) (Channel, error) {
 	now := time.Now()
 	ch := Channel{
-		Name:      name,
-		CreatedBy: creator.UserID,
-		CreatedAt: now,
+		Name:       name,
+		CreatedBy:  creator.UserID,
+		CreatedAt:  now,
+		InviteCode: rand.Text(),
 		Members: []ChannelMember{{
 			UserID:   creator.UserID,
 			Username: creator.Username,
@@ -146,6 +156,21 @@ func (s *channelStore) AddMember(ctx context.Context, channelID bson.ObjectID, u
 		return errChannelNotFound
 	}
 	return nil
+}
+
+func (s *channelStore) ByInviteCode(ctx context.Context, code string) (Channel, error) {
+	var ch Channel
+	err := s.col.FindOne(ctx,
+		bson.M{"invite_code": code},
+		options.FindOne().SetProjection(bson.M{"_id": 1}),
+	).Decode(&ch)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return Channel{}, errChannelNotFound
+	}
+	if err != nil {
+		return Channel{}, fmt.Errorf("looking up invite code: %w", err)
+	}
+	return ch, nil
 }
 
 func (s *channelStore) exists(ctx context.Context, id bson.ObjectID) (bool, error) {
