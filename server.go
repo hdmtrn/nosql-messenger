@@ -25,6 +25,10 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /auth/logout", s.auth.handleLogout)
 	mux.HandleFunc("GET /auth/me", s.auth.handleMe)
 
+	mux.HandleFunc("POST /channels", s.requireAuth(s.handleCreateChannel))
+	mux.HandleFunc("GET /channels", s.requireAuth(s.handleListChannels))
+	mux.HandleFunc("POST /channels/{id}/join", s.requireAuth(s.handleJoinChannel))
+
 	mux.HandleFunc("GET /ws", s.requireAuth(s.handleWS))
 
 	mux.Handle("GET /", http.FileServer(http.Dir("static")))
