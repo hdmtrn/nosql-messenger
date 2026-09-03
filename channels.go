@@ -18,6 +18,9 @@ const (
 
 	channelNameMinLen = 1
 	channelNameMaxLen = 64
+
+	channelsPageSize = 100
+	channelsMaxLimit = 200
 )
 
 type ChannelMember struct {
@@ -54,7 +57,7 @@ func newChannelStore(db *mongo.Database) *channelStore {
 func (s *channelStore) ensureIndexes(ctx context.Context) error {
 	_, err := s.col.Indexes().CreateMany(ctx, []mongo.IndexModel{
 		{
-			Keys: bson.D{{Key: "members.user_id", Value: 1}},
+			Keys: bson.D{{Key: "members.user_id", Value: 1}, {Key: "_id", Value: 1}},
 		},
 		{
 			Keys:    bson.D{{Key: "invite_code", Value: 1}},
@@ -101,12 +104,24 @@ func (s *channelStore) ByID(ctx context.Context, id bson.ObjectID) (Channel, err
 	return ch, nil
 }
 
-func (s *channelStore) ForUser(ctx context.Context, userID bson.ObjectID) ([]Channel, error) {
-	cur, err := s.col.Find(ctx,
-		bson.M{"members.user_id": userID},
+func (s *channelStore) ForUser(ctx context.Context, userID bson.ObjectID, after bson.ObjectID, limit int) ([]Channel, error) {
+	if limit <= 0 {
+		limit = channelsPageSize
+	}
+	if limit > channelsMaxLimit {
+		limit = channelsMaxLimit
+	}
+
+	filter := bson.M{"members.user_id": userID}
+	if !after.IsZero() {
+		filter["_id"] = bson.M{"$gt": after}
+	}
+
+	cur, err := s.col.Find(ctx, filter,
 		options.Find().
 			SetProjection(bson.M{"members": 0}).
-			SetSort(bson.D{{Key: "created_at", Value: 1}}),
+			SetSort(bson.D{{Key: "_id", Value: 1}}).
+			SetLimit(int64(limit)),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("listing channels: %w", err)

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
 const (
@@ -21,7 +22,7 @@ var upgrader = websocket.Upgrader{
 }
 
 func (s *server) handleWS(w http.ResponseWriter, r *http.Request, sess Session) {
-	chans, err := s.channels.ForUser(r.Context(), sess.UserID)
+	chans, err := s.channels.ForUser(r.Context(), sess.UserID, bson.ObjectID{}, channelsMaxLimit)
 	if err != nil {
 		log.Printf("listing channels for websocket: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

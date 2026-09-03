@@ -5,7 +5,10 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strconv"
 	"unicode/utf8"
+
+	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
 type createChannelRequest struct {
@@ -43,7 +46,29 @@ func (s *server) handleCreateChannel(w http.ResponseWriter, r *http.Request, ses
 }
 
 func (s *server) handleListChannels(w http.ResponseWriter, r *http.Request, sess Session) {
-	channels, err := s.channels.ForUser(r.Context(), sess.UserID)
+	q := r.URL.Query()
+
+	var after bson.ObjectID
+	if raw := q.Get("after"); raw != "" {
+		id, err := bson.ObjectIDFromHex(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "malformed after cursor")
+			return
+		}
+		after = id
+	}
+
+	limit := 0
+	if raw := q.Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n <= 0 {
+			writeError(w, http.StatusBadRequest, "limit must be a positive integer")
+			return
+		}
+		limit = n
+	}
+
+	channels, err := s.channels.ForUser(r.Context(), sess.UserID, after, limit)
 	if err != nil {
 		log.Printf("listing channels: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
