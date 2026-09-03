@@ -31,7 +31,10 @@ type Message struct {
 	ClientMsgID string        `bson:"client_msg_id,omitempty" json:"client_msg_id,omitempty"`
 }
 
-var errDuplicateMessage = errors.New("message with this client_msg_id already exists")
+var (
+	errDuplicateMessage = errors.New("message with this client_msg_id already exists")
+	errMessageNotFound  = errors.New("message not found")
+)
 
 type messageStore struct {
 	col *mongo.Collection
@@ -75,6 +78,18 @@ func (s *messageStore) Insert(ctx context.Context, channelID bson.ObjectID, auth
 	}
 	if oid, ok := res.InsertedID.(bson.ObjectID); ok {
 		msg.ID = oid
+	}
+	return msg, nil
+}
+
+func (s *messageStore) ByClientMsgID(ctx context.Context, clientMsgID string) (Message, error) {
+	var msg Message
+	err := s.col.FindOne(ctx, bson.M{"client_msg_id": clientMsgID}).Decode(&msg)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return Message{}, errMessageNotFound
+	}
+	if err != nil {
+		return Message{}, fmt.Errorf("looking up message by client id: %w", err)
 	}
 	return msg, nil
 }
