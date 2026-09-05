@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { api } from './api'
 import SignIn from './views/SignIn.vue'
 import Messenger from './views/Messenger.vue'
@@ -7,13 +7,29 @@ import Messenger from './views/Messenger.vue'
 const me = ref(null)
 const ready = ref(false)
 
+async function refreshSession() {
+  const who = await api.me().catch(() => null)
+  if (who && me.value && who.id === me.value.id) return
+  me.value = who
+}
+
+// The session lives in a cookie, which belongs to the browser profile rather than
+// to this window: signing in elsewhere replaces it under us. Re-check on focus so
+// the header never claims an identity the server no longer agrees with.
+function onFocus() {
+  if (document.visibilityState === 'visible') refreshSession()
+}
+
 onMounted(async () => {
-  try {
-    me.value = await api.me()
-  } catch {
-    me.value = null
-  }
+  await refreshSession()
   ready.value = true
+  window.addEventListener('focus', onFocus)
+  document.addEventListener('visibilitychange', onFocus)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('focus', onFocus)
+  document.removeEventListener('visibilitychange', onFocus)
 })
 
 async function signOut() {
@@ -25,5 +41,5 @@ async function signOut() {
 <template>
   <div v-if="!ready" />
   <SignIn v-else-if="!me" @signed-in="me = $event" />
-  <Messenger v-else :me="me" @log-out="signOut" />
+  <Messenger v-else :key="me.id" :me="me" @log-out="signOut" />
 </template>
