@@ -236,8 +236,7 @@ watch(activeId, () => (copied.value = false))
             @copy="copyCode"
           />
 
-          <div ref="feed" style="flex:1;overflow-y:auto;padding:22px 28px;display:flex;
-                                 flex-direction:column;gap:18px" @scroll="onScroll">
+          <div ref="feed" class="feed" @scroll="onScroll">
             <p v-if="!messages.length" class="sg-mono"
                style="margin:auto;color:var(--text-muted)">No messages yet</p>
 
@@ -256,6 +255,7 @@ watch(activeId, () => (copied.value = false))
 
           <MessageComposer :placeholder="`Message #${active.name}…`" @send="send" />
         </template>
+
 
         <p v-else class="sg-mono" style="margin:auto;color:var(--text-muted)">
           Create a channel or join one by code
@@ -280,3 +280,16 @@ watch(activeId, () => (copied.value = false))
     </SgDialog>
   </div>
 </template>
+
+<style scoped>
+.feed {
+  flex: 1;
+  overflow-y: auto;
+  padding: 22px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+/* short conversations hug the bottom; long ones still scroll from the top */
+.feed > :first-child { margin-top: auto; }
+</style>
