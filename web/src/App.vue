@@ -25,5 +25,5 @@ async function signOut() {
 <template>
   <div v-if="!ready" />
   <SignIn v-else-if="!me" @signed-in="me = $event" />
-  <Messenger v-else @log-out="signOut" />
+  <Messenger v-else :me="me" @log-out="signOut" />
 </template>

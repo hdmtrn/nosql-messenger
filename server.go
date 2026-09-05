@@ -6,6 +6,8 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
+const webRoot = "web/dist"
+
 type server struct {
 	mongo    *mongo.Client
 	hub      *Hub
@@ -34,7 +36,7 @@ func (s *server) routes() http.Handler {
 
 	mux.HandleFunc("GET /ws", s.requireAuth(s.handleWS))
 
-	mux.Handle("GET /", http.FileServer(http.Dir("static")))
+	mux.Handle("GET /", http.FileServer(http.Dir(webRoot)))
 
 	return withLogging(mux)
 }

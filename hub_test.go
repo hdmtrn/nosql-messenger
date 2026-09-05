@@ -34,21 +34,27 @@ func TestDropRemovesFromAllChannelsOnce(t *testing.T) {
 	h.Disconnect(c)
 }
 
-func TestReconnectEvictsPreviousConnection(t *testing.T) {
+func TestSecondConnectionOfSameUserAlsoReceives(t *testing.T) {
 	h := NewHub()
-	old := newSubscriber("u1")
-	h.Connect(old, []string{"a"})
+	first := newSubscriber("u1")
+	h.Connect(first, []string{"a"})
 
-	fresh := newSubscriber("u1")
-	h.Connect(fresh, []string{"a"})
-
-	if _, open := <-old.send; open {
-		t.Errorf("previous connection was not closed")
-	}
+	second := newSubscriber("u1")
+	h.Connect(second, []string{"a"})
 
 	h.Publish("a", []byte("hello"))
-	if len(fresh.send) != 1 {
-		t.Errorf("new connection did not receive: %d", len(fresh.send))
+
+	if len(first.send) != 1 {
+		t.Errorf("first connection did not receive: %d", len(first.send))
+	}
+	if len(second.send) != 1 {
+		t.Errorf("second connection did not receive: %d", len(second.send))
+	}
+
+	h.Disconnect(first)
+	h.Publish("a", []byte("again"))
+	if len(second.send) != 2 {
+		t.Errorf("surviving connection stopped receiving: %d", len(second.send))
 	}
 }
 
