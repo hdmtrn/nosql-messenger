@@ -2,8 +2,8 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api } from '../api'
 import { createSocket } from '../socket'
-import TopBar from '../components/TopBar.vue'
 import ChannelRow from '../components/ChannelRow.vue'
+import SgAvatar from '../components/SgAvatar.vue'
 import PaneHeader from '../components/PaneHeader.vue'
 import MessageBubble from '../components/MessageBubble.vue'
 import MessageComposer from '../components/MessageComposer.vue'
@@ -198,13 +198,10 @@ watch(activeId, () => (copied.value = false))
 
 <template>
   <div style="height:100vh;display:flex;flex-direction:column;background:var(--paper);
-              padding:0 16px 16px;box-sizing:border-box">
-    <TopBar product="Messenger" :user="me.username" :initials="initials(me.username)"
-            @log-out="$emit('log-out')" />
-
+              padding:16px;box-sizing:border-box">
     <div style="flex:1;min-height:0;display:flex;gap:16px">
       <nav style="flex:0 0 286px;background:var(--surface-accent);border-radius:var(--radius-panel);
-                  padding:20px 16px;display:flex;flex-direction:column;gap:2px;overflow-y:auto">
+                  padding:20px 16px;display:flex;flex-direction:column">
         <span class="sg-mono" style="color:var(--text-on-blue-muted);padding:0 14px 12px">
           Channels · {{ connection }}
         </span>
@@ -213,17 +210,25 @@ watch(activeId, () => (copied.value = false))
           <SgButton variant="outline" size="sm" on-blue @click="dialog = 'join'">Join by code</SgButton>
         </div>
 
-        <ChannelRow
-          v-for="c in channels"
-          :key="c.id"
-          :name="c.name"
-          :active="c.id === activeId"
-          :unread="unread[c.id] || 0"
-          @click="selectChannel(c.id)"
-        />
+        <div style="flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:2px">
+          <ChannelRow
+            v-for="c in channels"
+            :key="c.id"
+            :name="c.name"
+            :active="c.id === activeId"
+            :unread="unread[c.id] || 0"
+            @click="selectChannel(c.id)"
+          />
+          <p v-if="!channels.length" class="sg-mono"
+             style="color:var(--text-on-blue-muted);padding:8px 14px">No channels yet</p>
+        </div>
 
-        <p v-if="!channels.length" class="sg-mono"
-           style="color:var(--text-on-blue-muted);padding:8px 14px">No channels yet</p>
+        <div style="display:flex;align-items:center;gap:12px;padding:16px 6px 0">
+          <SgAvatar :initials="initials(me.username)" :size="32" tone="onBlue" />
+          <span style="flex:1;min-width:0;font:600 13px/1.2 var(--font-ui);color:#fff;
+                       overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ me.username }}</span>
+          <SgButton variant="outline" size="sm" on-blue @click="$emit('log-out')">Log out</SgButton>
+        </div>
       </nav>
 
       <section style="flex:1;min-width:0;background:var(--surface-panel);
