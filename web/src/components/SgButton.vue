@@ -23,6 +23,7 @@ const variants = computed(() => ({
   },
   ghost: { background: 'transparent', color: props.onBlue ? '#fff' : 'var(--text-primary)' },
   danger: { background: 'var(--status-error)', color: '#fff' },
+  mutedText: { background: 'transparent', color: 'var(--text-muted)', padding: 0, height: 'auto' },
 }))
 
 const style = computed(() => {
