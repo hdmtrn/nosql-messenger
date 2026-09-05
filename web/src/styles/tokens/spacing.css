@@ -1,0 +1,19 @@
+:root{
+  /* 4px grid */
+  --grid:4px;
+  --space-1:4px;
+  --space-2:8px;
+  --space-3:16px;
+  --space-4:24px;
+  --space-5:32px;
+
+  /* semantic rhythm: dense inside a block, generous between blocks */
+  --gap-inline:8px;
+  --gap-stack:16px;
+  --gap-block:24px;
+  --gap-section:32px;
+
+  --pad-control:8px 16px;
+  --pad-panel:24px;
+  --pad-row:8px 16px;
+}

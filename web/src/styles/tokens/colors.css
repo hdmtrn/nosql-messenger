@@ -1,0 +1,38 @@
+:root{
+  /* base palette — the whole system, nothing else */
+  --ink:#111111;
+  --paper:#F5F1E8;
+  --panel:#FFFFFF;
+  --panel-tint:#F0EBE0;
+  --blue:#1A18E5;
+  --red:#E01B1B;
+  --grey:#8A8579;
+
+  /* legacy alias */
+  --black:var(--ink);
+
+  /* semantic surfaces */
+  --surface-page:var(--paper);
+  --surface-panel:var(--panel);
+  --surface-sunken:var(--panel-tint);
+  --surface-inverse:var(--ink);
+  --surface-accent:var(--blue);
+
+  /* semantic text */
+  --text-primary:var(--ink);
+  --text-on-accent:#FFFFFF;
+  --text-on-inverse:#FFFFFF;
+  --text-muted:var(--grey);
+  --text-disabled:var(--grey);
+  --text-on-blue-muted:rgba(255,255,255,0.78);
+
+  /* lines carry state only */
+  --border-active:var(--blue);
+  --border-error:var(--red);
+  --border-muted:rgba(17,17,17,0.12);
+  --focus-ring:var(--blue);
+
+  /* status */
+  --status-error:var(--red);
+  --status-pending:var(--blue);
+}

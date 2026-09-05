@@ -1,0 +1,25 @@
+:root{
+  /* 4px grid */
+  --radius-panel:20px;     /* panels, rails, message pane */
+  --radius-pill:999px;     /* buttons, inputs, badges, avatars */
+  --radius-bubble:18px;    /* message bubbles — softened, not a full pill */
+  --radius-structure:var(--radius-panel);
+  --radius-float:var(--radius-pill);
+
+  --inset-window:16px;     /* rail + pane inset from the window edge */
+
+  --border-width:0px;      /* no resting borders in this system */
+  --border-width-active:2px;
+  --ring-width:2px;
+
+  --icon-16:16px;
+  --icon-24:24px;
+  --stroke-icon:1.5px;
+
+  --control-h-sm:28px;
+  --control-h:36px;
+  --control-h-lg:44px;
+  --control-h-xl:56px;
+
+  --shadow-none:none;
+}

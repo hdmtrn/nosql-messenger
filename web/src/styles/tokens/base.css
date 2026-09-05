@@ -1,0 +1,7 @@
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;min-width:1100px;background:var(--surface-page);color:var(--text-primary);font:var(--text-body);-webkit-font-smoothing:antialiased;text-wrap:pretty}
+a{color:var(--blue);text-decoration:none}
+a:hover{color:var(--ink)}
+.sg-mono{font:var(--text-machine);text-transform:uppercase;letter-spacing:var(--mono-tracking)}
+:focus-visible{outline:var(--ring-width) solid var(--focus-ring);outline-offset:2px}
+@keyframes sg-spin{to{transform:rotate(360deg)}}
