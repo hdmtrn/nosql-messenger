@@ -202,9 +202,6 @@ watch(activeId, () => (copied.value = false))
     <div style="flex:1;min-height:0;display:flex;gap:16px">
       <nav style="flex:0 0 286px;background:var(--surface-accent);border-radius:var(--radius-panel);
                   padding:20px 16px;display:flex;flex-direction:column">
-        <span class="sg-mono" style="color:var(--text-on-blue-muted);padding:0 14px 12px">
-          Channels · {{ connection }}
-        </span>
         <div style="display:flex;gap:8px;padding:0 8px 16px">
           <SgButton variant="outline" size="sm" on-blue @click="dialog = 'create'">+ New</SgButton>
           <SgButton variant="outline" size="sm" on-blue @click="dialog = 'join'">Join by code</SgButton>
