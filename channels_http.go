@@ -77,6 +77,42 @@ func (s *server) handleListChannels(w http.ResponseWriter, r *http.Request, sess
 	writeJSON(w, http.StatusOK, channels)
 }
 
+func (s *server) handleGetChannel(w http.ResponseWriter, r *http.Request, sess Session) {
+	id, ok := s.channelForMember(w, r, r.PathValue("id"), sess)
+	if !ok {
+		return
+	}
+
+	ch, err := s.channels.ByID(r.Context(), id)
+	if err != nil {
+		log.Printf("loading channel: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, ch)
+}
+
+func (s *server) handleChannelsInCommon(w http.ResponseWriter, r *http.Request, sess Session) {
+	other, err := s.users.GetByUsername(r.Context(), r.PathValue("username"))
+	if errors.Is(err, errUserNotFound) {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	if err != nil {
+		log.Printf("looking up user: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	common, err := s.channels.InCommon(r.Context(), sess.UserID, other.ID)
+	if err != nil {
+		log.Printf("listing channels in common: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, common)
+}
+
 type directChannelRequest struct {
 	Username string `json:"username"`
 }

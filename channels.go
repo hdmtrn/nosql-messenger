@@ -41,6 +41,9 @@ type Channel struct {
 	CreatedAt time.Time       `bson:"created_at"    json:"created_at"`
 	Members   []ChannelMember `bson:"members"       json:"members,omitempty"`
 
+	// MemberCount survives the projection that drops the member list itself.
+	MemberCount int `bson:"member_count,omitempty" json:"member_count,omitempty"`
+
 	InviteCode string `bson:"invite_code,omitempty" json:"invite_code,omitempty"`
 
 	// DirectKey is the sorted pair of participants, which makes "the conversation
@@ -137,6 +140,7 @@ func (s *channelStore) ForUser(ctx context.Context, userID bson.ObjectID, after 
 		{"$sort": bson.M{"_id": 1}},
 		{"$limit": limit},
 		{"$addFields": bson.M{
+			"member_count": bson.M{"$size": "$members"},
 			"members": bson.M{"$cond": bson.A{
 				bson.M{"$eq": bson.A{"$kind", channelKindDirect}}, "$members", "$$REMOVE",
 			}},
@@ -150,6 +154,27 @@ func (s *channelStore) ForUser(ctx context.Context, userID bson.ObjectID, after 
 		return nil, fmt.Errorf("decoding channels: %w", err)
 	}
 	return channels, nil
+}
+
+// InCommon finds the channels both people belong to. $all over the multikey index
+// on members.user_id expresses "contains both" directly; with a separate membership
+// collection this would be a join of that collection with itself.
+func (s *channelStore) InCommon(ctx context.Context, a, b bson.ObjectID) ([]Channel, error) {
+	cur, err := s.col.Find(ctx,
+		bson.M{
+			"kind":            channelKindNamed,
+			"members.user_id": bson.M{"$all": bson.A{a, b}},
+		},
+		options.Find().SetProjection(bson.M{"members": 0}).SetLimit(channelsMaxLimit),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("listing channels in common: %w", err)
+	}
+	out := []Channel{}
+	if err := cur.All(ctx, &out); err != nil {
+		return nil, fmt.Errorf("decoding channels in common: %w", err)
+	}
+	return out, nil
 }
 
 func (s *channelStore) IsMember(ctx context.Context, channelID, userID bson.ObjectID) (bool, error) {

@@ -31,6 +31,8 @@ export const api = {
   createChannel: (name) => request('POST', '/channels', { name }),
   joinChannel: (code) => request('POST', '/channels/join', { code }),
   openDirect: (username) => request('POST', '/channels/direct', { username }),
+  channel: (id) => request('GET', `/channels/${id}`),
+  channelsInCommon: (username) => request('GET', `/channels/common/${encodeURIComponent(username)}`),
   leaveChannel: (id) => request('POST', `/channels/${id}/leave`),
 
   searchUsers: (q) => request('GET', '/users' + qs({ q })),

@@ -1,0 +1,120 @@
+<script setup>
+import { ref, watch } from 'vue'
+import { api } from '../api'
+import ChannelGlyph from '../components/ChannelGlyph.vue'
+import CodePill from '../components/CodePill.vue'
+import SgAvatar from '../components/SgAvatar.vue'
+import SgButton from '../components/SgButton.vue'
+import { initials } from '../naming'
+
+const props = defineProps({
+  me: { type: Object, required: true },
+  channel: { type: Object, required: true },
+  title: { type: String, required: true },
+})
+const emit = defineEmits(['close', 'leave', 'select'])
+
+const direct = () => props.channel.kind === 'direct'
+
+const members = ref([])
+const person = ref(null)
+const common = ref([])
+const copied = ref(false)
+
+async function load() {
+  members.value = []
+  person.value = null
+  common.value = []
+
+  if (direct()) {
+    const [who, shared] = await Promise.all([
+      api.user(props.title).catch(() => null),
+      api.channelsInCommon(props.title).catch(() => []),
+    ])
+    person.value = who
+    common.value = shared
+  } else {
+    const full = await api.channel(props.channel.id).catch(() => null)
+    members.value = full ? full.members || [] : []
+  }
+}
+
+function copyCode() {
+  navigator.clipboard.writeText(props.channel.invite_code)
+  copied.value = true
+  setTimeout(() => (copied.value = false), 1500)
+}
+
+watch(() => props.channel.id, load, { immediate: true })
+
+const mono = {
+  font: 'var(--text-machine)',
+  textTransform: 'uppercase',
+  letterSpacing: 'var(--mono-tracking)',
+  color: 'var(--grey)',
+}
+const handle = { font: 'var(--text-machine-11)', letterSpacing: 'var(--mono-tracking)', color: 'var(--grey)' }
+const panel = { background: 'var(--surface-panel)', borderRadius: 'var(--radius-panel)' }
+const row = { display: 'flex', alignItems: 'center', gap: '12px', padding: '0 24px', height: '52px' }
+</script>
+
+<template>
+  <aside style="flex:0 0 340px;display:flex;flex-direction:column;gap:16px;overflow-y:auto">
+    <div style="display:flex;align-items:center;gap:12px">
+      <h2 style="margin:0;flex:1;font:600 20px/1.2 var(--font-ui)">
+        {{ direct() ? 'About' : 'Channel' }}
+      </h2>
+      <SgButton variant="outline" size="sm" @click="emit('close')">Close</SgButton>
+    </div>
+
+    <div :style="panel" style="padding:24px;display:flex;flex-direction:column;
+                               align-items:center;gap:12px;text-align:center">
+      <SgAvatar v-if="direct()" :initials="initials(title)" :size="64" />
+      <ChannelGlyph v-else :size="64" tone="blue" />
+
+      <div>
+        <div style="font:600 20px/1.2 var(--font-ui)">{{ title }}</div>
+        <div v-if="direct()" :style="handle" style="margin-top:4px">@{{ title }}</div>
+        <div v-else :style="mono" style="margin-top:4px">{{ channel.member_count }} members</div>
+      </div>
+
+      <p v-if="direct() && person && person.bio"
+         style="margin:0;font:var(--text-body);color:var(--text-muted)">{{ person.bio }}</p>
+
+      <CodePill v-if="!direct() && channel.invite_code"
+                :code="channel.invite_code.slice(0, 10) + '…'" :copied="copied" @copy="copyCode" />
+    </div>
+
+    <template v-if="direct()">
+      <span :style="mono" style="padding:0 24px">Channels in common</span>
+      <div :style="panel" style="padding:4px 0">
+        <p v-if="!common.length" :style="row" style="color:var(--text-muted)">None</p>
+        <button v-for="c in common" :key="c.id" type="button"
+                :style="{ ...row, width: '100%', border: 'none', background: 'none',
+                          cursor: 'pointer', font: 'var(--text-body)' }"
+                @click="emit('select', c.id)">
+          <ChannelGlyph :size="22" tone="blue" />
+          <span style="flex:1;text-align:left">{{ c.name }}</span>
+        </button>
+      </div>
+    </template>
+
+    <template v-else>
+      <span :style="mono" style="padding:0 24px">Members</span>
+      <div :style="panel" style="padding:4px 0">
+        <div v-for="m in members" :key="m.user_id" :style="row">
+          <SgAvatar :initials="initials(m.username)" :size="28" />
+          <span style="flex:1;font:var(--text-body)">{{ m.username }}</span>
+          <span :style="mono">{{ m.user_id === me.id ? 'You' : m.role === 'owner' ? 'Owner' : '' }}</span>
+        </div>
+      </div>
+
+      <div :style="panel" style="padding:4px 0">
+        <button type="button"
+                :style="{ ...row, width: '100%', border: 'none', background: 'none',
+                          cursor: 'pointer', font: 'var(--text-body)', color: 'var(--red)' }"
+                @click="emit('leave')">Leave channel</button>
+      </div>
+    </template>
+  </aside>
+</template>

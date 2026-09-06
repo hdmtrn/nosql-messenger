@@ -3,7 +3,8 @@ import { nextTick, ref, watch } from 'vue'
 import PaneHeader from '../components/PaneHeader.vue'
 import MessageBubble from '../components/MessageBubble.vue'
 import MessageComposer from '../components/MessageComposer.vue'
-import SgButton from '../components/SgButton.vue'
+import SgAvatar from '../components/SgAvatar.vue'
+import ChannelGlyph from '../components/ChannelGlyph.vue'
 import { initials } from '../naming'
 
 const props = defineProps({
@@ -13,7 +14,7 @@ const props = defineProps({
   messages: { type: Array, default: () => [] },
 })
 
-const emit = defineEmits(['send', 'retry', 'discard', 'load-older', 'leave'])
+const emit = defineEmits(['send', 'retry', 'discard', 'load-older', 'info'])
 
 const feed = ref(null)
 const copied = ref(false)
@@ -59,12 +60,16 @@ defineExpose({ toBottom, keepPosition, distanceFromBottom: () => (feed.value ? f
                   display:flex;flex-direction:column;overflow:hidden">
     <PaneHeader
       :title="title"
+      :subtitle="direct() ? '@' + title : channel.member_count + ' members'"
+      :subtitle-upper="!direct()"
       :code="direct() ? '' : (channel.invite_code || '').slice(0, 10) + '…'"
       :copied="copied"
       @copy="copyCode"
+      @info="emit('info')"
     >
-      <template #actions>
-        <SgButton v-if="!direct()" variant="outline" size="sm" @click="emit('leave')">Leave</SgButton>
+      <template #mark>
+        <SgAvatar v-if="direct()" :initials="initials(title)" :size="44" />
+        <ChannelGlyph v-else :size="44" tone="blue" />
       </template>
     </PaneHeader>
 

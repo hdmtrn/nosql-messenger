@@ -8,6 +8,7 @@ import SgButton from '../components/SgButton.vue'
 import SgDialog from '../components/SgDialog.vue'
 import SgInput from '../components/SgInput.vue'
 import Conversation from './Conversation.vue'
+import InfoPanel from './InfoPanel.vue'
 import Profile from './Profile.vue'
 
 const props = defineProps({ me: { type: Object, required: true } })
@@ -22,6 +23,7 @@ const requests = ref([])
 const sentTo = ref([])
 const connection = ref('offline')
 const showProfile = ref(false)
+const showInfo = ref(false)
 
 const conversation = ref(null)
 const loadingOlder = ref(false)
@@ -252,7 +254,17 @@ onUnmounted(() => socket && socket.close())
         @retry="deliver"
         @discard="discard"
         @load-older="loadOlder"
-        @leave="confirmLeave = true"
+        @info="showInfo = !showInfo"
+      />
+
+      <InfoPanel
+        v-if="showInfo && active"
+        :me="me"
+        :channel="active"
+        :title="activeTitle"
+        @close="showInfo = false"
+        @leave="showInfo = false; confirmLeave = true"
+        @select="selectChannel"
       />
 
       <p v-else class="sg-mono" style="margin:auto;color:var(--text-muted)">
