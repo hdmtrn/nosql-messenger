@@ -47,6 +47,11 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("creating messages indexes: %w", err)
 	}
 
+	friends := newFriendStore(db)
+	if err := friends.ensureIndexes(ctx); err != nil {
+		return fmt.Errorf("creating friend request indexes: %w", err)
+	}
+
 	authSvc, err := newAuth(users, sessions)
 	if err != nil {
 		return fmt.Errorf("initializing auth: %w", err)
@@ -57,8 +62,10 @@ func run(ctx context.Context) error {
 		hub:      NewHub(),
 		auth:     authSvc,
 		sessions: sessions,
+		users:    users,
 		channels: channels,
 		messages: messages,
+		friends:  friends,
 	}
 
 	httpSrv := &http.Server{

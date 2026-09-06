@@ -13,8 +13,10 @@ type server struct {
 	hub      *Hub
 	auth     *auth
 	sessions *sessionStore
+	users    *userStore
 	channels *channelStore
 	messages *messageStore
+	friends  *friendStore
 }
 
 func (s *server) routes() http.Handler {
@@ -33,6 +35,12 @@ func (s *server) routes() http.Handler {
 
 	mux.HandleFunc("POST /messages", s.requireAuth(s.handleSendMessage))
 	mux.HandleFunc("GET /messages", s.requireAuth(s.handleListMessages))
+
+	mux.HandleFunc("POST /friends/requests", s.requireAuth(s.handleSendFriendRequest))
+	mux.HandleFunc("GET /friends/requests", s.requireAuth(s.handleListFriendRequests))
+	mux.HandleFunc("POST /friends/requests/{id}/accept", s.requireAuth(s.handleAcceptFriendRequest))
+	mux.HandleFunc("POST /friends/requests/{id}/decline", s.requireAuth(s.handleDeclineFriendRequest))
+	mux.HandleFunc("GET /friends", s.requireAuth(s.handleListFriends))
 
 	mux.HandleFunc("GET /ws", s.requireAuth(s.handleWS))
 
