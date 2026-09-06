@@ -2,7 +2,6 @@
 import { ref, watch } from 'vue'
 import { api } from '../api'
 import ChannelGlyph from '../components/ChannelGlyph.vue'
-import CodePill from '../components/CodePill.vue'
 import SgAvatar from '../components/SgAvatar.vue'
 import SgButton from '../components/SgButton.vue'
 import { initials } from '../naming'
@@ -45,6 +44,10 @@ async function load() {
 }
 
 const copiedCode = ref('')
+
+function made(iso) {
+  return new Date(iso).toLocaleDateString([], { day: 'numeric', month: 'short' })
+}
 
 function copy(code) {
   navigator.clipboard.writeText(inviteLink(code))
@@ -121,10 +124,11 @@ const row = { display: 'flex', alignItems: 'center', gap: '12px', padding: '0 24
       </div>
       <div :style="panel" style="padding:12px 24px;display:flex;flex-direction:column;gap:10px">
         <p v-if="!invites.length" :style="mono" style="margin:0">None</p>
-        <div v-for="i in invites" :key="i.code" style="display:flex;align-items:center;gap:8px">
-          <CodePill label="Link" :code="'/invite/' + i.code.slice(0, 6) + '…'"
-                    :copied="copiedCode === i.code" @copy="copy(i.code)" />
-          <span style="flex:1"></span>
+        <div v-for="i in invites" :key="i.code" style="display:flex;align-items:center;gap:12px">
+          <SgButton variant="outline" size="sm" @click="copy(i.code)">
+            {{ copiedCode === i.code ? 'Copied' : 'Copy invite link' }}
+          </SgButton>
+          <span :style="mono" style="flex:1">{{ made(i.created_at) }}</span>
           <SgButton variant="mutedText" @click="revoke(i.code)">Revoke</SgButton>
         </div>
       </div>

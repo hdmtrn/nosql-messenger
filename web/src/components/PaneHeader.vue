@@ -1,15 +1,11 @@
 <script setup>
-import CodePill from './CodePill.vue'
-
 defineProps({
   title: String,
   subtitle: String,
   // A handle reads as it is stored; a count is machine voice and shouts.
   subtitleUpper: { type: Boolean, default: true },
-  code: String,
-  copied: Boolean,
 })
-defineEmits(['copy', 'info'])
+defineEmits(['info'])
 </script>
 
 <template>
@@ -39,7 +35,6 @@ defineEmits(['copy', 'info'])
 
     <div style="display:flex;align-items:center;gap:12px">
       <slot name="actions" />
-      <CodePill v-if="code" :code="code" :copied="copied" @copy="$emit('copy')" />
     </div>
   </header>
 </template>
