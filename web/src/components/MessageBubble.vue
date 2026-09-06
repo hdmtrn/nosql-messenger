@@ -59,6 +59,7 @@ const bubbleStyle = computed(() => ({
     <div :style="{ display: 'flex', flexDirection: 'column',
                    alignItems: own ? 'flex-end' : 'flex-start', gap: '6px', minWidth: 0 }">
       <div style="display:flex;gap:8px;align-items:baseline">
+        <span v-if="author" style="font:600 13px/1.2 var(--font-ui)">{{ author }}</span>
         <span v-if="stateLabel" :style="labelStyle">{{ stateLabel }}</span>
         <span v-else-if="time" :style="{ ...MONO, color: 'var(--text-muted)' }">{{ time }}</span>
       </div>

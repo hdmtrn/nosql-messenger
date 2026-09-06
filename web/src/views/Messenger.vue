@@ -337,7 +337,7 @@ watch(activeId, () => (copied.value = false))
             </template>
           </PaneHeader>
 
-          <div ref="feed" class="feed" @scroll="onScroll">
+          <div ref="feed" class="feed" :style="{ gap: active.kind === 'direct' ? '10px' : '18px' }" @scroll="onScroll">
             <p v-if="!messages.length" class="sg-mono"
                style="margin:auto;color:var(--text-muted)">No messages yet</p>
 
@@ -346,7 +346,7 @@ watch(activeId, () => (copied.value = false))
               :key="m.id || m.client_msg_id"
               :own="m.author.id === me.id"
               :status="m.status || 'delivered'"
-              :author="m.author.username"
+              :author="active.kind === 'direct' ? '' : m.author.username"
               :initials="initials(m.author.username)"
               :time="m.status && m.status !== 'delivered' ? '' : clock(m.created_at)"
               @retry="deliver(m)"
