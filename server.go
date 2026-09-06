@@ -28,6 +28,10 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /auth/login", s.auth.handleLogin)
 	mux.HandleFunc("POST /auth/logout", s.auth.handleLogout)
 	mux.HandleFunc("GET /auth/me", s.auth.handleMe)
+	mux.HandleFunc("POST /auth/me/display-name", s.requireAuth(s.handleSetDisplayName))
+
+	mux.HandleFunc("GET /users", s.requireAuth(s.handleSearchUsers))
+	mux.HandleFunc("GET /users/{username}", s.requireAuth(s.handleGetUser))
 
 	mux.HandleFunc("POST /channels", s.requireAuth(s.handleCreateChannel))
 	mux.HandleFunc("GET /channels", s.requireAuth(s.handleListChannels))

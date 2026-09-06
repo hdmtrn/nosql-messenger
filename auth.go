@@ -159,7 +159,12 @@ func (a *auth) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u := &User{Username: req.Username, PasswordHash: hash, CreatedAt: time.Now()}
+	u := &User{
+		Username:     normaliseUsername(req.Username),
+		DisplayName:  strings.TrimSpace(req.Username),
+		PasswordHash: hash,
+		CreatedAt:    time.Now(),
+	}
 
 	if err := a.users.Create(r.Context(), u); err != nil {
 		if errors.Is(err, errUsernameTaken) {
@@ -254,18 +259,30 @@ func (a *auth) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 type meResponse struct {
-	ID       string `json:"id"`
-	Username string `json:"username"`
+	ID          string `json:"id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name"`
 }
 
+// handleMe reads the user rather than the session: the display name changes, and
+// a copy in the session would keep showing the old one until the session expired.
 func (a *auth) handleMe(w http.ResponseWriter, r *http.Request) {
 	sess, err := a.sessions.ByToken(r.Context(), tokenFromRequest(r))
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "not authenticated")
 		return
 	}
+
+	u, err := a.users.GetByUsername(r.Context(), sess.Username)
+	if err != nil {
+		log.Printf("loading user: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
 	writeJSON(w, http.StatusOK, meResponse{
-		ID:       sess.UserID.Hex(),
-		Username: sess.Username,
+		ID:          u.ID.Hex(),
+		Username:    u.Username,
+		DisplayName: u.DisplayName,
 	})
 }
