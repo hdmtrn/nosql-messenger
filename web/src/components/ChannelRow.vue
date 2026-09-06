@@ -1,11 +1,14 @@
 <script setup>
 import { computed } from 'vue'
 import ChannelGlyph from './ChannelGlyph.vue'
+import SgAvatar from './SgAvatar.vue'
 
 const props = defineProps({
   name: String,
   active: Boolean,
   unread: { type: Number, default: 0 },
+  // A person is shown by their initials where a channel shows the glyph.
+  avatar: { type: String, default: '' },
 })
 defineEmits(['click'])
 
@@ -27,7 +30,8 @@ const style = computed(() => ({
 
 <template>
   <button type="button" :aria-current="active || undefined" :style="style" @click="$emit('click')">
-    <ChannelGlyph :size="22" :tone="active ? 'blue' : 'onBlue'" />
+    <SgAvatar v-if="avatar" :initials="avatar" :size="22" :tone="active ? 'blue' : 'onBlue'" />
+    <ChannelGlyph v-else :size="22" :tone="active ? 'blue' : 'onBlue'" />
     <span style="flex:1;min-width:0;font:var(--text-body);overflow:hidden;
                  text-overflow:ellipsis;white-space:nowrap">{{ name }}</span>
     <span
