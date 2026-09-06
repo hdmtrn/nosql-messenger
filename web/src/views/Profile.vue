@@ -1,11 +1,11 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { api } from '../api'
 import SgAvatar from '../components/SgAvatar.vue'
 import SgButton from '../components/SgButton.vue'
 
 const props = defineProps({ me: { type: Object, required: true } })
-const emit = defineEmits(['close', 'saved', 'log-out'])
+const emit = defineEmits(['saved', 'log-out'])
 
 const displayName = ref(props.me.display_name)
 const bio = ref(props.me.bio || '')
@@ -63,15 +63,22 @@ function initials(name) {
   return (name || '').slice(0, 2)
 }
 
-let saved = { name: props.me.display_name, bio: props.me.bio || '' }
+const stored = ref({ name: props.me.display_name, bio: props.me.bio || '' })
+const justSaved = ref(false)
+
+const dirty = computed(
+  () => displayName.value !== stored.value.name || bio.value !== stored.value.bio
+)
 
 async function save() {
-  if (displayName.value === saved.name && bio.value === saved.bio) return
+  if (!dirty.value) return
   error.value = ''
   try {
     await api.updateProfile(displayName.value, bio.value)
-    saved = { name: displayName.value, bio: bio.value }
+    stored.value = { name: displayName.value, bio: bio.value }
     emit('saved')
+    justSaved.value = true
+    setTimeout(() => (justSaved.value = false), 1500)
   } catch (e) {
     error.value = `${e.message} (${e.status})`
   }
@@ -100,7 +107,9 @@ toggleSessions()
 
       <header style="display:flex;align-items:center;gap:16px">
         <h1 style="margin:0;flex:1;font:600 24px/1.2 var(--font-ui);letter-spacing:-0.015em">Profile</h1>
-        <SgButton variant="outline" size="sm" @click="emit('close')">Close</SgButton>
+        <SgButton variant="primary" size="sm" :disabled="!dirty" @click="save">
+          {{ justSaved ? 'Saved' : 'Save' }}
+        </SgButton>
       </header>
 
       <div :style="panel" style="padding:24px 28px;display:flex;align-items:flex-start;gap:20px">
@@ -111,21 +120,18 @@ toggleSessions()
             v-model="displayName"
             :style="nameField"
             placeholder="Your name"
-            @blur="save"
-            @keyup.enter="$event.target.blur()"
+            @keyup.enter="save"
           >
           <input
             v-model="bio"
             :style="bioField"
             placeholder="A few words about you"
-            @blur="save"
-            @keyup.enter="$event.target.blur()"
+            @keyup.enter="save"
           >
         </div>
       </div>
-      <span :style="mono" style="padding:0 28px;margin-top:-12px">
-        {{ error || 'Your name and bio are shown next to your messages' }}
-      </span>
+      <span v-if="error" :style="{ ...mono, color: 'var(--status-error)' }"
+            style="padding:0 28px;margin-top:-12px">{{ error }}</span>
 
       <div :style="panel" style="padding:4px 0">
         <div :style="row">
@@ -156,10 +162,6 @@ toggleSessions()
           </div>
         </template>
       </div>
-      <span :style="mono" style="padding:0 28px;margin-top:-12px">
-        Your username is how people find you
-      </span>
-
       <div :style="panel" style="padding:4px 0">
         <button type="button"
                 :style="{ ...row, width: '100%', border: 'none', background: 'none',

@@ -300,7 +300,6 @@ watch(activeId, () => (copied.value = false))
       <Profile
         v-if="showProfile"
         :me="me"
-        @close="showProfile = false"
         @saved="emit('profile-changed')"
         @log-out="emit('log-out')"
       />
