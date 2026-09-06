@@ -22,7 +22,6 @@ const style = computed(() => ({
   borderRadius: 'var(--radius-pill)',
   background: props.active ? 'var(--surface-panel)' : 'transparent',
   color: props.active ? 'var(--blue)' : '#fff',
-  transition: 'background 90ms linear',
 }))
 </script>
 

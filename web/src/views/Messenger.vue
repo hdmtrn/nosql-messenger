@@ -278,7 +278,7 @@ watch(activeId, () => (copied.value = false))
             v-for="c in channels"
             :key="c.id"
             :name="c.name"
-            :active="c.id === activeId"
+            :active="!showProfile && c.id === activeId"
             :unread="unread[c.id] || 0"
             @click="selectChannel(c.id)"
           />
