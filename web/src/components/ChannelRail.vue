@@ -17,7 +17,7 @@ const props = defineProps({
   profileOpen: Boolean,
 })
 
-const emit = defineEmits(['select', 'create', 'join', 'open-direct', 'add-friend', 'respond', 'profile'])
+const emit = defineEmits(['select', 'create', 'open-direct', 'add-friend', 'respond', 'profile'])
 
 const query = ref('')
 const found = ref([])
@@ -144,7 +144,6 @@ const footerStyle = computed(() => ({
         />
         <div style="display:flex;gap:8px;padding:6px 8px 0">
           <SgButton variant="outline" size="sm" on-blue @click="emit('create')">+ New</SgButton>
-          <SgButton variant="outline" size="sm" on-blue @click="emit('join')">Join by link</SgButton>
         </div>
 
         <span :style="label" style="padding:20px 14px 12px">Direct messages</span>

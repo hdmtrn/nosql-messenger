@@ -33,7 +33,6 @@ const hasOlder = ref(true)
 const dialog = ref(null)
 const confirmLeave = ref(false)
 const draftName = ref('')
-const draftCode = ref('')
 const dialogError = ref('')
 
 const active = computed(() => channels.value.find((c) => c.id === activeId.value) || null)
@@ -71,14 +70,6 @@ const createChannel = () => runDialog(async () => {
   const ch = await api.createChannel(draftName.value)
   draftName.value = ''
   return ch.id
-})
-
-// People paste whatever they were sent, which is usually the whole link.
-const joinChannel = () => runDialog(async () => {
-  const code = draftCode.value.trim().split('/').pop()
-  const { channel_id } = await api.followInvite(code)
-  draftCode.value = ''
-  return channel_id
 })
 
 async function openDirect(username) {
@@ -239,7 +230,6 @@ onUnmounted(() => socket && socket.close())
         :profile-open="showProfile"
         @select="selectChannel"
         @create="dialog = 'create'"
-        @join="dialog = 'join'"
         @open-direct="openDirect"
         @add-friend="addFriend"
         @respond="respond"
@@ -301,12 +291,5 @@ onUnmounted(() => socket && socket.close())
       </div>
     </SgDialog>
 
-    <SgDialog v-if="dialog === 'join'" title="Join by invite" @close="dialog = null">
-      <SgInput v-model="draftCode" label="Invite link" hint="Paste the link you were sent" :error="dialogError" />
-      <div style="display:flex;gap:12px">
-        <SgButton variant="primary" @click="joinChannel">Join</SgButton>
-        <SgButton variant="outline" @click="dialog = null">Cancel</SgButton>
-      </div>
-    </SgDialog>
   </div>
 </template>
