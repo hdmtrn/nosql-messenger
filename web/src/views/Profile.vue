@@ -107,9 +107,6 @@ toggleSessions()
 
       <header style="display:flex;align-items:center;gap:16px">
         <h1 style="margin:0;flex:1;font:600 24px/1.2 var(--font-ui);letter-spacing:-0.015em">Profile</h1>
-        <SgButton variant="primary" size="sm" :disabled="!dirty" @click="save">
-          {{ justSaved ? 'Saved' : 'Save' }}
-        </SgButton>
       </header>
 
       <div :style="panel" style="padding:24px 28px;display:flex;align-items:flex-start;gap:20px">
@@ -129,6 +126,10 @@ toggleSessions()
             @keyup.enter="save"
           >
         </div>
+
+        <SgButton variant="primary" size="sm" :disabled="!dirty" @click="save">
+          {{ justSaved ? 'Saved' : 'Save' }}
+        </SgButton>
       </div>
       <span v-if="error" :style="{ ...mono, color: 'var(--status-error)' }"
             style="padding:0 28px;margin-top:-12px">{{ error }}</span>

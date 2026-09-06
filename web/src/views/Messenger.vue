@@ -35,7 +35,8 @@ const draftName = ref('')
 const draftCode = ref('')
 const dialogError = ref('')
 
-const footerStyle = {
+// Selected the way a channel is: the profile is one more thing the pane can show.
+const footerStyle = computed(() => ({
   display: 'flex',
   alignItems: 'center',
   gap: '12px',
@@ -44,9 +45,10 @@ const footerStyle = {
   padding: '8px 6px',
   border: 'none',
   borderRadius: 'var(--radius-pill)',
-  background: 'transparent',
+  background: showProfile.value ? 'var(--surface-panel)' : 'transparent',
+  color: showProfile.value ? 'var(--blue)' : '#fff',
   cursor: 'pointer',
-}
+}))
 
 const friendsRowStyle = {
   display: 'flex',
@@ -289,9 +291,10 @@ watch(activeId, () => (copied.value = false))
           :style="footerStyle"
           @click="showProfile = true"
         >
-          <SgAvatar :initials="initials(me.display_name)" :size="32" tone="onBlue" />
+          <SgAvatar :initials="initials(me.display_name)" :size="32"
+                    :tone="showProfile ? 'blue' : 'onBlue'" />
           <span style="flex:1;min-width:0;text-align:left;font:600 13px/1.2 var(--font-ui);
-                       color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                       overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
             {{ me.display_name }}
           </span>
         </button>

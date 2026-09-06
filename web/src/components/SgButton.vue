@@ -44,7 +44,6 @@ const style = computed(() => {
     border: 'none',
     width: props.fullWidth ? '100%' : undefined,
     whiteSpace: 'nowrap',
-    transition: 'background 90ms linear, color 90ms linear, box-shadow 90ms linear',
   }
   const off = props.disabled
     ? {
