@@ -6,12 +6,16 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 	"unicode/utf8"
+
+	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
 const (
 	displayNameMinLen = 1
 	displayNameMaxLen = 64
+	bioMaxLen         = 200
 )
 
 func (s *server) handleSearchUsers(w http.ResponseWriter, r *http.Request, _ Session) {
@@ -38,12 +42,13 @@ func (s *server) handleGetUser(w http.ResponseWriter, r *http.Request, _ Session
 	writeJSON(w, http.StatusOK, u)
 }
 
-type displayNameRequest struct {
+type profileRequest struct {
 	DisplayName string `json:"display_name"`
+	Bio         string `json:"bio"`
 }
 
-func (s *server) handleSetDisplayName(w http.ResponseWriter, r *http.Request, sess Session) {
-	var req displayNameRequest
+func (s *server) handleUpdateProfile(w http.ResponseWriter, r *http.Request, sess Session) {
+	var req profileRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "malformed JSON")
 		return
@@ -55,10 +60,65 @@ func (s *server) handleSetDisplayName(w http.ResponseWriter, r *http.Request, se
 		return
 	}
 
-	if err := s.users.SetDisplayName(r.Context(), sess.UserID, name); err != nil {
-		log.Printf("setting display name: %v", err)
+	bio := strings.TrimSpace(req.Bio)
+	if utf8.RuneCountInString(bio) > bioMaxLen {
+		writeError(w, http.StatusBadRequest, "bio must be at most 200 characters")
+		return
+	}
+
+	if err := s.users.UpdateProfile(r.Context(), sess.UserID, name, bio); err != nil {
+		log.Printf("updating profile: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"display_name": name})
+	writeJSON(w, http.StatusOK, map[string]string{"display_name": name, "bio": bio})
+}
+
+type sessionView struct {
+	ID             string    `json:"id"`
+	UserAgent      string    `json:"user_agent"`
+	CreatedAt      time.Time `json:"created_at"`
+	LastActivityAt time.Time `json:"last_activity_at"`
+	Current        bool      `json:"current"`
+}
+
+func (s *server) handleListSessions(w http.ResponseWriter, r *http.Request, sess Session) {
+	live, err := s.sessions.ForUser(r.Context(), sess.UserID)
+	if err != nil {
+		log.Printf("listing sessions: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	out := make([]sessionView, 0, len(live))
+	for _, l := range live {
+		out = append(out, sessionView{
+			ID:             l.ID.Hex(),
+			UserAgent:      l.UserAgent,
+			CreatedAt:      l.CreatedAt,
+			LastActivityAt: l.LastActivityAt,
+			Current:        l.ID == sess.ID,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *server) handleRevokeSession(w http.ResponseWriter, r *http.Request, sess Session) {
+	id, err := bson.ObjectIDFromHex(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "malformed session id")
+		return
+	}
+
+	err = s.sessions.Revoke(r.Context(), sess.UserID, id)
+	if errors.Is(err, errSessionNotFound) {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+	if err != nil {
+		log.Printf("revoking session: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
 }

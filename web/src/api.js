@@ -34,7 +34,9 @@ export const api = {
 
   searchUsers: (q) => request('GET', '/users' + qs({ q })),
   user: (username) => request('GET', `/users/${encodeURIComponent(username)}`),
-  setDisplayName: (display_name) => request('POST', '/auth/me/display-name', { display_name }),
+  updateProfile: (display_name, bio) => request('POST', '/auth/me/profile', { display_name, bio }),
+  sessions: () => request('GET', '/auth/sessions'),
+  revokeSession: (id) => request('DELETE', `/auth/sessions/${id}`),
 
   friendRequests: () => request('GET', '/friends/requests'),
   sendFriendRequest: (username) => request('POST', '/friends/requests', { username }),

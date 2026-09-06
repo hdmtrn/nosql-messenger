@@ -11,6 +11,7 @@ import SgButton from '../components/SgButton.vue'
 import SgInput from '../components/SgInput.vue'
 import SgDialog from '../components/SgDialog.vue'
 import FriendsDialog from '../components/FriendsDialog.vue'
+import Profile from './Profile.vue'
 
 const props = defineProps({ me: { type: Object, required: true } })
 const emit = defineEmits(['log-out', 'profile-changed'])
@@ -28,10 +29,10 @@ const copied = ref(false)
 
 const dialog = ref(null)
 const confirmLeave = ref(false)
+const showProfile = ref(false)
 const incomingRequests = ref(0)
 const draftName = ref('')
 const draftCode = ref('')
-const draftDisplayName = ref('')
 const dialogError = ref('')
 
 const friendsRowStyle = {
@@ -112,17 +113,6 @@ async function leaveChannel() {
   messages.value = []
   activeId.value = null
   if (channels.value.length) selectChannel(channels.value[0].id)
-}
-
-async function saveDisplayName() {
-  dialogError.value = ''
-  try {
-    await api.setDisplayName(draftDisplayName.value)
-    emit('profile-changed')
-    dialog.value = null
-  } catch (e) {
-    dialogError.value = `${e.message} (${e.status})`
-  }
 }
 
 function copyCode() {
@@ -287,13 +277,20 @@ watch(activeId, () => (copied.value = false))
             style="flex:1;min-width:0;text-align:left;background:none;border:none;padding:0;
                    cursor:pointer;font:600 13px/1.2 var(--font-ui);color:#fff;
                    overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
-            @click="draftDisplayName = me.display_name; dialog = 'profile'"
+            @click="showProfile = true"
           >{{ me.display_name }}</button>
-          <SgButton variant="outline" size="sm" on-blue @click="emit('log-out')">Log out</SgButton>
         </div>
       </nav>
 
-      <section style="flex:1;min-width:0;background:var(--surface-panel);
+      <Profile
+        v-if="showProfile"
+        :me="me"
+        @close="showProfile = false"
+        @saved="emit('profile-changed')"
+        @log-out="emit('log-out')"
+      />
+
+      <section v-else style="flex:1;min-width:0;background:var(--surface-panel);
                       border-radius:var(--radius-panel);display:flex;flex-direction:column;overflow:hidden">
         <template v-if="active">
           <PaneHeader
@@ -341,19 +338,6 @@ watch(activeId, () => (copied.value = false))
       <div style="display:flex;gap:12px">
         <SgButton variant="danger" @click="confirmLeave = false; leaveChannel()">Leave</SgButton>
         <SgButton variant="outline" @click="confirmLeave = false">Cancel</SgButton>
-      </div>
-    </SgDialog>
-
-    <SgDialog v-if="dialog === 'profile'" title="Your profile" @close="dialog = null">
-      <p :style="{ font: 'var(--text-machine-11)', letterSpacing: 'var(--mono-tracking)',
-                   color: 'var(--text-muted)', margin: 0 }">
-        @{{ me.username }}
-      </p>
-      <SgInput v-model="draftDisplayName" label="Display name" hint="1-64 characters"
-               :error="dialogError" />
-      <div style="display:flex;gap:12px">
-        <SgButton variant="primary" @click="saveDisplayName">Save</SgButton>
-        <SgButton variant="outline" @click="dialog = null">Cancel</SgButton>
       </div>
     </SgDialog>
 

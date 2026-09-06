@@ -68,6 +68,7 @@ func (s *sessionStore) ensureIndexes(ctx context.Context) error {
 			Keys:    bson.D{{Key: "expires_at", Value: 1}},
 			Options: options.Index().SetExpireAfterSeconds(0),
 		},
+		{Keys: bson.D{{Key: "user_id", Value: 1}, {Key: "_id", Value: 1}}},
 	})
 	return err
 }
@@ -177,6 +178,42 @@ func (s *sessionStore) Delete(ctx context.Context, token string) error {
 	_, err := s.col.DeleteOne(ctx, bson.M{"token": token})
 	s.evict(token)
 	return err
+}
+
+// ForUser lists a user's live sessions. The token never leaves the server: it is
+// the credential itself, and a device list has no use for it.
+func (s *sessionStore) ForUser(ctx context.Context, userID bson.ObjectID) ([]Session, error) {
+	cur, err := s.col.Find(ctx,
+		bson.M{"user_id": userID},
+		options.Find().
+			SetProjection(bson.M{"token": 0}).
+			SetSort(bson.D{{Key: "last_activity_at", Value: -1}}),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("listing sessions: %w", err)
+	}
+	out := []Session{}
+	if err := cur.All(ctx, &out); err != nil {
+		return nil, fmt.Errorf("decoding sessions: %w", err)
+	}
+	return out, nil
+}
+
+// Revoke removes one of this user's sessions. The owner is part of the filter, so
+// somebody else's session is simply not found. Deleting returns the document, which
+// carries the token we must drop from the cache — otherwise the revoked session would
+// keep working until the cached copy expired.
+func (s *sessionStore) Revoke(ctx context.Context, userID, sessionID bson.ObjectID) error {
+	var sess Session
+	err := s.col.FindOneAndDelete(ctx, bson.M{"_id": sessionID, "user_id": userID}).Decode(&sess)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return errSessionNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("revoking session: %w", err)
+	}
+	s.evict(sess.Token)
+	return nil
 }
 
 func (s *sessionStore) sweepCache(ctx context.Context) {

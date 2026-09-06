@@ -20,6 +20,7 @@ type User struct {
 	ID           bson.ObjectID `bson:"_id,omitempty"  json:"id"`
 	Username     string        `bson:"username"       json:"username"`
 	DisplayName  string        `bson:"display_name"   json:"display_name"`
+	Bio          string        `bson:"bio,omitempty"  json:"bio"`
 	PasswordHash string        `bson:"password_hash"  json:"-"`
 	CreatedAt    time.Time     `bson:"created_at"     json:"created_at"`
 }
@@ -109,10 +110,10 @@ func (s *userStore) Search(ctx context.Context, term string) ([]User, error) {
 	return users, nil
 }
 
-func (s *userStore) SetDisplayName(ctx context.Context, id bson.ObjectID, name string) error {
+func (s *userStore) UpdateProfile(ctx context.Context, id bson.ObjectID, displayName, bio string) error {
 	_, err := s.col.UpdateOne(ctx,
 		bson.M{"_id": id},
-		bson.M{"$set": bson.M{"display_name": name}},
+		bson.M{"$set": bson.M{"display_name": displayName, "bio": bio}},
 	)
 	return err
 }

@@ -259,9 +259,11 @@ func (a *auth) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 type meResponse struct {
-	ID          string `json:"id"`
-	Username    string `json:"username"`
-	DisplayName string `json:"display_name"`
+	ID          string    `json:"id"`
+	Username    string    `json:"username"`
+	DisplayName string    `json:"display_name"`
+	Bio         string    `json:"bio"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // handleMe reads the user rather than the session: the display name changes, and
@@ -284,5 +286,7 @@ func (a *auth) handleMe(w http.ResponseWriter, r *http.Request) {
 		ID:          u.ID.Hex(),
 		Username:    u.Username,
 		DisplayName: u.DisplayName,
+		Bio:         u.Bio,
+		CreatedAt:   u.CreatedAt,
 	})
 }
