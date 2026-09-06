@@ -2,11 +2,25 @@ package main
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
 const webRoot = "web/dist"
+
+// serveWeb hands back the built page for any path that is not a file, because
+// an invite link is a client-side route: /invite/CODE exists in the app, not
+// on disk, and a file server would answer it with 404.
+func serveWeb(w http.ResponseWriter, r *http.Request) {
+	path := filepath.Join(webRoot, filepath.Clean(r.URL.Path))
+	if info, err := os.Stat(path); err == nil && !info.IsDir() {
+		http.ServeFile(w, r, path)
+		return
+	}
+	http.ServeFile(w, r, filepath.Join(webRoot, "index.html"))
+}
 
 type server struct {
 	mongo    *mongo.Client
@@ -58,7 +72,7 @@ func (s *server) routes() http.Handler {
 
 	mux.HandleFunc("GET /ws", s.requireAuth(s.handleWS))
 
-	mux.Handle("GET /", http.FileServer(http.Dir(webRoot)))
+	mux.HandleFunc("GET /", serveWeb)
 
 	return withLogging(mux)
 }

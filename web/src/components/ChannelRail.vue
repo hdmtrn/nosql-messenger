@@ -144,7 +144,7 @@ const footerStyle = computed(() => ({
         />
         <div style="display:flex;gap:8px;padding:6px 8px 0">
           <SgButton variant="outline" size="sm" on-blue @click="emit('create')">+ New</SgButton>
-          <SgButton variant="outline" size="sm" on-blue @click="emit('join')">Join by code</SgButton>
+          <SgButton variant="outline" size="sm" on-blue @click="emit('join')">Join by link</SgButton>
         </div>
 
         <span :style="label" style="padding:20px 14px 12px">Direct messages</span>

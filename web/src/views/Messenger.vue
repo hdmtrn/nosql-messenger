@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { api } from '../api'
 import { createSocket } from '../socket'
 import { channelTitle } from '../naming'
+import { takePendingInvite } from '../pending'
 import ChannelRail from '../components/ChannelRail.vue'
 import SgButton from '../components/SgButton.vue'
 import SgDialog from '../components/SgDialog.vue'
@@ -72,8 +73,10 @@ const createChannel = () => runDialog(async () => {
   return ch.id
 })
 
+// People paste whatever they were sent, which is usually the whole link.
 const joinChannel = () => runDialog(async () => {
-  const { channel_id } = await api.followInvite(draftCode.value.trim())
+  const code = draftCode.value.trim().split('/').pop()
+  const { channel_id } = await api.followInvite(code)
   draftCode.value = ''
   return channel_id
 })
@@ -198,7 +201,14 @@ async function respond(id, action) {
 }
 
 onMounted(async () => {
+  const invite = takePendingInvite()
+  if (invite) {
+    const joined = await api.followInvite(invite).catch(() => null)
+    if (joined) activeId.value = joined.channel_id
+  }
+
   await loadChannels()
+  if (activeId.value) selectChannel(activeId.value)
   loadPeople()
   socket = createSocket({
     onMessage: receive,
@@ -291,8 +301,8 @@ onUnmounted(() => socket && socket.close())
       </div>
     </SgDialog>
 
-    <SgDialog v-if="dialog === 'join'" title="Join by code" @close="dialog = null">
-      <SgInput v-model="draftCode" label="Invite code" mono :error="dialogError" />
+    <SgDialog v-if="dialog === 'join'" title="Join by invite" @close="dialog = null">
+      <SgInput v-model="draftCode" label="Invite link" hint="Paste the link you were sent" :error="dialogError" />
       <div style="display:flex;gap:12px">
         <SgButton variant="primary" @click="joinChannel">Join</SgButton>
         <SgButton variant="outline" @click="dialog = null">Cancel</SgButton>
