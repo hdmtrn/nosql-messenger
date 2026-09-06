@@ -10,6 +10,7 @@ import MessageComposer from '../components/MessageComposer.vue'
 import SgButton from '../components/SgButton.vue'
 import SgInput from '../components/SgInput.vue'
 import SgDialog from '../components/SgDialog.vue'
+import FriendsDialog from '../components/FriendsDialog.vue'
 
 const props = defineProps({ me: { type: Object, required: true } })
 defineEmits(['log-out'])
@@ -26,9 +27,24 @@ const hasOlder = ref(true)
 const copied = ref(false)
 
 const dialog = ref(null)
+const incomingRequests = ref(0)
 const draftName = ref('')
 const draftCode = ref('')
 const dialogError = ref('')
+
+const friendsRowStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '12px',
+  width: '100%',
+  height: '38px',
+  padding: '0 14px',
+  cursor: 'pointer',
+  border: 'none',
+  borderRadius: 'var(--radius-pill)',
+  background: 'transparent',
+  color: '#fff',
+}
 
 const active = computed(() => channels.value.find((c) => c.id === activeId.value) || null)
 
@@ -169,8 +185,14 @@ function receive(msg) {
   scrollToBottom()
 }
 
+async function loadRequestCount() {
+  const r = await api.friendRequests().catch(() => null)
+  if (r) incomingRequests.value = r.incoming.length
+}
+
 onMounted(async () => {
   await loadChannels()
+  loadRequestCount()
   socket = createSocket({
     onMessage: receive,
     onStateChange: (s) => {
@@ -206,6 +228,21 @@ watch(activeId, () => (copied.value = false))
           <SgButton variant="outline" size="sm" on-blue @click="dialog = 'create'">+ New</SgButton>
           <SgButton variant="outline" size="sm" on-blue @click="dialog = 'join'">Join by code</SgButton>
         </div>
+
+        <button
+          type="button"
+          :style="friendsRowStyle"
+          @click="dialog = 'friends'"
+        >
+          <span style="flex:1;min-width:0;font:var(--text-body);text-align:left">Friends</span>
+          <span
+            v-if="incomingRequests"
+            style="font:var(--text-machine);text-transform:uppercase;letter-spacing:var(--mono-tracking);
+                   background:#fff;color:var(--blue);border-radius:var(--radius-pill);padding:2px 7px"
+          >{{ incomingRequests }}</span>
+        </button>
+
+        <div style="height:1px;background:rgba(255,255,255,0.18);margin:12px 14px"></div>
 
         <div style="flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:2px">
           <ChannelRow
@@ -264,6 +301,12 @@ watch(activeId, () => (copied.value = false))
         </p>
       </section>
     </div>
+
+    <FriendsDialog
+      v-if="dialog === 'friends'"
+      @close="dialog = null"
+      @changed="incomingRequests = $event"
+    />
 
     <SgDialog v-if="dialog === 'create'" title="New channel" @close="dialog = null">
       <SgInput v-model="draftName" label="Name" hint="1-64 characters" :error="dialogError" />
