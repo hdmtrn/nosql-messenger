@@ -30,6 +30,7 @@ export const api = {
   channels: (params) => request('GET', '/channels' + qs(params)),
   createChannel: (name) => request('POST', '/channels', { name }),
   joinChannel: (code) => request('POST', '/channels/join', { code }),
+  leaveChannel: (id) => request('POST', `/channels/${id}/leave`),
 
   friendRequests: () => request('GET', '/friends/requests'),
   sendFriendRequest: (username) => request('POST', '/friends/requests', { username }),

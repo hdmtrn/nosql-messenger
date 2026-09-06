@@ -59,6 +59,19 @@ func (h *Hub) Subscribe(userID, chID string) {
 	}
 }
 
+func (h *Hub) Unsubscribe(userID, chID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	for c := range h.byUser[userID] {
+		delete(h.byChannel[chID], c)
+		delete(c.channels, chID)
+	}
+	if len(h.byChannel[chID]) == 0 {
+		delete(h.byChannel, chID)
+	}
+}
+
 func (h *Hub) Publish(chID string, msg []byte) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

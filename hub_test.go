@@ -58,6 +58,29 @@ func TestSecondConnectionOfSameUserAlsoReceives(t *testing.T) {
 	}
 }
 
+func TestUnsubscribeStopsDelivery(t *testing.T) {
+	h := NewHub()
+	leaver := newSubscriber("u1")
+	stayer := newSubscriber("u2")
+	h.Connect(leaver, []string{"a", "b"})
+	h.Connect(stayer, []string{"a"})
+
+	h.Unsubscribe("u1", "a")
+
+	h.Publish("a", []byte("after leaving"))
+	if len(leaver.send) != 0 {
+		t.Errorf("a departed member still receives: %d", len(leaver.send))
+	}
+	if len(stayer.send) != 1 {
+		t.Errorf("remaining member stopped receiving: %d", len(stayer.send))
+	}
+
+	h.Publish("b", []byte("other channel"))
+	if len(leaver.send) != 1 {
+		t.Errorf("leaving one channel cost the subscriber another: %d", len(leaver.send))
+	}
+}
+
 func TestHubConcurrentAccess(t *testing.T) {
 	h := NewHub()
 	var wg sync.WaitGroup

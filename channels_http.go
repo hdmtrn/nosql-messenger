@@ -77,6 +77,28 @@ func (s *server) handleListChannels(w http.ResponseWriter, r *http.Request, sess
 	writeJSON(w, http.StatusOK, channels)
 }
 
+func (s *server) handleLeaveChannel(w http.ResponseWriter, r *http.Request, sess Session) {
+	id, err := bson.ObjectIDFromHex(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "malformed channel id")
+		return
+	}
+
+	err = s.channels.Leave(r.Context(), s.messages, id, sess.UserID)
+	if errors.Is(err, errNotMember) {
+		writeError(w, http.StatusNotFound, "channel not found")
+		return
+	}
+	if err != nil {
+		log.Printf("leaving channel: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	s.hub.Unsubscribe(sess.UserID.Hex(), id.Hex())
+	writeJSON(w, http.StatusOK, map[string]string{"status": "left"})
+}
+
 type joinChannelRequest struct {
 	Code string `json:"code"`
 }

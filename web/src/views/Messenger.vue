@@ -27,6 +27,7 @@ const hasOlder = ref(true)
 const copied = ref(false)
 
 const dialog = ref(null)
+const confirmLeave = ref(false)
 const incomingRequests = ref(0)
 const draftName = ref('')
 const draftCode = ref('')
@@ -100,6 +101,16 @@ async function joinChannel() {
   } catch (e) {
     dialogError.value = `${e.message} (${e.status})`
   }
+}
+
+async function leaveChannel() {
+  const id = activeId.value
+  await api.leaveChannel(id).catch(() => null)
+
+  channels.value = channels.value.filter((c) => c.id !== id)
+  messages.value = []
+  activeId.value = null
+  if (channels.value.length) selectChannel(channels.value[0].id)
 }
 
 function copyCode() {
@@ -273,7 +284,11 @@ watch(activeId, () => (copied.value = false))
             :code="active.invite_code ? active.invite_code.slice(0, 10) + '…' : ''"
             :copied="copied"
             @copy="copyCode"
-          />
+          >
+            <template #actions>
+              <SgButton variant="outline" size="sm" @click="confirmLeave = true">Leave</SgButton>
+            </template>
+          </PaneHeader>
 
           <div ref="feed" class="feed" @scroll="onScroll">
             <p v-if="!messages.length" class="sg-mono"
@@ -301,6 +316,16 @@ watch(activeId, () => (copied.value = false))
         </p>
       </section>
     </div>
+
+    <SgDialog v-if="confirmLeave" :title="`Leave #${active?.name}?`" @close="confirmLeave = false">
+      <p style="margin:0;font:var(--text-body);color:var(--text-muted)">
+        You stop receiving messages from this channel. Rejoin any time with the invite code.
+      </p>
+      <div style="display:flex;gap:12px">
+        <SgButton variant="danger" @click="confirmLeave = false; leaveChannel()">Leave</SgButton>
+        <SgButton variant="outline" @click="confirmLeave = false">Cancel</SgButton>
+      </div>
+    </SgDialog>
 
     <FriendsDialog
       v-if="dialog === 'friends'"

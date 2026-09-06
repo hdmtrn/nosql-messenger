@@ -173,6 +173,65 @@ func (s *channelStore) AddMember(ctx context.Context, channelID bson.ObjectID, u
 	return nil
 }
 
+// Leave pulls the member out and keeps the channel coherent afterwards: an
+// owner who leaves hands the role to the earliest remaining member, and a
+// channel nobody is left in goes away together with its messages.
+func (s *channelStore) Leave(ctx context.Context, messages *messageStore, channelID, userID bson.ObjectID) error {
+	var ch Channel
+	err := s.col.FindOneAndUpdate(ctx,
+		bson.M{"_id": channelID, "members.user_id": userID},
+		bson.M{"$pull": bson.M{"members": bson.M{"user_id": userID}}},
+		options.FindOneAndUpdate().SetReturnDocument(options.After),
+	).Decode(&ch)
+
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return errNotMember
+	}
+	if err != nil {
+		return fmt.Errorf("leaving channel: %w", err)
+	}
+
+	if len(ch.Members) == 0 {
+		return s.discard(ctx, messages, channelID)
+	}
+
+	for _, m := range ch.Members {
+		if m.Role == roleOwner {
+			return nil
+		}
+	}
+	_, err = s.col.UpdateOne(ctx,
+		bson.M{"_id": channelID, "members.user_id": ch.Members[0].UserID},
+		bson.M{"$set": bson.M{"members.$.role": roleOwner}},
+	)
+	if err != nil {
+		return fmt.Errorf("promoting owner: %w", err)
+	}
+	return nil
+}
+
+// discard drops a channel and its messages together. Two collections must go or
+// stay as one, which is what the replica set buys us besides change streams.
+func (s *channelStore) discard(ctx context.Context, messages *messageStore, channelID bson.ObjectID) error {
+	sess, err := s.col.Database().Client().StartSession()
+	if err != nil {
+		return fmt.Errorf("starting session: %w", err)
+	}
+	defer sess.EndSession(ctx)
+
+	_, err = sess.WithTransaction(ctx, func(ctx context.Context) (any, error) {
+		if _, err := s.col.DeleteOne(ctx, bson.M{"_id": channelID}); err != nil {
+			return nil, err
+		}
+		_, err := messages.col.DeleteMany(ctx, bson.M{"channel_id": channelID})
+		return nil, err
+	})
+	if err != nil {
+		return fmt.Errorf("discarding empty channel: %w", err)
+	}
+	return nil
+}
+
 func (s *channelStore) ByInviteCode(ctx context.Context, code string) (Channel, error) {
 	var ch Channel
 	err := s.col.FindOne(ctx,
