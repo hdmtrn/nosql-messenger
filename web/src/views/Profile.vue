@@ -3,7 +3,6 @@ import { ref } from 'vue'
 import { api } from '../api'
 import SgAvatar from '../components/SgAvatar.vue'
 import SgButton from '../components/SgButton.vue'
-import SgInput from '../components/SgInput.vue'
 
 const props = defineProps({ me: { type: Object, required: true } })
 const emit = defineEmits(['close', 'saved', 'log-out'])
@@ -11,7 +10,6 @@ const emit = defineEmits(['close', 'saved', 'log-out'])
 const displayName = ref(props.me.display_name)
 const bio = ref(props.me.bio || '')
 const error = ref('')
-const busy = ref(false)
 
 const sessions = ref([])
 const sessionsOpen = ref(false)
@@ -31,6 +29,27 @@ const panel = {
   background: 'var(--surface-panel)',
   borderRadius: 'var(--radius-panel)',
 }
+// The panel is the field: no label, no border, no save button — typing is editing.
+const nameField = {
+  border: 'none',
+  outline: 'none',
+  background: 'transparent',
+  padding: '0 0 8px',
+  borderBottom: '1px solid var(--border-muted)',
+  font: '600 17px/1.3 var(--font-ui)',
+  color: 'var(--text-primary)',
+  width: '100%',
+}
+const bioField = {
+  border: 'none',
+  outline: 'none',
+  background: 'transparent',
+  padding: 0,
+  font: 'var(--text-body)',
+  color: 'var(--grey)',
+  width: '100%',
+}
+
 const row = {
   display: 'flex',
   alignItems: 'center',
@@ -44,16 +63,17 @@ function initials(name) {
   return (name || '').slice(0, 2)
 }
 
+let saved = { name: props.me.display_name, bio: props.me.bio || '' }
+
 async function save() {
+  if (displayName.value === saved.name && bio.value === saved.bio) return
   error.value = ''
-  busy.value = true
   try {
     await api.updateProfile(displayName.value, bio.value)
+    saved = { name: displayName.value, bio: bio.value }
     emit('saved')
   } catch (e) {
     error.value = `${e.message} (${e.status})`
-  } finally {
-    busy.value = false
   }
 }
 
@@ -83,21 +103,29 @@ toggleSessions()
         <SgButton variant="outline" size="sm" @click="emit('close')">Close</SgButton>
       </header>
 
-      <div :style="panel" style="padding:24px 28px;display:flex;align-items:center;gap:20px">
+      <div :style="panel" style="padding:24px 28px;display:flex;align-items:flex-start;gap:20px">
         <SgAvatar :initials="initials(me.display_name)" :size="44" />
-        <div style="flex:1;display:flex;flex-direction:column;gap:4px">
-          <span style="font:600 17px/1.3 var(--font-ui)">{{ me.username }}</span>
-          <span :style="mono">Member since {{ new Date(me.created_at).getFullYear() }}</span>
+
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:10px">
+          <input
+            v-model="displayName"
+            :style="nameField"
+            placeholder="Your name"
+            @blur="save"
+            @keyup.enter="$event.target.blur()"
+          >
+          <input
+            v-model="bio"
+            :style="bioField"
+            placeholder="A few words about you"
+            @blur="save"
+            @keyup.enter="$event.target.blur()"
+          >
         </div>
       </div>
-
-      <SgInput v-model="displayName" label="Display name" hint="Shown next to your messages"
-               :error="error" />
-      <SgInput v-model="bio" label="Bio" hint="Any details such as role or city" />
-
-      <div style="display:flex;gap:12px">
-        <SgButton variant="primary" :disabled="busy" @click="save">Save</SgButton>
-      </div>
+      <span :style="mono" style="padding:0 28px;margin-top:-12px">
+        {{ error || 'Your name and bio are shown next to your messages' }}
+      </span>
 
       <div :style="panel" style="padding:4px 0">
         <div :style="row">

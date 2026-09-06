@@ -35,6 +35,19 @@ const draftName = ref('')
 const draftCode = ref('')
 const dialogError = ref('')
 
+const footerStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '12px',
+  width: '100%',
+  marginTop: '16px',
+  padding: '8px 6px',
+  border: 'none',
+  borderRadius: 'var(--radius-pill)',
+  background: 'transparent',
+  cursor: 'pointer',
+}
+
 const friendsRowStyle = {
   display: 'flex',
   alignItems: 'center',
@@ -72,6 +85,7 @@ async function loadChannels() {
 }
 
 async function selectChannel(id) {
+  showProfile.value = false
   activeId.value = id
   unread.value = { ...unread.value, [id]: 0 }
   hasOlder.value = true
@@ -270,16 +284,17 @@ watch(activeId, () => (copied.value = false))
              style="color:var(--text-on-blue-muted);padding:8px 14px">No channels yet</p>
         </div>
 
-        <div style="display:flex;align-items:center;gap:12px;padding:16px 6px 0">
+        <button
+          type="button"
+          :style="footerStyle"
+          @click="showProfile = true"
+        >
           <SgAvatar :initials="initials(me.display_name)" :size="32" tone="onBlue" />
-          <button
-            type="button"
-            style="flex:1;min-width:0;text-align:left;background:none;border:none;padding:0;
-                   cursor:pointer;font:600 13px/1.2 var(--font-ui);color:#fff;
-                   overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
-            @click="showProfile = true"
-          >{{ me.display_name }}</button>
-        </div>
+          <span style="flex:1;min-width:0;text-align:left;font:600 13px/1.2 var(--font-ui);
+                       color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+            {{ me.display_name }}
+          </span>
+        </button>
       </nav>
 
       <Profile
