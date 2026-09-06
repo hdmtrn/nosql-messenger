@@ -77,6 +77,57 @@ func (s *server) handleListChannels(w http.ResponseWriter, r *http.Request, sess
 	writeJSON(w, http.StatusOK, channels)
 }
 
+type directChannelRequest struct {
+	Username string `json:"username"`
+}
+
+func (s *server) handleOpenDirect(w http.ResponseWriter, r *http.Request, sess Session) {
+	var req directChannelRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "malformed JSON")
+		return
+	}
+
+	other, err := s.users.GetByUsername(r.Context(), req.Username)
+	if errors.Is(err, errUserNotFound) {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	if err != nil {
+		log.Printf("looking up user: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if other.ID == sess.UserID {
+		writeError(w, http.StatusBadRequest, "cannot open a conversation with yourself")
+		return
+	}
+
+	friends, err := s.friends.AreFriends(r.Context(), sess.UserID, other.ID)
+	if err != nil {
+		log.Printf("checking friendship: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !friends {
+		writeError(w, http.StatusForbidden, "you can only message friends")
+		return
+	}
+
+	ch, err := s.channels.Direct(r.Context(), sess, other)
+	if err != nil {
+		log.Printf("opening direct channel: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	// Both sides may already hold a socket, and neither reconnects for this.
+	s.hub.Subscribe(sess.UserID.Hex(), ch.ID.Hex())
+	s.hub.Subscribe(other.ID.Hex(), ch.ID.Hex())
+
+	writeJSON(w, http.StatusOK, ch)
+}
+
 func (s *server) handleLeaveChannel(w http.ResponseWriter, r *http.Request, sess Session) {
 	id, err := bson.ObjectIDFromHex(r.PathValue("id"))
 	if err != nil {

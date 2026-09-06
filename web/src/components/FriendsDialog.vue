@@ -6,7 +6,7 @@ import SgButton from './SgButton.vue'
 import SgInput from './SgInput.vue'
 import SgDialog from './SgDialog.vue'
 
-const emit = defineEmits(['close', 'changed'])
+const emit = defineEmits(['close', 'changed', 'message'])
 
 const incoming = ref([])
 const outgoing = ref([])
@@ -118,7 +118,8 @@ onMounted(load)
       <div v-for="f in friends" :key="f.id"
            style="display:flex;align-items:center;gap:12px;padding:6px 0">
         <SgAvatar :initials="initials(f.username)" :size="32" />
-        <span style="font:var(--text-body)">{{ f.username }}</span>
+        <span style="flex:1;min-width:0;font:var(--text-body)">{{ f.username }}</span>
+        <SgButton variant="primary" size="sm" @click="emit('message', f.username)">Message</SgButton>
       </div>
     </section>
 

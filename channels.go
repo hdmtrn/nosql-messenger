@@ -13,6 +13,9 @@ import (
 )
 
 const (
+	channelKindNamed  = "channel"
+	channelKindDirect = "direct"
+
 	roleOwner  = "owner"
 	roleMember = "member"
 
@@ -32,12 +35,17 @@ type ChannelMember struct {
 
 type Channel struct {
 	ID        bson.ObjectID   `bson:"_id,omitempty" json:"id"`
+	Kind      string          `bson:"kind"          json:"kind"`
 	Name      string          `bson:"name"          json:"name"`
 	CreatedBy bson.ObjectID   `bson:"created_by"    json:"created_by"`
 	CreatedAt time.Time       `bson:"created_at"    json:"created_at"`
 	Members   []ChannelMember `bson:"members"       json:"members,omitempty"`
 
 	InviteCode string `bson:"invite_code,omitempty" json:"invite_code,omitempty"`
+
+	// DirectKey is the sorted pair of participants, which makes "the conversation
+	// between these two" a value the database can enforce as unique.
+	DirectKey string `bson:"direct_key,omitempty" json:"-"`
 }
 
 var (
@@ -63,6 +71,10 @@ func (s *channelStore) ensureIndexes(ctx context.Context) error {
 			Keys:    bson.D{{Key: "invite_code", Value: 1}},
 			Options: options.Index().SetUnique(true).SetSparse(true),
 		},
+		{
+			Keys:    bson.D{{Key: "direct_key", Value: 1}},
+			Options: options.Index().SetUnique(true).SetSparse(true),
+		},
 	})
 	return err
 }
@@ -70,6 +82,7 @@ func (s *channelStore) ensureIndexes(ctx context.Context) error {
 func (s *channelStore) Create(ctx context.Context, name string, creator Session) (Channel, error) {
 	now := time.Now()
 	ch := Channel{
+		Kind:       channelKindNamed,
 		Name:       name,
 		CreatedBy:  creator.UserID,
 		CreatedAt:  now,
@@ -117,12 +130,18 @@ func (s *channelStore) ForUser(ctx context.Context, userID bson.ObjectID, after 
 		filter["_id"] = bson.M{"$gt": after}
 	}
 
-	cur, err := s.col.Find(ctx, filter,
-		options.Find().
-			SetProjection(bson.M{"members": 0}).
-			SetSort(bson.D{{Key: "_id", Value: 1}}).
-			SetLimit(int64(limit)),
-	)
+	// A named channel needs no member list here; a direct one is displayed as the
+	// other participant, so it does. $$REMOVE drops the field per document.
+	cur, err := s.col.Aggregate(ctx, []bson.M{
+		{"$match": filter},
+		{"$sort": bson.M{"_id": 1}},
+		{"$limit": limit},
+		{"$addFields": bson.M{
+			"members": bson.M{"$cond": bson.A{
+				bson.M{"$eq": bson.A{"$kind", channelKindDirect}}, "$members", "$$REMOVE",
+			}},
+		}},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("listing channels: %w", err)
 	}
@@ -230,6 +249,42 @@ func (s *channelStore) discard(ctx context.Context, messages *messageStore, chan
 		return fmt.Errorf("discarding empty channel: %w", err)
 	}
 	return nil
+}
+
+func directKey(a, b bson.ObjectID) string {
+	x, y := a.Hex(), b.Hex()
+	if x > y {
+		x, y = y, x
+	}
+	return x + ":" + y
+}
+
+// Direct returns the conversation between two people, creating it only if there
+// is none. Both sides may press "message" at the same moment, so the upsert on
+// the unique key does the deciding: one of them inserts, the other finds.
+func (s *channelStore) Direct(ctx context.Context, me Session, other *User) (Channel, error) {
+	now := time.Now()
+	key := directKey(me.UserID, other.ID)
+
+	var ch Channel
+	err := s.col.FindOneAndUpdate(ctx,
+		bson.M{"direct_key": key},
+		bson.M{"$setOnInsert": bson.M{
+			"kind":       channelKindDirect,
+			"direct_key": key,
+			"created_by": me.UserID,
+			"created_at": now,
+			"members": []ChannelMember{
+				{UserID: me.UserID, Username: me.Username, Role: roleMember, JoinedAt: now},
+				{UserID: other.ID, Username: other.Username, Role: roleMember, JoinedAt: now},
+			},
+		}},
+		options.FindOneAndUpdate().SetUpsert(true).SetReturnDocument(options.After),
+	).Decode(&ch)
+	if err != nil {
+		return Channel{}, fmt.Errorf("opening direct channel: %w", err)
+	}
+	return ch, nil
 }
 
 func (s *channelStore) ByInviteCode(ctx context.Context, code string) (Channel, error) {

@@ -82,6 +82,17 @@ func (s *friendStore) between(ctx context.Context, a, b bson.ObjectID, statuses 
 
 // Send creates a request, unless one is already open the other way round: answering
 // an incoming request by sending your own is consent, not a second request.
+func (s *friendStore) AreFriends(ctx context.Context, a, b bson.ObjectID) (bool, error) {
+	_, err := s.between(ctx, a, b, friendAccepted)
+	if errors.Is(err, errRequestNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (s *friendStore) Send(ctx context.Context, from Session, to *User) (FriendRequest, error) {
 	if from.UserID == to.ID {
 		return FriendRequest{}, errFriendSelf

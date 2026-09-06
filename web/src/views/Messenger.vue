@@ -66,6 +66,13 @@ const friendsRowStyle = {
 
 const active = computed(() => channels.value.find((c) => c.id === activeId.value) || null)
 
+// A direct channel has no name of its own: it is displayed as the other person.
+function titleOf(c) {
+  if (c.kind !== 'direct') return c.name
+  const other = (c.members || []).find((m) => m.user_id !== props.me.id)
+  return other ? other.username : 'Direct message'
+}
+
 function initials(name) {
   return (name || '').slice(0, 2)
 }
@@ -214,6 +221,14 @@ function receive(msg) {
   scrollToBottom()
 }
 
+async function openDirect(username) {
+  const ch = await api.openDirect(username).catch(() => null)
+  if (!ch) return
+  dialog.value = null
+  if (!channels.value.some((c) => c.id === ch.id)) channels.value = [...channels.value, ch]
+  selectChannel(ch.id)
+}
+
 async function loadRequestCount() {
   const r = await api.friendRequests().catch(() => null)
   if (r) incomingRequests.value = r.incoming.length
@@ -277,7 +292,7 @@ watch(activeId, () => (copied.value = false))
           <ChannelRow
             v-for="c in channels"
             :key="c.id"
-            :name="c.name"
+            :name="titleOf(c)"
             :active="!showProfile && c.id === activeId"
             :unread="unread[c.id] || 0"
             @click="selectChannel(c.id)"
@@ -311,13 +326,14 @@ watch(activeId, () => (copied.value = false))
                       border-radius:var(--radius-panel);display:flex;flex-direction:column;overflow:hidden">
         <template v-if="active">
           <PaneHeader
-            :title="active.name"
-            :code="active.invite_code ? active.invite_code.slice(0, 10) + '…' : ''"
+            :title="titleOf(active)"
+            :code="active.kind === 'direct' ? '' : (active.invite_code || '').slice(0, 10) + '…'"
             :copied="copied"
             @copy="copyCode"
           >
             <template #actions>
-              <SgButton variant="outline" size="sm" @click="confirmLeave = true">Leave</SgButton>
+              <SgButton v-if="active.kind !== 'direct'" variant="outline" size="sm"
+                        @click="confirmLeave = true">Leave</SgButton>
             </template>
           </PaneHeader>
 
@@ -338,7 +354,7 @@ watch(activeId, () => (copied.value = false))
             >{{ m.text }}</MessageBubble>
           </div>
 
-          <MessageComposer :placeholder="`Message #${active.name}…`" @send="send" />
+          <MessageComposer :placeholder="active.kind === 'direct' ? `Message ${titleOf(active)}…` : `Message #${active.name}…`" @send="send" />
         </template>
 
 
@@ -362,6 +378,7 @@ watch(activeId, () => (copied.value = false))
       v-if="dialog === 'friends'"
       @close="dialog = null"
       @changed="incomingRequests = $event"
+      @message="openDirect"
     />
 
     <SgDialog v-if="dialog === 'create'" title="New channel" @close="dialog = null">

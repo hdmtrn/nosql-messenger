@@ -30,6 +30,7 @@ export const api = {
   channels: (params) => request('GET', '/channels' + qs(params)),
   createChannel: (name) => request('POST', '/channels', { name }),
   joinChannel: (code) => request('POST', '/channels/join', { code }),
+  openDirect: (username) => request('POST', '/channels/direct', { username }),
   leaveChannel: (id) => request('POST', `/channels/${id}/leave`),
 
   searchUsers: (q) => request('GET', '/users' + qs({ q })),
