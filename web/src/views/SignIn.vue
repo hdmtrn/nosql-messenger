@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { api } from '../api'
 import SgButton from '../components/SgButton.vue'
 import SgInput from '../components/SgInput.vue'
@@ -7,20 +7,57 @@ import ChannelGlyph from '../components/ChannelGlyph.vue'
 
 const emit = defineEmits(['signed-in'])
 
+const mode = ref('sign-in')
 const username = ref('')
 const password = ref('')
-const error = ref('')
-const busy = ref(false)
+const repeat = ref('')
 const reveal = ref(false)
+const busy = ref(false)
 
-async function submit(action) {
-  error.value = ''
+// Errors land on the field they are about: a taken name belongs to the name,
+// a rejected credential to the password.
+const usernameError = ref('')
+const passwordError = ref('')
+
+const registering = computed(() => mode.value === 'register')
+
+const mono = {
+  font: 'var(--text-machine)',
+  textTransform: 'uppercase',
+  letterSpacing: 'var(--mono-tracking)',
+  color: 'var(--grey)',
+}
+
+function switchTo(next) {
+  mode.value = next
+  usernameError.value = ''
+  passwordError.value = ''
+  repeat.value = ''
+}
+
+// Route by status, not by wording: "invalid username or password" names both
+// fields and belongs to neither in particular — it is the credential that failed.
+function place(message, status) {
+  const text = `${message} (${status})`
+  if (status === 409 || /^username/i.test(message)) usernameError.value = text
+  else passwordError.value = text
+}
+
+async function submit() {
+  usernameError.value = ''
+  passwordError.value = ''
+
+  if (registering.value && password.value !== repeat.value) {
+    passwordError.value = 'Passwords do not match'
+    return
+  }
+
   busy.value = true
   try {
-    await api[action](username.value, password.value)
+    await api[registering.value ? 'register' : 'login'](username.value, password.value)
     emit('signed-in', await api.me())
   } catch (e) {
-    error.value = `${e.message} (${e.status})`
+    place(e.message, e.status)
   } finally {
     busy.value = false
   }
@@ -45,27 +82,46 @@ async function submit(action) {
     <section style="flex:1;background:var(--surface-panel);
                     border-radius:var(--radius-panel);display:grid;
                     place-items:center;padding:32px">
-      <form
-        style="width:380px;display:flex;flex-direction:column;gap:24px"
-        @submit.prevent="submit('login')"
-      >
-        <h1 style="margin:0;font:700 34px/1.1 var(--font-ui);letter-spacing:-0.02em">Sign in</h1>
+      <form style="width:380px;display:flex;flex-direction:column;gap:24px"
+            @submit.prevent="submit">
+        <h1 style="margin:0;font:700 34px/1.1 var(--font-ui);letter-spacing:-0.02em">
+          {{ registering ? 'Register' : 'Sign in' }}
+        </h1>
 
-        <SgInput v-model="username" label="Username" hint="3-32 characters" />
+        <SgInput
+          v-model="username"
+          label="Username"
+          :hint="registering ? '3-32 letters, digits, _ or -' : ''"
+          :error="usernameError"
+        />
+
         <SgInput
           v-model="password"
           label="Password"
           :type="reveal ? 'text' : 'password'"
           :action="reveal ? 'Hide' : 'Show'"
-          :error="error"
+          :hint="registering ? '8 characters minimum' : ''"
+          :error="passwordError"
           @action="reveal = !reveal"
         />
 
-        <div style="display:flex;gap:12px;margin-top:8px">
-          <SgButton variant="primary" size="lg" type="submit" :disabled="busy">Sign in</SgButton>
-          <SgButton variant="outline" size="lg" :disabled="busy" @click="submit('register')">
-            Register
+        <SgInput v-if="registering" v-model="repeat" label="Repeat password" type="password" />
+
+        <div style="display:flex;flex-direction:column;gap:16px;margin-top:8px">
+          <SgButton variant="primary" size="lg" type="submit" :disabled="busy">
+            {{ registering ? 'Register' : 'Sign in' }}
           </SgButton>
+
+          <span :style="mono">
+            <template v-if="registering">
+              Have an account?
+              <a href="#" style="color:var(--blue)" @click.prevent="switchTo('sign-in')">Sign in</a>
+            </template>
+            <template v-else>
+              No account?
+              <a href="#" style="color:var(--blue)" @click.prevent="switchTo('register')">Register</a>
+            </template>
+          </span>
         </div>
       </form>
     </section>
