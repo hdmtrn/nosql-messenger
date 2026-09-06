@@ -4,7 +4,6 @@ import { api } from '../api'
 import { createSocket } from '../socket'
 import { channelTitle } from '../naming'
 import ChannelRail from '../components/ChannelRail.vue'
-import FriendsDialog from '../components/FriendsDialog.vue'
 import SgButton from '../components/SgButton.vue'
 import SgDialog from '../components/SgDialog.vue'
 import SgInput from '../components/SgInput.vue'
@@ -18,7 +17,9 @@ const channels = ref([])
 const activeId = ref(null)
 const messages = ref([])
 const unread = ref({})
-const incomingRequests = ref(0)
+const friends = ref([])
+const requests = ref([])
+const sentTo = ref([])
 const connection = ref('offline')
 const showProfile = ref(false)
 
@@ -75,10 +76,12 @@ const joinChannel = () => runDialog(async () => {
   return channel_id
 })
 
-const openDirect = (username) => runDialog(async () => {
-  const ch = await api.openDirect(username)
-  return ch.id
-})
+async function openDirect(username) {
+  const ch = await api.openDirect(username).catch(() => null)
+  if (!ch) return
+  await loadChannels()
+  selectChannel(ch.id)
+}
 
 async function leaveChannel() {
   const id = activeId.value
@@ -170,14 +173,31 @@ async function backfill() {
   }
 }
 
-async function loadRequestCount() {
-  const r = await api.friendRequests().catch(() => null)
-  if (r) incomingRequests.value = r.incoming.length
+// Friends and their conversations are the same list in the rail, so both are
+// loaded together and refreshed whenever either could have changed.
+async function loadPeople() {
+  const [list, pending] = await Promise.all([
+    api.friends().catch(() => []),
+    api.friendRequests().catch(() => ({ incoming: [] })),
+  ])
+  friends.value = list
+  requests.value = pending.incoming
+  sentTo.value = pending.outgoing.map((r) => r.to.username)
+}
+
+async function addFriend(username) {
+  await api.sendFriendRequest(username).catch(() => null)
+  loadPeople()
+}
+
+async function respond(id, action) {
+  await api[action === 'accept' ? 'acceptFriendRequest' : 'declineFriendRequest'](id).catch(() => null)
+  loadPeople()
 }
 
 onMounted(async () => {
   await loadChannels()
-  loadRequestCount()
+  loadPeople()
   socket = createSocket({
     onMessage: receive,
     onStateChange: (state) => {
@@ -201,12 +221,16 @@ onUnmounted(() => socket && socket.close())
         :channels="channels"
         :active-id="activeId"
         :unread="unread"
-        :incoming-requests="incomingRequests"
+        :friends="friends"
+        :requests="requests"
+        :sent-to="sentTo"
         :profile-open="showProfile"
         @select="selectChannel"
         @create="dialog = 'create'"
         @join="dialog = 'join'"
-        @friends="dialog = 'friends'"
+        @open-direct="openDirect"
+        @add-friend="addFriend"
+        @respond="respond"
         @profile="showProfile = true"
       />
 
@@ -245,13 +269,6 @@ onUnmounted(() => socket && socket.close())
         <SgButton variant="outline" @click="confirmLeave = false">Cancel</SgButton>
       </div>
     </SgDialog>
-
-    <FriendsDialog
-      v-if="dialog === 'friends'"
-      @close="dialog = null"
-      @changed="incomingRequests = $event"
-      @message="openDirect"
-    />
 
     <SgDialog v-if="dialog === 'create'" title="New channel" @close="dialog = null">
       <SgInput v-model="draftName" label="Name" hint="1-64 characters" :error="dialogError" />
