@@ -11,13 +11,22 @@ const emit = defineEmits(['close', 'changed'])
 const incoming = ref([])
 const outgoing = ref([])
 const friends = ref([])
-const username = ref('')
+const query = ref('')
+const found = ref([])
+let searchTimer = null
 const error = ref('')
 const busy = ref(false)
 
 const mono = {
   font: 'var(--text-machine)',
   textTransform: 'uppercase',
+  letterSpacing: 'var(--mono-tracking)',
+  color: 'var(--text-muted)',
+}
+
+// A handle is data, not a label: it must read exactly as it is stored.
+const handle = {
+  font: 'var(--text-machine-11)',
   letterSpacing: 'var(--mono-tracking)',
   color: 'var(--text-muted)',
 }
@@ -47,9 +56,18 @@ async function run(action) {
   }
 }
 
-const send = () => run(async () => {
-  await api.sendFriendRequest(username.value.trim())
-  username.value = ''
+function search() {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(async () => {
+    const q = query.value.trim()
+    found.value = q ? await api.searchUsers(q).catch(() => []) : []
+  }, 200)
+}
+
+const add = (name) => run(async () => {
+  await api.sendFriendRequest(name)
+  query.value = ''
+  found.value = []
 })
 
 onMounted(load)
@@ -57,10 +75,18 @@ onMounted(load)
 
 <template>
   <SgDialog title="Friends" @close="emit('close')">
-    <div style="display:flex;gap:12px;align-items:flex-end">
-      <SgInput v-model="username" label="Add by username" :error="error"
-               style="flex:1" @keyup.enter="send" />
-      <SgButton variant="primary" :disabled="busy || !username.trim()" @click="send">Send</SgButton>
+    <div>
+      <SgInput v-model="query" label="Find people" hint="Name or @handle"
+               :error="error" @update:model-value="search" />
+      <div v-for="u in found" :key="u.id"
+           style="display:flex;align-items:center;gap:12px;padding:8px 0">
+        <SgAvatar :initials="initials(u.display_name)" :size="32" />
+        <span style="flex:1;min-width:0">
+          <span style="font:var(--text-body)">{{ u.display_name }}</span>
+          <span :style="handle" style="margin-left:8px">@{{ u.username }}</span>
+        </span>
+        <SgButton variant="primary" size="sm" :disabled="busy" @click="add(u.username)">Add</SgButton>
+      </div>
     </div>
 
     <section v-if="incoming.length">

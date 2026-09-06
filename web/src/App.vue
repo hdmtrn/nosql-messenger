@@ -13,6 +13,11 @@ async function refreshSession() {
   me.value = who
 }
 
+// The profile changed in this window, so re-read it even though the user is the same.
+async function reloadProfile() {
+  me.value = await api.me().catch(() => null)
+}
+
 // The session lives in a cookie, which belongs to the browser profile rather than
 // to this window: signing in elsewhere replaces it under us. Re-check on focus so
 // the header never claims an identity the server no longer agrees with.
@@ -41,5 +46,5 @@ async function signOut() {
 <template>
   <div v-if="!ready" />
   <SignIn v-else-if="!me" @signed-in="me = $event" />
-  <Messenger v-else :key="me.id" :me="me" @log-out="signOut" />
+  <Messenger v-else :key="me.id" :me="me" @log-out="signOut" @profile-changed="reloadProfile" />
 </template>

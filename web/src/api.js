@@ -32,6 +32,10 @@ export const api = {
   joinChannel: (code) => request('POST', '/channels/join', { code }),
   leaveChannel: (id) => request('POST', `/channels/${id}/leave`),
 
+  searchUsers: (q) => request('GET', '/users' + qs({ q })),
+  user: (username) => request('GET', `/users/${encodeURIComponent(username)}`),
+  setDisplayName: (display_name) => request('POST', '/auth/me/display-name', { display_name }),
+
   friendRequests: () => request('GET', '/friends/requests'),
   sendFriendRequest: (username) => request('POST', '/friends/requests', { username }),
   acceptFriendRequest: (id) => request('POST', `/friends/requests/${id}/accept`),
