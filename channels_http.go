@@ -41,6 +41,12 @@ func (s *server) handleCreateChannel(w http.ResponseWriter, r *http.Request, ses
 		return
 	}
 
+	// A channel nobody can be invited to is not much of a channel, so it opens
+	// with one invite already made.
+	if _, err := s.invites.Create(r.Context(), ch.ID, sess.UserID); err != nil {
+		log.Printf("creating first invite: %v", err)
+	}
+
 	s.hub.Subscribe(sess.UserID.Hex(), ch.ID.Hex())
 	writeJSON(w, http.StatusCreated, ch)
 }
@@ -171,7 +177,7 @@ func (s *server) handleLeaveChannel(w http.ResponseWriter, r *http.Request, sess
 		return
 	}
 
-	err = s.channels.Leave(r.Context(), s.messages, id, sess.UserID)
+	err = s.channels.Leave(r.Context(), s.messages, s.invites, id, sess.UserID)
 	if errors.Is(err, errNotMember) {
 		writeError(w, http.StatusNotFound, "channel not found")
 		return
@@ -184,44 +190,4 @@ func (s *server) handleLeaveChannel(w http.ResponseWriter, r *http.Request, sess
 
 	s.hub.Unsubscribe(sess.UserID.Hex(), id.Hex())
 	writeJSON(w, http.StatusOK, map[string]string{"status": "left"})
-}
-
-type joinChannelRequest struct {
-	Code string `json:"code"`
-}
-
-func (s *server) handleJoinChannel(w http.ResponseWriter, r *http.Request, sess Session) {
-	var req joinChannelRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "malformed JSON")
-		return
-	}
-
-	ch, err := s.channels.ByInviteCode(r.Context(), req.Code)
-	if errors.Is(err, errChannelNotFound) {
-		writeError(w, http.StatusNotFound, "invite code not found")
-		return
-	}
-	if err != nil {
-		log.Printf("looking up invite code: %v", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-
-	switch err := s.channels.AddMember(r.Context(), ch.ID, sess); {
-	case err == nil:
-	case errors.Is(err, errAlreadyMember):
-		writeError(w, http.StatusConflict, "already a member of this channel")
-		return
-	case errors.Is(err, errChannelNotFound):
-		writeError(w, http.StatusNotFound, "invite code not found")
-		return
-	default:
-		log.Printf("joining channel: %v", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-
-	s.hub.Subscribe(sess.UserID.Hex(), ch.ID.Hex())
-	writeJSON(w, http.StatusOK, map[string]string{"status": "joined", "channel_id": ch.ID.Hex()})
 }

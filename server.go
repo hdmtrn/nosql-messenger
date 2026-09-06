@@ -17,6 +17,7 @@ type server struct {
 	channels *channelStore
 	messages *messageStore
 	friends  *friendStore
+	invites  *inviteStore
 }
 
 func (s *server) routes() http.Handler {
@@ -34,13 +35,16 @@ func (s *server) routes() http.Handler {
 
 	mux.HandleFunc("GET /users", s.requireAuth(s.handleSearchUsers))
 	mux.HandleFunc("GET /users/{username}", s.requireAuth(s.handleGetUser))
+	mux.HandleFunc("GET /users/{username}/channels", s.requireAuth(s.handleChannelsInCommon))
 
 	mux.HandleFunc("POST /channels", s.requireAuth(s.handleCreateChannel))
 	mux.HandleFunc("GET /channels", s.requireAuth(s.handleListChannels))
-	mux.HandleFunc("POST /channels/join", s.requireAuth(s.handleJoinChannel))
+	mux.HandleFunc("POST /channels/{id}/invites", s.requireAuth(s.handleCreateInvite))
+	mux.HandleFunc("GET /channels/{id}/invites", s.requireAuth(s.handleListInvites))
+	mux.HandleFunc("DELETE /channels/{id}/invites/{code}", s.requireAuth(s.handleRevokeInvite))
+	mux.HandleFunc("POST /invites/{code}", s.requireAuth(s.handleFollowInvite))
 	mux.HandleFunc("POST /channels/direct", s.requireAuth(s.handleOpenDirect))
 	mux.HandleFunc("GET /channels/{id}", s.requireAuth(s.handleGetChannel))
-	mux.HandleFunc("GET /channels/common/{username}", s.requireAuth(s.handleChannelsInCommon))
 	mux.HandleFunc("POST /channels/{id}/leave", s.requireAuth(s.handleLeaveChannel))
 
 	mux.HandleFunc("POST /messages", s.requireAuth(s.handleSendMessage))

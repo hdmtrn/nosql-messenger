@@ -17,18 +17,11 @@ const props = defineProps({
 const emit = defineEmits(['send', 'retry', 'discard', 'load-older', 'info'])
 
 const feed = ref(null)
-const copied = ref(false)
 
 const direct = () => props.channel.kind === 'direct'
 
 function clock(iso) {
   return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-}
-
-function copyCode() {
-  navigator.clipboard.writeText(props.channel.invite_code)
-  copied.value = true
-  setTimeout(() => (copied.value = false), 1500)
 }
 
 function onScroll() {
@@ -63,9 +56,6 @@ defineExpose({ toBottom, keepPosition, distanceFromBottom: () => (feed.value ? f
       :subtitle="direct() ? '@' + title
                           : channel.member_count + (channel.member_count === 1 ? ' member' : ' members')"
       :subtitle-upper="!direct()"
-      :code="direct() ? '' : (channel.invite_code || '').slice(0, 10) + '…'"
-      :copied="copied"
-      @copy="copyCode"
       @info="emit('info')"
     >
       <template #mark>

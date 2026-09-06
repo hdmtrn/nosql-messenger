@@ -29,10 +29,14 @@ export const api = {
 
   channels: (params) => request('GET', '/channels' + qs(params)),
   createChannel: (name) => request('POST', '/channels', { name }),
-  joinChannel: (code) => request('POST', '/channels/join', { code }),
+  followInvite: (code) => request('POST', `/invites/${encodeURIComponent(code)}`),
+  invites: (channelId) => request('GET', `/channels/${channelId}/invites`),
+  createInvite: (channelId) => request('POST', `/channels/${channelId}/invites`),
+  revokeInvite: (channelId, code) =>
+    request('DELETE', `/channels/${channelId}/invites/${encodeURIComponent(code)}`),
   openDirect: (username) => request('POST', '/channels/direct', { username }),
   channel: (id) => request('GET', `/channels/${id}`),
-  channelsInCommon: (username) => request('GET', `/channels/common/${encodeURIComponent(username)}`),
+  channelsInCommon: (username) => request('GET', `/users/${encodeURIComponent(username)}/channels`),
   leaveChannel: (id) => request('POST', `/channels/${id}/leave`),
 
   searchUsers: (q) => request('GET', '/users' + qs({ q })),

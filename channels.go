@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"time"
@@ -44,8 +43,6 @@ type Channel struct {
 	// MemberCount survives the projection that drops the member list itself.
 	MemberCount int `bson:"member_count,omitempty" json:"member_count,omitempty"`
 
-	InviteCode string `bson:"invite_code,omitempty" json:"invite_code,omitempty"`
-
 	// DirectKey is the sorted pair of participants, which makes "the conversation
 	// between these two" a value the database can enforce as unique.
 	DirectKey string `bson:"direct_key,omitempty" json:"-"`
@@ -71,10 +68,6 @@ func (s *channelStore) ensureIndexes(ctx context.Context) error {
 			Keys: bson.D{{Key: "members.user_id", Value: 1}, {Key: "_id", Value: 1}},
 		},
 		{
-			Keys:    bson.D{{Key: "invite_code", Value: 1}},
-			Options: options.Index().SetUnique(true).SetSparse(true),
-		},
-		{
 			Keys:    bson.D{{Key: "direct_key", Value: 1}},
 			Options: options.Index().SetUnique(true).SetSparse(true),
 		},
@@ -85,11 +78,10 @@ func (s *channelStore) ensureIndexes(ctx context.Context) error {
 func (s *channelStore) Create(ctx context.Context, name string, creator Session) (Channel, error) {
 	now := time.Now()
 	ch := Channel{
-		Kind:       channelKindNamed,
-		Name:       name,
-		CreatedBy:  creator.UserID,
-		CreatedAt:  now,
-		InviteCode: rand.Text(),
+		Kind:      channelKindNamed,
+		Name:      name,
+		CreatedBy: creator.UserID,
+		CreatedAt: now,
 		Members: []ChannelMember{{
 			UserID:   creator.UserID,
 			Username: creator.Username,
@@ -220,7 +212,7 @@ func (s *channelStore) AddMember(ctx context.Context, channelID bson.ObjectID, u
 // Leave pulls the member out and keeps the channel coherent afterwards: an
 // owner who leaves hands the role to the earliest remaining member, and a
 // channel nobody is left in goes away together with its messages.
-func (s *channelStore) Leave(ctx context.Context, messages *messageStore, channelID, userID bson.ObjectID) error {
+func (s *channelStore) Leave(ctx context.Context, messages *messageStore, invites *inviteStore, channelID, userID bson.ObjectID) error {
 	var ch Channel
 	err := s.col.FindOneAndUpdate(ctx,
 		bson.M{"_id": channelID, "members.user_id": userID},
@@ -236,7 +228,7 @@ func (s *channelStore) Leave(ctx context.Context, messages *messageStore, channe
 	}
 
 	if len(ch.Members) == 0 {
-		return s.discard(ctx, messages, channelID)
+		return s.discard(ctx, messages, invites, channelID)
 	}
 
 	for _, m := range ch.Members {
@@ -256,7 +248,7 @@ func (s *channelStore) Leave(ctx context.Context, messages *messageStore, channe
 
 // discard drops a channel and its messages together. Two collections must go or
 // stay as one, which is what the replica set buys us besides change streams.
-func (s *channelStore) discard(ctx context.Context, messages *messageStore, channelID bson.ObjectID) error {
+func (s *channelStore) discard(ctx context.Context, messages *messageStore, invites *inviteStore, channelID bson.ObjectID) error {
 	sess, err := s.col.Database().Client().StartSession()
 	if err != nil {
 		return fmt.Errorf("starting session: %w", err)
@@ -267,7 +259,10 @@ func (s *channelStore) discard(ctx context.Context, messages *messageStore, chan
 		if _, err := s.col.DeleteOne(ctx, bson.M{"_id": channelID}); err != nil {
 			return nil, err
 		}
-		_, err := messages.col.DeleteMany(ctx, bson.M{"channel_id": channelID})
+		if _, err := messages.col.DeleteMany(ctx, bson.M{"channel_id": channelID}); err != nil {
+			return nil, err
+		}
+		_, err := invites.col.DeleteMany(ctx, bson.M{"channel_id": channelID})
 		return nil, err
 	})
 	if err != nil {
@@ -308,21 +303,6 @@ func (s *channelStore) Direct(ctx context.Context, me Session, other *User) (Cha
 	).Decode(&ch)
 	if err != nil {
 		return Channel{}, fmt.Errorf("opening direct channel: %w", err)
-	}
-	return ch, nil
-}
-
-func (s *channelStore) ByInviteCode(ctx context.Context, code string) (Channel, error) {
-	var ch Channel
-	err := s.col.FindOne(ctx,
-		bson.M{"invite_code": code},
-		options.FindOne().SetProjection(bson.M{"_id": 1}),
-	).Decode(&ch)
-	if errors.Is(err, mongo.ErrNoDocuments) {
-		return Channel{}, errChannelNotFound
-	}
-	if err != nil {
-		return Channel{}, fmt.Errorf("looking up invite code: %w", err)
 	}
 	return ch, nil
 }

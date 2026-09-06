@@ -17,9 +17,9 @@ const emit = defineEmits(['close', 'leave', 'select'])
 const direct = () => props.channel.kind === 'direct'
 
 const members = ref([])
+const invites = ref([])
 const person = ref(null)
 const common = ref([])
-const copied = ref(false)
 
 async function load() {
   members.value = []
@@ -34,15 +34,31 @@ async function load() {
     person.value = who
     common.value = shared
   } else {
-    const full = await api.channel(props.channel.id).catch(() => null)
+    const [full, codes] = await Promise.all([
+      api.channel(props.channel.id).catch(() => null),
+      api.invites(props.channel.id).catch(() => []),
+    ])
     members.value = full ? full.members || [] : []
+    invites.value = codes
   }
 }
 
-function copyCode() {
-  navigator.clipboard.writeText(props.channel.invite_code)
-  copied.value = true
-  setTimeout(() => (copied.value = false), 1500)
+const copiedCode = ref('')
+
+function copy(code) {
+  navigator.clipboard.writeText(code)
+  copiedCode.value = code
+  setTimeout(() => (copiedCode.value = ''), 1500)
+}
+
+async function newInvite() {
+  await api.createInvite(props.channel.id).catch(() => null)
+  invites.value = await api.invites(props.channel.id).catch(() => [])
+}
+
+async function revoke(code) {
+  await api.revokeInvite(props.channel.id, code).catch(() => null)
+  invites.value = await api.invites(props.channel.id).catch(() => [])
 }
 
 watch(() => props.channel.id, load, { immediate: true })
@@ -81,8 +97,6 @@ const row = { display: 'flex', alignItems: 'center', gap: '12px', padding: '0 24
       <p v-if="direct() && person && person.bio"
          style="margin:0;font:var(--text-body);color:var(--text-muted)">{{ person.bio }}</p>
 
-      <CodePill v-if="!direct() && channel.invite_code"
-                :code="channel.invite_code.slice(0, 10) + '…'" :copied="copied" @copy="copyCode" />
     </div>
 
     <template v-if="direct()">
@@ -100,6 +114,20 @@ const row = { display: 'flex', alignItems: 'center', gap: '12px', padding: '0 24
     </template>
 
     <template v-else>
+      <div style="display:flex;align-items:center;padding:0 24px">
+        <span :style="mono" style="flex:1">Invites</span>
+        <SgButton variant="outline" size="sm" @click="newInvite">New</SgButton>
+      </div>
+      <div :style="panel" style="padding:12px 24px;display:flex;flex-direction:column;gap:10px">
+        <p v-if="!invites.length" :style="mono" style="margin:0">None</p>
+        <div v-for="i in invites" :key="i.code" style="display:flex;align-items:center;gap:8px">
+          <CodePill :code="i.code.slice(0, 10) + '…'" :copied="copiedCode === i.code"
+                    @copy="copy(i.code)" />
+          <span style="flex:1"></span>
+          <SgButton variant="mutedText" @click="revoke(i.code)">Revoke</SgButton>
+        </div>
+      </div>
+
       <span :style="mono" style="padding:0 24px">Members</span>
       <div :style="panel" style="padding:4px 0">
         <div v-for="m in members" :key="m.user_id" :style="row">

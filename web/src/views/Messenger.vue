@@ -73,7 +73,7 @@ const createChannel = () => runDialog(async () => {
 })
 
 const joinChannel = () => runDialog(async () => {
-  const { channel_id } = await api.joinChannel(draftCode.value.trim())
+  const { channel_id } = await api.followInvite(draftCode.value.trim())
   draftCode.value = ''
   return channel_id
 })
