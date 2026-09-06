@@ -60,7 +60,8 @@ defineExpose({ toBottom, keepPosition, distanceFromBottom: () => (feed.value ? f
                   display:flex;flex-direction:column;overflow:hidden">
     <PaneHeader
       :title="title"
-      :subtitle="direct() ? '@' + title : channel.member_count + ' members'"
+      :subtitle="direct() ? '@' + title
+                          : channel.member_count + (channel.member_count === 1 ? ' member' : ' members')"
       :subtitle-upper="!direct()"
       :code="direct() ? '' : (channel.invite_code || '').slice(0, 10) + '…'"
       :copied="copied"

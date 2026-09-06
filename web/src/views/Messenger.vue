@@ -257,6 +257,10 @@ onUnmounted(() => socket && socket.close())
         @info="showInfo = !showInfo"
       />
 
+      <p v-else class="sg-mono" style="margin:auto;color:var(--text-muted)">
+        Create a channel or join one by code
+      </p>
+
       <InfoPanel
         v-if="showInfo && active"
         :me="me"
@@ -267,9 +271,6 @@ onUnmounted(() => socket && socket.close())
         @select="selectChannel"
       />
 
-      <p v-else class="sg-mono" style="margin:auto;color:var(--text-muted)">
-        Create a channel or join one by code
-      </p>
     </div>
 
     <SgDialog v-if="confirmLeave" :title="`Leave #${active?.name}?`" @close="confirmLeave = false">
