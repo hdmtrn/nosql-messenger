@@ -23,7 +23,10 @@ type Invite struct {
 	CreatedAt time.Time     `bson:"created_at" json:"created_at"`
 }
 
-var errInviteNotFound = errors.New("invite not found")
+var (
+	errInviteNotFound = errors.New("invite not found")
+	errTooManyInvites = errors.New("too many invites for this channel")
+)
 
 type inviteStore struct {
 	col *mongo.Collection
@@ -40,7 +43,22 @@ func (s *inviteStore) ensureIndexes(ctx context.Context) error {
 	return err
 }
 
+// Create refuses past invitesMaxPerChannel, which is the same number ForChannel
+// returns. The two must match: an invite that exists but never appears in the
+// list is one nobody can revoke, and it keeps working forever.
+//
+// Counting and inserting are two operations, so two simultaneous requests can
+// both see 19 and leave 21 behind. The cap is here to stop a runaway loop, not
+// to be exact, and being one over does not break the property above.
 func (s *inviteStore) Create(ctx context.Context, channelID, by bson.ObjectID) (Invite, error) {
+	n, err := s.col.CountDocuments(ctx, bson.M{"channel_id": channelID})
+	if err != nil {
+		return Invite{}, fmt.Errorf("counting invites: %w", err)
+	}
+	if n >= invitesMaxPerChannel {
+		return Invite{}, errTooManyInvites
+	}
+
 	inv := Invite{
 		Code:      rand.Text(),
 		ChannelID: channelID,

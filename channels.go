@@ -52,6 +52,7 @@ var (
 	errChannelNotFound = errors.New("channel not found")
 	errNotMember       = errors.New("not a member of this channel")
 	errAlreadyMember   = errors.New("already a member of this channel")
+	errNotJoinable     = errors.New("channel cannot be joined")
 )
 
 type channelStore struct {
@@ -183,9 +184,18 @@ func (s *channelStore) IsMember(ctx context.Context, channelID, userID bson.Obje
 	return true, nil
 }
 
+// AddMember only ever grows a named channel. A direct conversation is defined
+// by exactly the two people in it — its direct_key is their sorted pair — so a
+// third member would leave the document contradicting its own key. The rule
+// lives here rather than in the callers so that every future way of joining
+// inherits it.
 func (s *channelStore) AddMember(ctx context.Context, channelID bson.ObjectID, u Session) error {
 	res, err := s.col.UpdateOne(ctx,
-		bson.M{"_id": channelID, "members.user_id": bson.M{"$ne": u.UserID}},
+		bson.M{
+			"_id":             channelID,
+			"kind":            channelKindNamed,
+			"members.user_id": bson.M{"$ne": u.UserID},
+		},
 		bson.M{"$push": bson.M{"members": ChannelMember{
 			UserID:   u.UserID,
 			Username: u.Username,
@@ -197,16 +207,49 @@ func (s *channelStore) AddMember(ctx context.Context, channelID bson.ObjectID, u
 		return fmt.Errorf("adding member: %w", err)
 	}
 	if res.MatchedCount == 0 {
-		exists, cerr := s.exists(ctx, channelID)
-		if cerr != nil {
-			return cerr
-		}
-		if exists {
-			return errAlreadyMember
-		}
-		return errChannelNotFound
+		return s.whyNotAdded(ctx, channelID, u.UserID)
 	}
 	return nil
+}
+
+// whyNotAdded turns "the filter matched nothing" back into the reason it
+// matched nothing. It costs a second read, but only on the path that already
+// failed.
+func (s *channelStore) whyNotAdded(ctx context.Context, channelID, userID bson.ObjectID) error {
+	var ch Channel
+	err := s.col.FindOne(ctx, bson.M{"_id": channelID},
+		options.FindOne().SetProjection(bson.M{"kind": 1, "members.user_id": 1}),
+	).Decode(&ch)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return errChannelNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("checking channel: %w", err)
+	}
+	if ch.Kind != channelKindNamed {
+		return errNotJoinable
+	}
+	// Named, and it exists: the only clause left for the filter to have
+	// rejected is the one saying the member is not already there.
+	return errAlreadyMember
+}
+
+// KindForMember answers both questions the invite endpoints ask, in one read:
+// whether this person is inside the channel, and whether it is the sort of
+// channel that has invites at all.
+func (s *channelStore) KindForMember(ctx context.Context, channelID, userID bson.ObjectID) (string, error) {
+	var ch Channel
+	err := s.col.FindOne(ctx,
+		bson.M{"_id": channelID, "members.user_id": userID},
+		options.FindOne().SetProjection(bson.M{"kind": 1}),
+	).Decode(&ch)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return "", errNotMember
+	}
+	if err != nil {
+		return "", fmt.Errorf("reading channel kind: %w", err)
+	}
+	return ch.Kind, nil
 }
 
 // Leave pulls the member out and keeps the channel coherent afterwards: an
@@ -305,16 +348,4 @@ func (s *channelStore) Direct(ctx context.Context, me Session, other *User) (Cha
 		return Channel{}, fmt.Errorf("opening direct channel: %w", err)
 	}
 	return ch, nil
-}
-
-func (s *channelStore) exists(ctx context.Context, id bson.ObjectID) (bool, error) {
-	err := s.col.FindOne(ctx, bson.M{"_id": id},
-		options.FindOne().SetProjection(bson.M{"_id": 1})).Err()
-	if errors.Is(err, mongo.ErrNoDocuments) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("checking channel: %w", err)
-	}
-	return true, nil
 }
