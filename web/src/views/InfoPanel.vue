@@ -21,8 +21,15 @@ const invites = ref([])
 const person = ref(null)
 const common = ref([])
 
+// Every load is numbered. Switching channels twice in a row leaves two requests
+// in flight, and the first one may answer last; a reply that is not the newest
+// question's is dropped instead of overwriting it.
+let asked = 0
+
 async function load() {
+  const mine = ++asked
   members.value = []
+  invites.value = []
   person.value = null
   common.value = []
 
@@ -31,6 +38,7 @@ async function load() {
       api.user(props.title).catch(() => null),
       api.channelsInCommon(props.title).catch(() => []),
     ])
+    if (mine !== asked) return
     person.value = who
     common.value = shared
   } else {
@@ -38,6 +46,7 @@ async function load() {
       api.channel(props.channel.id).catch(() => null),
       api.invites(props.channel.id).catch(() => []),
     ])
+    if (mine !== asked) return
     members.value = full ? full.members || [] : []
     invites.value = codes
   }
@@ -55,12 +64,22 @@ function copy(code) {
   setTimeout(() => (copiedCode.value = ''), 1500)
 }
 
+// The server caps invites at the number this list shows, so New can legitimately
+// refuse. A button that does nothing and says nothing is worse than the cap.
+const inviteError = ref('')
+
 async function newInvite() {
-  await api.createInvite(props.channel.id).catch(() => null)
+  inviteError.value = ''
+  try {
+    await api.createInvite(props.channel.id)
+  } catch (e) {
+    inviteError.value = e.message
+  }
   invites.value = await api.invites(props.channel.id).catch(() => [])
 }
 
 async function revoke(code) {
+  inviteError.value = ''
   await api.revokeInvite(props.channel.id, code).catch(() => null)
   invites.value = await api.invites(props.channel.id).catch(() => [])
 }
@@ -123,6 +142,9 @@ const row = { display: 'flex', alignItems: 'center', gap: '12px', padding: '0 24
         <SgButton variant="outline" size="sm" @click="newInvite">New</SgButton>
       </div>
       <div :style="panel" style="padding:12px 24px;display:flex;flex-direction:column;gap:10px">
+        <p v-if="inviteError" :style="mono" style="margin:0;color:var(--status-error)">
+          {{ inviteError }}
+        </p>
         <p v-if="!invites.length" :style="mono" style="margin:0">None</p>
         <div v-for="i in invites" :key="i.code" style="display:flex;align-items:center;gap:12px">
           <SgButton variant="outline" size="sm" @click="copy(i.code)">

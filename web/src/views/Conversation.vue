@@ -40,10 +40,7 @@ async function keepPosition(before) {
   if (feed.value) feed.value.scrollTop = feed.value.scrollHeight - before
 }
 
-watch(() => props.channel.id, () => {
-  copied.value = false
-  toBottom()
-})
+watch(() => props.channel.id, toBottom)
 
 defineExpose({ toBottom, keepPosition, distanceFromBottom: () => (feed.value ? feed.value.scrollHeight - feed.value.scrollTop : 0) })
 </script>

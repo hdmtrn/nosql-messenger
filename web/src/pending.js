@@ -5,7 +5,15 @@ let code = null
 
 const match = location.pathname.match(/^\/invite\/(.+)$/)
 if (match) {
-  code = decodeURIComponent(match[1])
+  // This runs while the module is being evaluated, before createApp. A link
+  // mangled in transit can carry an escape sequence decodeURIComponent refuses
+  // (%ED%A0%80, say); letting it throw here would abort the whole bundle and
+  // leave a blank page instead of an "invite not found".
+  try {
+    code = decodeURIComponent(match[1])
+  } catch {
+    code = null
+  }
   history.replaceState(null, '', '/')
 }
 
