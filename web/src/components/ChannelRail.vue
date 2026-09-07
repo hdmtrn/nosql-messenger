@@ -133,7 +133,15 @@ const footerStyle = computed(() => ({
           </div>
         </template>
 
-        <span :style="label" style="padding:20px 14px 12px">Channels</span>
+        <div style="display:flex;align-items:center;padding:20px 14px 12px">
+          <span :style="label" style="flex:1">Channels</span>
+          <SgButton
+            variant="ghost" size="sm" on-blue :mono="false"
+            aria-label="New channel"
+            style="width:26px;padding:0;font:300 22px/1 var(--font-ui)"
+            @click="emit('create')"
+          >+</SgButton>
+        </div>
         <ChannelRow
           v-for="c in named"
           :key="c.id"
@@ -142,10 +150,6 @@ const footerStyle = computed(() => ({
           :unread="unread[c.id] || 0"
           @click="emit('select', c.id)"
         />
-        <div style="display:flex;gap:8px;padding:6px 8px 0">
-          <SgButton variant="outline" size="sm" on-blue @click="emit('create')">+ New</SgButton>
-        </div>
-
         <span :style="label" style="padding:20px 14px 12px">Direct messages</span>
         <ChannelRow
           v-for="d in conversations"
