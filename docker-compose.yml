@@ -2,10 +2,13 @@ services:
   mongo:
     image: mongo:8.0
     command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    # Только на loopback: наружу база не смотрит ни локально, ни на инстансе.
+    # Административный доступ на инстансе — через SSH-туннель.
     ports:
       - "127.0.0.1:27017:27017"
     volumes:
       - mongo-data:/data/db
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
       interval: 5s
@@ -23,5 +26,41 @@ services:
       mongosh --host mongo:27017 --quiet --eval
       "try { rs.status().ok } catch (e) { rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'mongo:27017'}]}) }"
 
+  app:
+    # build — для локальной работы; image — чтобы на инстансе, где исходников
+    # нет, этот же файл поднимал образ, приехавший через docker load
+    # (docker compose up -d --no-build).
+    build: .
+    image: messenger:latest
+    depends_on:
+      # Здоровый mongod ещё НЕ значит инициированную реплику, а приложение
+      # на ping к неинициированной упадёт. Поэтому ждём не mongo, а выхода
+      # одноразового mongo-init с нулевым кодом.
+      mongo-init:
+        condition: service_completed_successfully
+    environment:
+      # directConnection обязателен: реплика инициирована как mongo:27017,
+      # и без этого флага драйвер пошёл бы по объявленной топологии, а не
+      # по адресу из URI.
+      MONGO_URI: "mongodb://mongo:27017/?directConnection=true"
+      # По умолчанию в коде true, и такую куку браузер по http не примет —
+      # вход не заработает. На инстансе с TLS переменную не ставим.
+      COOKIE_SECURE: "false"
+    ports:
+      - "8080:8080"
+    volumes:
+      # Кеш сертификатов Let's Encrypt. Обязан переживать перезапуск: иначе
+      # autocert перезапрашивает сертификат каждый раз и упирается в недельный
+      # лимит (5 на домен). Пустует до шага с autocert.
+      - autocert-cache:/app/certs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
 volumes:
   mongo-data:
+  autocert-cache:
