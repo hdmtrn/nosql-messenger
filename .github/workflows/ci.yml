@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Тесты в invites_test.go — интеграционные, и им нужна ИНИЦИИРОВАННАЯ
+      # реплика: channels.go открывает транзакцию, а транзакции на standalone
+      # mongod не работают. Поэтому не блок services:, а тот же docker compose,
+      # что и на машине разработки — одно описание базы вместо двух, которые
+      # неизбежно разъедутся.
+      - name: Поднять MongoDB как replica set
+        run: |
+          docker compose up -d --wait mongo
+          docker compose run --rm mongo-init
+
+      - run: go vet ./...
+
+      # -race — это ThreadSanitizer. hub_test.go проверяет конкурентный доступ
+      # к хабу, и такие ошибки чтением кода не находятся.
+      # CI=true заставляет тесты ПАДАТЬ при недоступной базе вместо пропуска:
+      # пропущенный тест выглядит как пройденный.
+      - name: Тесты
+        run: go test -race ./...
+        env:
+          CI: "true"
+          MONGO_URI: mongodb://127.0.0.1:27017/?directConnection=true
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+        working-directory: web
+
+      # Сборка фронта — это тоже проверка: vite падает на битом шаблоне .vue,
+      # чего go vet не увидит.
+      - run: npm run build
+        working-directory: web

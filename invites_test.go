@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -25,6 +26,12 @@ func testDB(t *testing.T) *mongo.Database {
 	ctx := context.Background()
 	client, err := connectMongo(ctx)
 	if err != nil {
+		// В CI отсутствие базы — это поломка сборки, а не отсутствующее
+		// условие: пропущенный тест выглядит как пройденный, и зелёная
+		// галочка начинает означать «ничего не проверено».
+		if os.Getenv("CI") != "" {
+			t.Fatalf("no MongoDB at %s: %v", mongoURI(), err)
+		}
 		t.Skipf("no MongoDB at %s: %v", mongoURI(), err)
 	}
 
