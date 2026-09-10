@@ -1,5 +1,5 @@
 <script setup>
-import { nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import PaneHeader from '../components/PaneHeader.vue'
 import MessageBubble from '../components/MessageBubble.vue'
 import MessageComposer from '../components/MessageComposer.vue'
@@ -19,6 +19,23 @@ const emit = defineEmits(['send', 'retry', 'discard', 'load-older', 'info'])
 const feed = ref(null)
 
 const direct = () => props.channel.kind === 'direct'
+
+// A pause this long ends a run even when the same person keeps talking: the
+// header is what tells the reader the conversation moved on in time.
+const RUN_BREAK_MS = 5 * 60 * 1000
+
+// Consecutive messages from one author collapse into a run, and only its first
+// message carries the avatar, the name and the clock.
+const rows = computed(() =>
+  props.messages.map((m, i) => {
+    const prev = props.messages[i - 1]
+    const head =
+      !prev ||
+      prev.author.id !== m.author.id ||
+      new Date(m.created_at) - new Date(prev.created_at) > RUN_BREAK_MS
+    return { m, head }
+  })
+)
 
 function clock(iso) {
   return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -61,19 +78,21 @@ defineExpose({ toBottom, keepPosition, distanceFromBottom: () => (feed.value ? f
       </template>
     </PaneHeader>
 
-    <div ref="feed" class="feed" :style="{ gap: direct() ? '10px' : '18px' }" @scroll="onScroll">
+    <div ref="feed" class="feed" @scroll="onScroll">
       <p v-if="!messages.length" class="sg-mono" style="margin:auto;color:var(--text-muted)">
         No messages yet
       </p>
 
       <MessageBubble
-        v-for="m in messages"
+        v-for="({ m, head }, i) in rows"
         :key="m.id || m.client_msg_id"
         :own="m.author.id === me.id"
+        :head="head"
         :status="m.status || 'delivered'"
         :author="direct() ? '' : m.author.username"
         :initials="initials(m.author.username)"
         :time="m.status && m.status !== 'delivered' ? '' : clock(m.created_at)"
+        :style="head && i > 0 ? { marginTop: direct() ? '10px' : '18px' } : null"
         @retry="emit('retry', m)"
         @discard="emit('discard', m)"
       >{{ m.text }}</MessageBubble>
@@ -93,6 +112,8 @@ defineExpose({ toBottom, keepPosition, distanceFromBottom: () => (feed.value ? f
   padding: 22px 28px;
   display: flex;
   flex-direction: column;
+  /* spacing inside a run; the first bubble of a run adds its own margin on top */
+  gap: 4px;
 }
 /* short conversations hug the bottom; long ones still scroll from the top */
 .feed > :first-child { margin-top: auto; }
