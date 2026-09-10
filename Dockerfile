@@ -22,7 +22,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 
-COPY *.go ./
+COPY server/ ./server/
 
 # CGO_ENABLED=0 даёт статический бинарник: финальный образ на alpine с musl,
 # а тулчейн Go линкуется с glibc, поэтому динамический бинарник там не
@@ -31,7 +31,7 @@ COPY *.go ./
 # -trimpath убирает абсолютные пути сборки из бинарника; -s -w выбрасывают
 # таблицу символов и DWARF (~30% размера). Стектрейсы при панике остаются
 # читаемыми: имена функций Go хранит отдельно от DWARF, в pclntab.
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/messenger .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/messenger ./server
 
 
 # Стадия 3: то, что поедет на инстанс. Ни node, ни тулчейна Go здесь нет.

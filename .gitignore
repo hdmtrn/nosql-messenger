@@ -1,4 +1,6 @@
 messenger
+# go build, запущенный внутри server/, называет бинарник по имени каталога.
+/server/server
 *.exe
 *.test
 *.out
