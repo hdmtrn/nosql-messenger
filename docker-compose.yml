@@ -2,8 +2,8 @@ services:
   mongo:
     image: mongo:8.0
     command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
-    # Только на loopback: наружу база не смотрит ни локально, ни на инстансе.
-    # Административный доступ на инстансе — через SSH-туннель.
+    # Loopback only: the database is not exposed, neither locally nor on the
+    # instance. Admin access on the instance goes through an SSH tunnel.
     ports:
       - "127.0.0.1:27017:27017"
     volumes:
@@ -27,31 +27,32 @@ services:
       "try { rs.status().ok } catch (e) { rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'mongo:27017'}]}) }"
 
   app:
-    # build — для локальной работы; image — чтобы на инстансе, где исходников
-    # нет, этот же файл поднимал образ, приехавший через docker load
+    # build is for local work; image is so that on the instance, which has no
+    # sources, this same file starts the image delivered by docker load
     # (docker compose up -d --no-build).
     build: .
     image: messenger:latest
     depends_on:
-      # Здоровый mongod ещё НЕ значит инициированную реплику, а приложение
-      # на ping к неинициированной упадёт. Поэтому ждём не mongo, а выхода
-      # одноразового mongo-init с нулевым кодом.
+      # A healthy mongod does NOT yet mean an initiated replica set, and the app
+      # fails its ping against an uninitiated one. So it waits not for mongo but
+      # for the one-shot mongo-init to exit with code zero.
       mongo-init:
         condition: service_completed_successfully
     environment:
-      # directConnection обязателен: реплика инициирована как mongo:27017,
-      # и без этого флага драйвер пошёл бы по объявленной топологии, а не
-      # по адресу из URI.
+      # directConnection is required: the replica set was initiated as
+      # mongo:27017, and without this flag the driver would follow the
+      # advertised topology instead of the address in the URI.
       MONGO_URI: "mongodb://mongo:27017/?directConnection=true"
-      # По умолчанию в коде true, и такую куку браузер по http не примет —
-      # вход не заработает. На инстансе с TLS переменную не ставим.
+      # The code defaults to true, and the browser will not accept such a cookie
+      # over http, so login would not work. On the instance with TLS the
+      # variable is not set.
       COOKIE_SECURE: "false"
     ports:
       - "8080:8080"
     volumes:
-      # Кеш сертификатов Let's Encrypt. Обязан переживать перезапуск: иначе
-      # autocert перезапрашивает сертификат каждый раз и упирается в недельный
-      # лимит (5 на домен). Пустует до шага с autocert.
+      # Let's Encrypt certificate cache. It must survive restarts: otherwise
+      # autocert requests a certificate every time and hits the weekly limit
+      # (5 per domain). Stays empty until the autocert step.
       - autocert-cache:/app/certs
     restart: unless-stopped
     healthcheck:

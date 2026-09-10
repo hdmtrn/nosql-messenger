@@ -1,19 +1,19 @@
-# Всё, что не нужно внутри образа. Каталог целиком уходит демону docker при
-# каждой сборке, поэтому дешевле исключить, чем передать и не использовать.
+# Everything the image does not need. The whole directory is sent to the docker
+# daemon on every build, so it is cheaper to exclude than to send and not use.
 
 .git
 .idea
 
-# Локальный бинарник: собран под macOS, внутри linux/arm64 бесполезен.
+# Local binary: built for macOS, useless inside linux/arm64.
 messenger
 *.test
 *.out
 
-# Ставится и собирается в самом образе.
+# Installed and built inside the image itself.
 web/node_modules
 web/dist
 
-# Тексты, инфраструктура, окружение — к сборке образа отношения не имеют.
+# Texts, infrastructure, environment: nothing to do with building the image.
 *.md
 thesis/
 cloudformation/
