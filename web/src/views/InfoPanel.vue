@@ -12,7 +12,7 @@ const props = defineProps({
   channel: { type: Object, required: true },
   title: { type: String, required: true },
 })
-const emit = defineEmits(['close', 'leave', 'select'])
+const emit = defineEmits(['close', 'leave', 'select', 'person'])
 
 const direct = () => props.channel.kind === 'direct'
 
@@ -157,11 +157,15 @@ const row = { display: 'flex', alignItems: 'center', gap: '12px', padding: '0 24
 
       <span :style="mono" style="padding:0 24px">Members</span>
       <div :style="panel" style="padding:4px 0">
-        <div v-for="m in members" :key="m.user_id" :style="row">
+        <component :is="m.user_id === me.id ? 'div' : 'button'" v-for="m in members" :key="m.user_id"
+                   :type="m.user_id === me.id ? undefined : 'button'"
+                   :style="m.user_id === me.id ? row
+                     : { ...row, width: '100%', border: 'none', background: 'none', cursor: 'pointer' }"
+                   @click="m.user_id === me.id || emit('person', m.username)">
           <SgAvatar :initials="initials(m.username)" :size="28" />
-          <span style="flex:1;font:var(--text-body)">{{ m.username }}</span>
+          <span style="flex:1;text-align:left;font:var(--text-body)">{{ m.username }}</span>
           <span :style="mono">{{ m.user_id === me.id ? 'You' : m.role === 'owner' ? 'Owner' : '' }}</span>
-        </div>
+        </component>
       </div>
 
       <div :style="panel" style="padding:4px 0">

@@ -11,6 +11,7 @@ import SgInput from '../components/SgInput.vue'
 import Conversation from './Conversation.vue'
 import InfoPanel from './InfoPanel.vue'
 import Profile from './Profile.vue'
+import UserPanel from './UserPanel.vue'
 
 const props = defineProps({ me: { type: Object, required: true } })
 const emit = defineEmits(['log-out', 'profile-changed'])
@@ -25,6 +26,9 @@ const sentTo = ref([])
 const connection = ref('offline')
 const showProfile = ref(false)
 const showInfo = ref(false)
+// Username of the person whose page is open. It takes the same slot as the
+// channel info, so opening one closes the other.
+const person = ref('')
 
 const conversation = ref(null)
 const loadingOlder = ref(false)
@@ -202,6 +206,19 @@ async function addFriend(username) {
   loadPeople()
 }
 
+function openPerson(username) {
+  showInfo.value = false
+  person.value = username
+}
+
+const relation = computed(() => {
+  const u = person.value
+  if (friends.value.some((f) => f.username === u)) return 'friend'
+  if (requests.value.some((r) => r.from.username === u)) return 'incoming'
+  if (sentTo.value.includes(u)) return 'sent'
+  return 'none'
+})
+
 async function respond(id, action) {
   await api[action === 'accept' ? 'acceptFriendRequest' : 'declineFriendRequest'](id).catch(() => null)
   loadPeople()
@@ -254,6 +271,7 @@ onUnmounted(() => socket && socket.close())
         @add-friend="addFriend"
         @respond="respond"
         @profile="showProfile = true"
+        @person="openPerson"
       />
 
       <Profile
@@ -270,11 +288,13 @@ onUnmounted(() => socket && socket.close())
         :channel="active"
         :title="activeTitle"
         :messages="messages"
+        :person="person"
         @send="send"
         @retry="deliver"
         @discard="discard"
         @load-older="loadOlder"
-        @info="showInfo = !showInfo"
+        @info="showInfo = !showInfo; person = ''"
+        @person="openPerson"
       />
 
       <p v-else class="sg-mono" style="margin:auto;color:var(--text-muted)">
@@ -288,6 +308,17 @@ onUnmounted(() => socket && socket.close())
         :title="activeTitle"
         @close="showInfo = false"
         @leave="showInfo = false; confirmLeave = true"
+        @select="selectChannel"
+        @person="openPerson"
+      />
+
+      <UserPanel
+        v-if="person && !showProfile"
+        :username="person"
+        :relation="relation"
+        @close="person = ''"
+        @message="openDirect"
+        @befriend="addFriend"
         @select="selectChannel"
       />
 

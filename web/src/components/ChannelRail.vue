@@ -17,7 +17,7 @@ const props = defineProps({
   profileOpen: Boolean,
 })
 
-const emit = defineEmits(['select', 'create', 'open-direct', 'add-friend', 'respond', 'profile'])
+const emit = defineEmits(['select', 'create', 'open-direct', 'add-friend', 'respond', 'profile', 'person'])
 
 const query = ref('')
 const found = ref([])
@@ -56,6 +56,29 @@ const label = {
   textTransform: 'uppercase',
   letterSpacing: 'var(--mono-tracking)',
   color: 'var(--text-on-blue-muted)',
+}
+
+// Avatar and name of someone found or asking: together they open that person's page.
+const person = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '12px',
+  flex: 1,
+  minWidth: 0,
+  padding: 0,
+  border: 'none',
+  background: 'none',
+  cursor: 'pointer',
+}
+const personName = {
+  flex: 1,
+  minWidth: 0,
+  textAlign: 'left',
+  font: 'var(--text-body)',
+  color: '#fff',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
 }
 
 const searchField = {
@@ -106,9 +129,10 @@ const footerStyle = computed(() => ({
         <p v-if="!found.length" :style="label" style="padding:0 14px 8px">Nothing found</p>
         <div v-for="u in found" :key="u.id"
              style="display:flex;align-items:center;gap:12px;height:38px;padding:0 14px">
-          <SgAvatar :initials="initials(u.display_name)" :size="22" tone="onBlue" />
-          <span style="flex:1;min-width:0;font:var(--text-body);color:#fff;overflow:hidden;
-                       text-overflow:ellipsis;white-space:nowrap">{{ u.display_name }}</span>
+          <button type="button" :style="person" @click="emit('person', u.username)">
+            <SgAvatar :initials="initials(u.display_name)" :size="22" tone="onBlue" />
+            <span :style="personName">{{ u.display_name }}</span>
+          </button>
           <SgButton
             variant="outline" size="sm" on-blue
             :disabled="isPending(u.username)"
@@ -123,9 +147,10 @@ const footerStyle = computed(() => ({
           <span :style="label" style="padding:0 14px 12px">Friend requests</span>
           <div v-for="r in requests" :key="r.id"
                style="display:flex;align-items:center;gap:8px;padding:4px 14px 8px">
-            <SgAvatar :initials="initials(r.from.username)" :size="22" tone="onBlue" />
-            <span style="flex:1;min-width:0;font:var(--text-body);color:#fff;overflow:hidden;
-                         text-overflow:ellipsis;white-space:nowrap">{{ r.from.username }}</span>
+            <button type="button" :style="person" @click="emit('person', r.from.username)">
+              <SgAvatar :initials="initials(r.from.username)" :size="22" tone="onBlue" />
+              <span :style="personName">{{ r.from.username }}</span>
+            </button>
             <SgButton variant="outline" size="sm" on-blue
                       @click="emit('respond', r.id, 'accept')">Yes</SgButton>
             <SgButton variant="ghost" size="sm" on-blue
