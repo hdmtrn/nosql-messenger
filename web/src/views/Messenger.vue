@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api } from '../api'
 import { createSocket } from '../socket'
 import { channelTitle } from '../naming'
@@ -38,11 +38,28 @@ const dialogError = ref('')
 const active = computed(() => channels.value.find((c) => c.id === activeId.value) || null)
 const activeTitle = computed(() => channelTitle(active.value, props.me.id))
 
+/* ---------- address bar ---------- */
+
+// The open pane lives in the address bar, so a reload lands back on it. The
+// prefix is /c/ and not /channels/ because GET /channels/{id} is an API route:
+// the dev proxy would answer a reload with JSON instead of the page.
+function paneFromUrl() {
+  if (location.pathname === '/profile') showProfile.value = true
+  const match = location.pathname.match(/^\/c\/([^/]+)$/)
+  if (match) activeId.value = match[1]
+}
+
+// replaceState rather than pushState: switching chats should not pile up
+// entries that the back button would then have to walk through.
+watch([activeId, showProfile], () => {
+  const path = showProfile.value ? '/profile' : activeId.value ? `/c/${activeId.value}` : '/'
+  if (location.pathname !== path) history.replaceState(null, '', path)
+})
+
 /* ---------- channels ---------- */
 
 async function loadChannels() {
   channels.value = await api.channels()
-  if (!activeId.value && channels.value.length) selectChannel(channels.value[0].id)
 }
 
 async function selectChannel(id) {
@@ -86,7 +103,6 @@ async function leaveChannel() {
   channels.value = channels.value.filter((c) => c.id !== id)
   messages.value = []
   activeId.value = null
-  if (channels.value.length) selectChannel(channels.value[0].id)
 }
 
 /* ---------- history ---------- */
@@ -192,6 +208,7 @@ async function respond(id, action) {
 }
 
 onMounted(async () => {
+  paneFromUrl()
   const invite = takePendingInvite()
   if (invite) {
     const joined = await api.followInvite(invite).catch(() => null)
@@ -199,6 +216,9 @@ onMounted(async () => {
   }
 
   await loadChannels()
+  // An id from the address bar can be stale: the channel was left since, or the
+  // URL was written by another account that used this tab before.
+  if (activeId.value && !active.value) activeId.value = null
   if (activeId.value) selectChannel(activeId.value)
   loadPeople()
   socket = createSocket({
@@ -258,7 +278,7 @@ onUnmounted(() => socket && socket.close())
       />
 
       <p v-else class="sg-mono" style="margin:auto;color:var(--text-muted)">
-        Create a channel or join one by code
+        {{ channels.length ? 'Pick a channel or a conversation' : 'Create a channel or join one by code' }}
       </p>
 
       <InfoPanel
