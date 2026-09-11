@@ -19,16 +19,21 @@ import (
 // tests cannot see each other's documents and none of them touch "messenger".
 // Without MongoDB running the test skips rather than fails: these are
 // integration tests, and a missing database is a missing prerequisite, not a
-// broken invariant.
+// broken invariant. With -short it skips before even trying to connect, which
+// is how the unit job in CI runs everything else without a database.
 func testDB(t *testing.T) *mongo.Database {
 	t.Helper()
+
+	if testing.Short() {
+		t.Skip("integration test: needs MongoDB, skipped under -short")
+	}
 
 	ctx := context.Background()
 	client, err := connectMongo(ctx)
 	if err != nil {
-		// В CI отсутствие базы — это поломка сборки, а не отсутствующее
-		// условие: пропущенный тест выглядит как пройденный, и зелёная
-		// галочка начинает означать «ничего не проверено».
+		// In CI a missing database is a broken build, not a missing
+		// prerequisite: a skipped test looks like a passed one, and the green
+		// check mark starts to mean "nothing was verified".
 		if os.Getenv("CI") != "" {
 			t.Fatalf("no MongoDB at %s: %v", mongoURI(), err)
 		}

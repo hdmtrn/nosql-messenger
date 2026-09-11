@@ -4,8 +4,12 @@ on:
   push:
   pull_request:
 
+# The four jobs are independent and run in parallel: none of them consumes what
+# another produces. Go compiles fast and setup-go restores the build cache, so
+# each job running its own `go` command costs less than passing binaries
+# between jobs would.
 jobs:
-  backend:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -14,43 +18,75 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # Тесты в invites_test.go — интеграционные, и им нужна ИНИЦИИРОВАННАЯ
-      # реплика: channels.go открывает транзакцию, а транзакции на standalone
-      # mongod не работают. Поэтому не блок services:, а тот же docker compose,
-      # что и на машине разработки — одно описание базы вместо двух, которые
-      # неизбежно разъедутся.
-      - name: Поднять MongoDB как replica set
+      - run: go vet ./...
+
+      # gofmt -l only lists the files it would reformat and exits 0 either way,
+      # so an empty list has to be turned into success by hand.
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "Not gofmt-ed:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # -short makes testDB skip the tests that need MongoDB, so this job
+      # reports on the in-memory code even when the database cannot start.
+      # -race is ThreadSanitizer: hub_test.go exercises concurrent access to
+      # the hub, and bugs of that kind are not found by reading the code.
+      - name: Unit tests
+        run: go test -race -short ./...
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # The tests in invites_test.go need an INITIATED replica set: channels.go
+      # opens a transaction, and transactions do not work on a standalone
+      # mongod. Hence not a services: block but the same docker compose as on
+      # the dev machine — one description of the database instead of two that
+      # will inevitably drift apart.
+      - name: Start MongoDB as a replica set
         run: |
           docker compose up -d --wait mongo
           docker compose run --rm mongo-init
 
-      - run: go vet ./...
-
-      # -race — это ThreadSanitizer. hub_test.go проверяет конкурентный доступ
-      # к хабу, и такие ошибки чтением кода не находятся.
-      # CI=true заставляет тесты ПАДАТЬ при недоступной базе вместо пропуска:
-      # пропущенный тест выглядит как пройденный.
-      - name: Тесты
+      # Runs the unit tests again as well; they take milliseconds, and keeping
+      # them in makes this job a complete run on its own.
+      # CI=true makes testDB FAIL when the database is unreachable instead of
+      # skipping: a skipped test looks like a passed one. GitHub sets it on
+      # every runner anyway; it is spelled out because the tests depend on it.
+      - name: Integration tests
         run: go test -race ./...
         env:
           CI: "true"
           MONGO_URI: mongodb://127.0.0.1:27017/?directConnection=true
 
-  frontend:
+  image:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-
-      - run: npm ci
-        working-directory: web
-
-      # Сборка фронта — это тоже проверка: vite падает на битом шаблоне .vue,
-      # чего go vet не увидит.
-      - run: npm run build
-        working-directory: web
+      # The Dockerfile builds the frontend and the Go binary itself, so this one
+      # step covers both builds. The image is thrown away: it only proves the
+      # Dockerfile still builds. The production image is arm64 and is built
+      # outside CI (see DEVLOG).
+      # --progress=plain keeps the full output of every RUN in the log instead
+      # of collapsing it, which is what a failed build needs.
+      - name: Build image
+        run: docker build --progress=plain .

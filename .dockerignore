@@ -1,26 +1,26 @@
-# Всё, что не нужно внутри образа. Каталог целиком уходит демону docker при
-# каждой сборке, поэтому дешевле исключить, чем передать и не использовать.
+# Everything the image does not need. The whole directory is sent to the docker
+# daemon on every build, so it is cheaper to exclude than to send and not use.
 
 .git
 .idea
 
-# Локальный бинарник: собран под macOS, внутри linux/arm64 бесполезен.
-# Шаблоны здесь, в отличие от .gitignore, считаются от корня контекста, а не
-# на любой глубине: go build внутри server/ кладёт бинарник в server/server.
+# Local binary: built for macOS, useless inside linux/arm64.
+# Unlike in .gitignore, patterns here are matched from the root of the context,
+# not at any depth: go build inside server/ puts the binary at server/server.
 messenger
 server/server
 *.test
 *.out
 
-# go build тесты не компилирует, но без этой строки правка теста меняла бы
-# содержимое COPY server/ и пересобирала бинарник.
+# go build does not compile tests, but without this line editing a test would
+# change what COPY server/ copies and rebuild the binary.
 server/*_test.go
 
-# Ставится и собирается в самом образе.
+# Installed and built inside the image itself.
 web/node_modules
 web/dist
 
-# Тексты, инфраструктура, окружение — к сборке образа отношения не имеют.
+# Texts, infrastructure, environment: nothing to do with building the image.
 *.md
 thesis/
 cloudformation/

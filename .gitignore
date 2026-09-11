@@ -1,5 +1,5 @@
 messenger
-# go build, запущенный внутри server/, называет бинарник по имени каталога.
+# go build run inside server/ names the binary after the directory.
 /server/server
 *.exe
 *.test
@@ -16,5 +16,5 @@ messenger
 
 .DS_Store
 
-# Текст диплома — не код.
+# The thesis text is not code.
 thesis/
