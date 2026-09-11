@@ -10,7 +10,11 @@ export default defineConfig({
     proxy: {
       '/auth': api,
       '/channels': api,
+      // '/invites' does not swallow the page route /invite/{code}: the match is by prefix
+      '/invites': api,
       '/messages': api,
+      '/users': api,
+      '/friends': api,
       '/health': api,
       '/ws': { ...api, ws: true },
     },
