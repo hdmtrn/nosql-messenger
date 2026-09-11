@@ -5,9 +5,16 @@
 .idea
 
 # Local binary: built for macOS, useless inside linux/arm64.
+# Unlike in .gitignore, patterns here are matched from the root of the context,
+# not at any depth: go build inside server/ puts the binary at server/server.
 messenger
+server/server
 *.test
 *.out
+
+# go build does not compile tests, but without this line editing a test would
+# change what COPY server/ copies and rebuild the binary.
+server/*_test.go
 
 # Installed and built inside the image itself.
 web/node_modules

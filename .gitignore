@@ -1,4 +1,6 @@
 messenger
+# go build run inside server/ names the binary after the directory.
+/server/server
 *.exe
 *.test
 *.out

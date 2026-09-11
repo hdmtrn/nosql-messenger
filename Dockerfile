@@ -23,7 +23,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 
-COPY *.go ./
+COPY server/ ./server/
 
 # CGO_ENABLED=0 gives a static binary: the final image is alpine with musl,
 # while the Go toolchain links against glibc, so a dynamic binary would not
@@ -32,7 +32,7 @@ COPY *.go ./
 # -trimpath strips absolute build paths from the binary; -s -w drop the symbol
 # table and DWARF (~30% of the size). Panic stack traces stay readable: Go keeps
 # function names separately from DWARF, in pclntab.
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/messenger .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/messenger ./server
 
 
 # Stage 3: what ships to the instance. Neither node nor the Go toolchain is here.
