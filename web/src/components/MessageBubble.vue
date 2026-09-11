@@ -13,8 +13,11 @@ const props = defineProps({
   // First message of a run by the same author: it carries the avatar and the
   // header. The rest of the run is bare bubbles under it.
   head: { type: Boolean, default: true },
+  // The author whose page is open beside the feed gets a ring, so it stays clear
+  // whose page that is.
+  ring: Boolean,
 })
-defineEmits(['retry', 'discard'])
+defineEmits(['retry', 'discard', 'author'])
 
 const MONO = {
   font: 'var(--text-machine)',
@@ -74,14 +77,20 @@ const bubbleStyle = computed(() => ({
 <template>
   <div :style="{ display: 'flex', gap: '12px', alignItems: 'flex-start',
                  flexDirection: own ? 'row-reverse' : 'row' }">
-    <SgAvatar v-if="head" :initials="initials || (author || '').slice(0, 2)" :size="AVATAR" :tone="avatarTone" />
+    <!-- someone else's avatar and name open their page; your own lead nowhere -->
+    <component :is="own ? 'span' : 'button'" v-if="head" :type="own ? undefined : 'button'"
+               class="who" :class="{ ring }" :aria-label="own ? undefined : 'Open profile'"
+               @click="own || $emit('author')">
+      <SgAvatar :initials="initials || (author || '').slice(0, 2)" :size="AVATAR" :tone="avatarTone" />
+    </component>
     <!-- keeps the bubbles of a run flush with the head above them -->
     <div v-else :style="{ flex: `0 0 ${AVATAR}px` }" />
 
     <div :style="{ display: 'flex', flexDirection: 'column',
                    alignItems: own ? 'flex-end' : 'flex-start', gap: '6px', minWidth: 0 }">
       <div v-if="showHeader" style="display:flex;gap:8px;align-items:baseline">
-        <span v-if="head && author" style="font:600 13px/1.2 var(--font-ui)">{{ author }}</span>
+        <component :is="own ? 'span' : 'button'" v-if="head && author" :type="own ? undefined : 'button'"
+                   class="who name" @click="own || $emit('author')">{{ author }}</component>
         <span v-if="stateLabel" :style="labelStyle">{{ stateLabel }}</span>
       </div>
 
@@ -98,3 +107,20 @@ const bubbleStyle = computed(() => ({
     </div>
   </div>
 </template>
+
+<style scoped>
+.who {
+  display: flex;
+  flex: none;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: none;
+  color: inherit;
+}
+button.who { cursor: pointer; }
+.name { font: 600 13px/1.2 var(--font-ui); }
+button.name:hover { text-decoration: underline; }
+/* the paper-coloured gap keeps the ring from merging into a blue avatar */
+.ring { box-shadow: 0 0 0 2px var(--surface-panel), 0 0 0 4px var(--blue); }
+</style>

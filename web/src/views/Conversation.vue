@@ -12,9 +12,11 @@ const props = defineProps({
   channel: { type: Object, required: true },
   title: { type: String, required: true },
   messages: { type: Array, default: () => [] },
+  // username whose page is open beside the feed
+  person: { type: String, default: '' },
 })
 
-const emit = defineEmits(['send', 'retry', 'discard', 'load-older', 'info'])
+const emit = defineEmits(['send', 'retry', 'discard', 'load-older', 'info', 'person'])
 
 const feed = ref(null)
 
@@ -92,9 +94,11 @@ defineExpose({ toBottom, keepPosition, distanceFromBottom: () => (feed.value ? f
         :author="direct() ? '' : m.author.username"
         :initials="initials(m.author.username)"
         :time="m.status && m.status !== 'delivered' ? '' : clock(m.created_at)"
+        :ring="!!person && m.author.username === person"
         :style="head && i > 0 ? { marginTop: direct() ? '10px' : '18px' } : null"
         @retry="emit('retry', m)"
         @discard="emit('discard', m)"
+        @author="emit('person', m.author.username)"
       >{{ m.text }}</MessageBubble>
     </div>
 
