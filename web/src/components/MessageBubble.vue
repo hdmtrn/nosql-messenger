@@ -13,6 +13,9 @@ const props = defineProps({
   // First message of a run by the same author: it carries the avatar and the
   // header. The rest of the run is bare bubbles under it.
   head: { type: Boolean, default: true },
+  // A direct conversation has two people and the side already says who wrote a
+  // message, so it goes without avatars and gives their width to the text.
+  avatar: { type: Boolean, default: true },
   // The author whose page is open beside the feed gets a ring, so it stays clear
   // whose page that is.
   ring: Boolean,
@@ -45,11 +48,27 @@ const labelStyle = computed(() => ({
   ...MONO,
   color: props.status === 'failed' ? 'var(--status-error)' : 'var(--text-muted)',
 }))
+
+const showStamp = computed(() => props.status === 'sending' || !!props.time)
+// The clock rides on the last line of the text, Telegram-style: an invisible copy
+// at the end of the text reserves room on that line, and the visible clock is
+// pinned into the bubble's corner over it. A long message keeps its full width on
+// every other line; if the last line is full, the room wraps onto a line of its own.
+const stampRoom = {
+  ...MONO,
+  display: 'inline-flex',
+  marginLeft: '8px',
+  visibility: 'hidden',
+}
 // Low contrast on purpose: the clock rides along with every message, so it has
 // to stay readable without competing with the text next to it.
-const timeStyle = computed(() => ({
+const stampStyle = computed(() => ({
   ...MONO,
-  flex: '0 0 auto',
+  display: 'inline-flex',
+  position: 'absolute',
+  right: '12px',
+  // 11, not the 8px padding: the room sits on the text's baseline, 3px above the line box bottom
+  bottom: '11px',
   color: props.own ? 'rgba(255, 255, 255, 0.7)' : 'var(--text-muted)',
 }))
 const avatarTone = computed(() =>
@@ -58,20 +77,21 @@ const avatarTone = computed(() =>
 // The flat corner is the tail pointing at the avatar, so only the head has one.
 const corners = computed(() => {
   const r = 'var(--radius-bubble)'
-  if (!props.head) return r
+  if (!props.head || !props.avatar) return r
   return props.own ? `${r} 0 ${r} ${r}` : `0 ${r} ${r} ${r}`
 })
 const bubbleStyle = computed(() => ({
-  display: 'flex',
-  // the clock hangs off the last line of the text, Telegram-style
-  alignItems: 'flex-end',
-  gap: '8px',
-  // ~65 characters per line is the readable measure; past 70% of the pane a
-  // bubble stops reading as one side of a conversation
-  maxWidth: 'min(65ch, 70%)',
+  position: 'relative',
+  // ~65 characters per line is the readable measure and caps the bubble on a wide
+  // pane; on a narrow one the 85% leaves the other side a visible margin without
+  // wrapping short messages early
+  maxWidth: 'min(65ch, 85%)',
   padding: '8px 12px',
   borderRadius: corners.value,
   font: 'var(--text-body)',
+  // a word longer than the bubble (a link, a code) breaks instead of pushing the
+  // bubble past the edge of the pane
+  overflowWrap: 'anywhere',
   ...shells.value[props.status],
 }))
 </script>
@@ -79,14 +99,16 @@ const bubbleStyle = computed(() => ({
 <template>
   <div :style="{ display: 'flex', gap: '12px', alignItems: 'flex-start',
                  flexDirection: own ? 'row-reverse' : 'row' }">
-    <!-- someone else's avatar and name open their page; your own lead nowhere -->
-    <component :is="own ? 'span' : 'button'" v-if="head" :type="own ? undefined : 'button'"
-               class="who" :class="{ ring }" :aria-label="own ? undefined : 'Open profile'"
-               @click="own || $emit('author')">
-      <SgAvatar :initials="initials" :size="AVATAR" :tone="avatarTone" />
-    </component>
-    <!-- keeps the bubbles of a run flush with the head above them -->
-    <div v-else :style="{ flex: `0 0 ${AVATAR}px` }" />
+    <template v-if="avatar">
+      <!-- someone else's avatar and name open their page; your own lead nowhere -->
+      <component :is="own ? 'span' : 'button'" v-if="head" :type="own ? undefined : 'button'"
+                 class="who" :class="{ ring }" :aria-label="own ? undefined : 'Open profile'"
+                 @click="own || $emit('author')">
+        <SgAvatar :initials="initials" :size="AVATAR" :tone="avatarTone" />
+      </component>
+      <!-- keeps the bubbles of a run flush with the head above them -->
+      <div v-else :style="{ flex: `0 0 ${AVATAR}px` }" />
+    </template>
 
     <!-- flex: 1 gives the column the full row width, so the bubble's 70% is of the pane, not of itself -->
     <div :style="{ flex: 1, display: 'flex', flexDirection: 'column',
@@ -98,9 +120,17 @@ const bubbleStyle = computed(() => ({
       </div>
 
       <div :style="bubbleStyle">
-        <span><slot /></span>
-        <SgSpinner v-if="status === 'sending'" />
-        <span v-else-if="time" :style="timeStyle">{{ time }}</span>
+        <slot />
+        <template v-if="showStamp">
+          <span aria-hidden="true" :style="stampRoom">
+            <SgSpinner v-if="status === 'sending'" />
+            <template v-else>{{ time }}</template>
+          </span>
+          <span :style="stampStyle">
+            <SgSpinner v-if="status === 'sending'" />
+            <template v-else>{{ time }}</template>
+          </span>
+        </template>
       </div>
 
       <div v-if="status === 'failed'" style="display:flex;align-items:center;gap:12px">
