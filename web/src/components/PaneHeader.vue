@@ -4,6 +4,8 @@ defineProps({
   subtitle: String,
   // A handle reads as it is stored; a count is machine voice and shouts.
   subtitleUpper: { type: Boolean, default: true },
+  // The info panel is open: the arrow turns back towards the feed, like the rail's ‹ ›.
+  open: Boolean,
 })
 defineEmits(['info'])
 </script>
@@ -15,6 +17,7 @@ defineEmits(['info'])
       type="button"
       style="display:flex;align-items:center;gap:16px;background:none;border:none;
              padding:0;cursor:pointer;text-align:left"
+      :aria-expanded="open"
       @click="$emit('info')"
     >
       <slot name="mark" />
@@ -22,7 +25,10 @@ defineEmits(['info'])
         <span style="display:flex;align-items:center;gap:12px">
           <span style="font:600 24px/1.15 var(--font-ui);letter-spacing:-0.01em;
                        color:var(--text-primary)">{{ title }}</span>
-          <span aria-hidden="true" style="font:400 18px/1 var(--font-ui);color:var(--grey)">→</span>
+          <span aria-hidden="true"
+                style="display:inline-block;font:400 18px/1 var(--font-ui);color:var(--grey);
+                       transition:transform 0.18s ease"
+                :style="{ transform: open ? 'rotate(180deg)' : 'none' }">→</span>
         </span>
         <span
           v-if="subtitle"

@@ -14,6 +14,7 @@ const props = defineProps({
   messages: { type: Array, default: () => [] },
   // username whose page is open beside the feed
   person: { type: String, default: '' },
+  infoOpen: Boolean,
 })
 
 const emit = defineEmits(['send', 'retry', 'discard', 'load-older', 'info', 'person'])
@@ -72,6 +73,7 @@ defineExpose({ toBottom, keepPosition, distanceFromBottom: () => (feed.value ? f
       :subtitle="direct() ? '@' + title
                           : channel.member_count + (channel.member_count === 1 ? ' member' : ' members')"
       :subtitle-upper="!direct()"
+      :open="infoOpen"
       @info="emit('info')"
     >
       <template #mark>

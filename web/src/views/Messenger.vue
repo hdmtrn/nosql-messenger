@@ -293,6 +293,7 @@ onUnmounted(() => socket && socket.close())
         :title="activeTitle"
         :messages="messages"
         :person="person"
+        :info-open="showInfo"
         @send="send"
         @retry="deliver"
         @discard="discard"
@@ -305,26 +306,34 @@ onUnmounted(() => socket && socket.close())
         {{ channels.length ? 'Pick a channel or a conversation' : 'Create a channel or join one by code' }}
       </p>
 
-      <InfoPanel
-        v-if="showInfo && active"
-        :me="me"
-        :channel="active"
-        :title="activeTitle"
-        @close="showInfo = false"
-        @leave="showInfo = false; confirmLeave = true"
-        @select="selectChannel"
-        @person="openPerson"
-      />
+      <!-- The side panels slide like the rail collapses. v-if alone would remove them
+           in one frame; Transition keeps the node until the width has closed. -->
+      <Transition name="side">
+        <div v-if="showInfo && active" class="side">
+          <InfoPanel
+            :me="me"
+            :channel="active"
+            :title="activeTitle"
+            @close="showInfo = false"
+            @leave="showInfo = false; confirmLeave = true"
+            @select="selectChannel"
+            @person="openPerson"
+          />
+        </div>
+      </Transition>
 
-      <UserPanel
-        v-if="person && !showProfile"
-        :username="person"
-        :relation="relation"
-        @close="person = ''"
-        @message="openDirect"
-        @befriend="addFriend"
-        @select="selectChannel"
-      />
+      <Transition name="side">
+        <div v-if="person && !showProfile" class="side">
+          <UserPanel
+            :username="person"
+            :relation="relation"
+            @close="person = ''"
+            @message="openDirect"
+            @befriend="addFriend"
+            @select="selectChannel"
+          />
+        </div>
+      </Transition>
 
     </div>
 
@@ -348,3 +357,27 @@ onUnmounted(() => socket && socket.close())
 
   </div>
 </template>
+
+<style scoped>
+/* The wrapper animates its width and clips; the panel inside stays 340px wide,
+   so its text does not rewrap on every frame. It is pinned to the right edge,
+   so it slides in from there. */
+.side {
+  flex: 0 0 340px;
+  display: flex;
+  justify-content: flex-end;
+  overflow: hidden;
+}
+.side-enter-active,
+.side-leave-active {
+  /* same timing as the rail */
+  transition: flex-basis 0.18s ease, margin-left 0.18s ease, opacity 0.18s ease;
+}
+/* the negative margin cancels the row's 16px gap, which would otherwise jump */
+.side-enter-from,
+.side-leave-to {
+  flex-basis: 0;
+  margin-left: -16px;
+  opacity: 0;
+}
+</style>
