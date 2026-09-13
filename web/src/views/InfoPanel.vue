@@ -4,7 +4,7 @@ import { api } from '../api'
 import ChannelGlyph from '../components/ChannelGlyph.vue'
 import SgAvatar from '../components/SgAvatar.vue'
 import SgButton from '../components/SgButton.vue'
-import { initials } from '../naming'
+import { displayName, initials } from '../naming'
 import { inviteLink } from '../pending'
 
 const props = defineProps({
@@ -108,11 +108,12 @@ const row = { display: 'flex', alignItems: 'center', gap: '12px', padding: '0 24
 
     <div :style="panel" style="padding:24px;display:flex;flex-direction:column;
                                align-items:center;gap:12px;text-align:center">
-      <SgAvatar v-if="direct()" :initials="initials(title)" :size="64" />
+      <SgAvatar v-if="direct()" :initials="initials(displayName(title))" :size="64" />
       <ChannelGlyph v-else :size="64" tone="blue" />
 
       <div>
-        <div style="font:600 20px/1.2 var(--font-ui)">{{ title }}</div>
+        <!-- The title of a direct channel is the other person's handle; what is read is their name. -->
+        <div style="font:600 20px/1.2 var(--font-ui)">{{ direct() ? displayName(title) : title }}</div>
         <div v-if="direct()" :style="handle" style="margin-top:4px">@{{ title }}</div>
         <div v-else :style="mono" style="margin-top:4px">{{ channel.member_count }} members</div>
       </div>
@@ -162,8 +163,8 @@ const row = { display: 'flex', alignItems: 'center', gap: '12px', padding: '0 24
                    :style="m.user_id === me.id ? row
                      : { ...row, width: '100%', border: 'none', background: 'none', cursor: 'pointer' }"
                    @click="m.user_id === me.id || emit('person', m.username)">
-          <SgAvatar :initials="initials(m.username)" :size="28" />
-          <span style="flex:1;text-align:left;font:var(--text-body)">{{ m.username }}</span>
+          <SgAvatar :initials="initials(displayName(m.username))" :size="28" />
+          <span style="flex:1;text-align:left;font:var(--text-body)">{{ displayName(m.username) }}</span>
           <span :style="mono">{{ m.user_id === me.id ? 'You' : m.role === 'owner' ? 'Owner' : '' }}</span>
         </component>
       </div>

@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api } from '../api'
 import { createSocket } from '../socket'
-import { channelTitle } from '../naming'
+import { channelTitle, rememberName } from '../naming'
 import { takePendingInvite } from '../pending'
 import ChannelRail from '../components/ChannelRail.vue'
 import SgButton from '../components/SgButton.vue'
@@ -41,6 +41,10 @@ const dialogError = ref('')
 
 const active = computed(() => channels.value.find((c) => c.id === activeId.value) || null)
 const activeTitle = computed(() => channelTitle(active.value, props.me.id))
+
+// Our own messages are looked up by username like anyone else's; a rename in the
+// profile has to reach them without a reload.
+watch(() => props.me.display_name, (name) => rememberName(props.me.username, name), { immediate: true })
 
 /* ---------- address bar ---------- */
 

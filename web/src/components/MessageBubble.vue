@@ -81,7 +81,7 @@ const bubbleStyle = computed(() => ({
     <component :is="own ? 'span' : 'button'" v-if="head" :type="own ? undefined : 'button'"
                class="who" :class="{ ring }" :aria-label="own ? undefined : 'Open profile'"
                @click="own || $emit('author')">
-      <SgAvatar :initials="initials || (author || '').slice(0, 2)" :size="AVATAR" :tone="avatarTone" />
+      <SgAvatar :initials="initials" :size="AVATAR" :tone="avatarTone" />
     </component>
     <!-- keeps the bubbles of a run flush with the head above them -->
     <div v-else :style="{ flex: `0 0 ${AVATAR}px` }" />
