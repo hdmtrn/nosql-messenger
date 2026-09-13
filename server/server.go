@@ -63,6 +63,7 @@ func (s *server) routes() http.Handler {
 
 	mux.HandleFunc("POST /messages", s.requireAuth(s.handleSendMessage))
 	mux.HandleFunc("GET /messages", s.requireAuth(s.handleListMessages))
+	mux.HandleFunc("POST /messages/{id}/forward", s.requireAuth(s.handleForwardMessage))
 
 	mux.HandleFunc("POST /friends/requests", s.requireAuth(s.handleSendFriendRequest))
 	mux.HandleFunc("GET /friends/requests", s.requireAuth(s.handleListFriendRequests))
