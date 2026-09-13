@@ -133,6 +133,28 @@ func TestRepeatedClientMsgIDIsNotBroadcastAgain(t *testing.T) {
 	}
 }
 
+// The other tests call handlers directly, past the router. This one goes through
+// it, so a typo in the pattern fails here instead of at the first real request.
+func TestForwardRouteIsRegistered(t *testing.T) {
+	// An empty token is refused before the session store touches the database.
+	s := &server{sessions: &sessionStore{cache: make(map[string]cachedSession)}}
+	id := bson.NewObjectID().Hex()
+
+	r := httptest.NewRequest(http.MethodPost, "/messages/"+id+"/forward", nil)
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, r)
+
+	if r.Pattern != "POST /messages/{id}/forward" {
+		t.Fatalf("request matched pattern %q, want the forward route", r.Pattern)
+	}
+	if r.PathValue("id") != id {
+		t.Fatalf("path value id is %q, want %q", r.PathValue("id"), id)
+	}
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous forward got %d, want 401 from requireAuth", w.Code)
+	}
+}
+
 func newMessageTestStores(t *testing.T, db *mongo.Database) (*channelStore, *messageStore) {
 	t.Helper()
 
