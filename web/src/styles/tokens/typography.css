@@ -4,8 +4,10 @@
 
   --size-10:10px;
   --size-11:11px;
+  --size-12:12px;
   --size-13:13px;
   --size-15:15px;
+  --size-16:16px;
   --size-20:20px;
   --size-28:28px;
 
@@ -25,4 +27,11 @@
   --text-ui:var(--weight-medium) var(--size-13)/1.3 var(--font-ui);
   --text-machine:var(--weight-medium) var(--size-10)/1.2 var(--font-mono);
   --text-machine-11:var(--weight-medium) var(--size-11)/1.2 var(--font-mono);
+
+  /* Chat scale, 12 → 15 → 16: the body size is the median of Slack, Discord and
+     Telegram; anything read rather than glanced at stays at 12px or above. */
+  --text-meta:var(--weight-regular) var(--size-12)/1.3 var(--font-mono);   /* time, delivery state, pane subtitle, hints, errors */
+  --text-label:var(--weight-medium) var(--size-12)/1.2 var(--font-mono);   /* field labels, button labels */
+  --text-name:var(--weight-semibold) var(--size-15)/1.3 var(--font-ui);    /* message author */
+  --text-heading:var(--weight-semibold) var(--size-16)/1.3 var(--font-ui); /* pane header title */
 }

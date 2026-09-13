@@ -22,7 +22,7 @@ const passwordError = ref('')
 const registering = computed(() => mode.value === 'register')
 
 const mono = {
-  font: 'var(--text-machine)',
+  font: 'var(--text-meta)',
   textTransform: 'uppercase',
   letterSpacing: 'var(--mono-tracking)',
   color: 'var(--grey)',
@@ -71,7 +71,9 @@ async function submit() {
     <section style="flex:0 0 44%;background:var(--surface-accent);
                     border-radius:var(--radius-panel);padding:32px;
                     display:flex;flex-direction:column">
-      <span style="font:700 30px/1.1 var(--font-ui);letter-spacing:-0.015em;color:#fff">
+      <!-- the brand is a mark, not a heading: it must not compete with "Sign in" -->
+      <span style="font:var(--weight-bold) var(--size-20)/var(--leading-tight) var(--font-ui);
+                   letter-spacing:-0.01em;color:#fff">
         Messenger
       </span>
       <div style="flex:1;display:grid;place-items:center">
@@ -82,14 +84,17 @@ async function submit() {
     <section style="flex:1;background:var(--surface-panel);
                     border-radius:var(--radius-panel);display:grid;
                     place-items:center;padding:32px">
-      <form style="width:380px;display:flex;flex-direction:column;gap:24px"
+      <form style="width:min(380px, 100%);display:flex;flex-direction:column;gap:24px"
             @submit.prevent="submit">
-        <h1 style="margin:0;font:700 34px/1.1 var(--font-ui);letter-spacing:-0.02em">
+        <!-- 24px gap + 8px margin: the title sits further from the form than the fields sit from each other -->
+        <h1 style="margin:0 0 8px;font:var(--text-display);letter-spacing:-0.01em">
           {{ registering ? 'Register' : 'Sign in' }}
         </h1>
 
+        <!-- lg: the fields match the 48px button below them -->
         <SgInput
           v-model="username"
+          size="lg"
           label="Username"
           :hint="registering ? '3-32 letters, digits, _ or -' : ''"
           :error="usernameError"
@@ -97,6 +102,7 @@ async function submit() {
 
         <SgInput
           v-model="password"
+          size="lg"
           label="Password"
           :type="reveal ? 'text' : 'password'"
           :action="reveal ? 'Hide' : 'Show'"
@@ -105,7 +111,7 @@ async function submit() {
           @action="reveal = !reveal"
         />
 
-        <SgInput v-if="registering" v-model="repeat" label="Repeat password" type="password" />
+        <SgInput v-if="registering" v-model="repeat" size="lg" label="Repeat password" type="password" />
 
         <div style="display:flex;flex-direction:column;gap:16px;margin-top:8px">
           <SgButton variant="primary" size="lg" type="submit" :disabled="busy">

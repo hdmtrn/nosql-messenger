@@ -37,7 +37,7 @@ const style = computed(() => {
     borderRadius: 'var(--radius-pill)',
     cursor: props.disabled ? 'not-allowed' : 'pointer',
     font: props.mono
-      ? props.size === 'sm' ? 'var(--text-machine)' : 'var(--text-machine-11)'
+      ? props.size === 'sm' ? 'var(--text-machine)' : 'var(--text-label)'
       : 'var(--text-ui)',
     textTransform: props.mono ? 'uppercase' : 'none',
     letterSpacing: props.mono ? 'var(--mono-tracking)' : '0',
