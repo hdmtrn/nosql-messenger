@@ -84,7 +84,7 @@ async function submit() {
     <section style="flex:1;background:var(--surface-panel);
                     border-radius:var(--radius-panel);display:grid;
                     place-items:center;padding:32px">
-      <form style="width:380px;display:flex;flex-direction:column;gap:24px"
+      <form style="width:min(380px, 100%);display:flex;flex-direction:column;gap:24px"
             @submit.prevent="submit">
         <!-- 24px gap + 8px margin: the title sits further from the form than the fields sit from each other -->
         <h1 style="margin:0 0 8px;font:var(--text-display);letter-spacing:-0.01em">

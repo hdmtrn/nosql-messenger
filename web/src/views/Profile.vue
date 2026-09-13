@@ -100,7 +100,7 @@ toggleSessions()
 
 <template>
   <section style="flex:1;min-width:0;display:flex;justify-content:center;overflow-y:auto;padding:8px 0">
-    <div style="width:620px;display:flex;flex-direction:column;gap:20px">
+    <div style="width:min(620px, 100%);display:flex;flex-direction:column;gap:20px">
 
       <header style="display:flex;align-items:center;gap:16px">
         <h1 style="margin:0;flex:1;font:600 24px/1.2 var(--font-ui);letter-spacing:-0.015em">Profile</h1>

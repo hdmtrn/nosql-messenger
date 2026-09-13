@@ -256,7 +256,7 @@ onUnmounted(() => socket && socket.close())
 </script>
 
 <template>
-  <div style="height:100vh;display:flex;flex-direction:column;background:var(--paper);
+  <div style="position:relative;height:100vh;display:flex;flex-direction:column;background:var(--paper);
               padding:16px;box-sizing:border-box">
     <div style="flex:1;min-height:0;display:flex;gap:16px">
 
@@ -379,5 +379,19 @@ onUnmounted(() => socket && socket.close())
   flex-basis: 0;
   margin-left: -16px;
   opacity: 0;
+}
+/* Below 1100px a 340px panel beside the feed would squeeze the feed under ~400px,
+   so the panel lies over the feed instead. The paper strip on its left stands in
+   for the 16px gap it has in the wide layout; there it only fades. */
+@media (max-width: 1100px) {
+  .side {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    bottom: 16px;
+    z-index: 10;
+    padding-left: 16px;
+    background: var(--surface-page);
+  }
 }
 </style>

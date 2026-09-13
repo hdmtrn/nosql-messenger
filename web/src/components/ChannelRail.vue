@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import ChannelRow from './ChannelRow.vue'
 import SgAvatar from './SgAvatar.vue'
 import SgButton from './SgButton.vue'
@@ -32,9 +32,23 @@ function storedCollapsed() {
   }
 }
 
-const collapsed = ref(storedCollapsed())
+// Below 800px an expanded rail leaves the feed too little room, so the rail folds
+// on its own. That is the window's doing, not a preference: it is not stored, and
+// widening the window brings the stored width back.
+const narrowQuery = window.matchMedia('(max-width: 800px)')
+const narrow = ref(narrowQuery.matches)
+const collapsed = ref(narrow.value || storedCollapsed())
+
+function onNarrow(e) {
+  narrow.value = e.matches
+  collapsed.value = e.matches || storedCollapsed()
+}
+narrowQuery.addEventListener('change', onNarrow)
+onUnmounted(() => narrowQuery.removeEventListener('change', onNarrow))
 
 watch(collapsed, (value) => {
+  // an expand on a narrow window is for now only; the stored width stays as it was
+  if (narrow.value) return
   try {
     localStorage.setItem(COLLAPSED_KEY, value ? '1' : '0')
   } catch {

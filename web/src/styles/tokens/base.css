@@ -1,5 +1,6 @@
 *,*::before,*::after{box-sizing:border-box}
-body{margin:0;min-width:1100px;background:var(--surface-page);color:var(--text-primary);font:var(--text-body);-webkit-font-smoothing:antialiased;text-wrap:pretty}
+/* no min-width: narrow windows fold the rail and lay side panels over the feed (ChannelRail.vue, Messenger.vue) */
+body{margin:0;background:var(--surface-page);color:var(--text-primary);font:var(--text-body);-webkit-font-smoothing:antialiased;text-wrap:pretty}
 a{color:var(--blue);text-decoration:none}
 a:hover{color:var(--ink)}
 .sg-mono{font:var(--text-machine);text-transform:uppercase;letter-spacing:var(--mono-tracking)}
