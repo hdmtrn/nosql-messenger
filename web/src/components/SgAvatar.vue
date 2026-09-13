@@ -30,4 +30,4 @@ const style = computed(() => ({
 }))
 </script>
 
-<template><span :style="style">{{ initials.slice(0, 2) }}</span></template>
+<template><span :style="style">{{ [...initials].slice(0, 2).join('') }}</span></template>

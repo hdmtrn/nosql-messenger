@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { api } from '../api'
 import SgAvatar from '../components/SgAvatar.vue'
 import SgButton from '../components/SgButton.vue'
+import { initials } from '../naming'
 
 const props = defineProps({ me: { type: Object, required: true } })
 const emit = defineEmits(['saved', 'log-out'])
@@ -57,10 +58,6 @@ const row = {
   padding: '0 28px',
   height: '56px',
   font: 'var(--text-body)',
-}
-
-function initials(name) {
-  return (name || '').slice(0, 2)
 }
 
 const stored = ref({ name: props.me.display_name, bio: props.me.bio || '' })

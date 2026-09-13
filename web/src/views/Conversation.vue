@@ -5,7 +5,7 @@ import MessageBubble from '../components/MessageBubble.vue'
 import MessageComposer from '../components/MessageComposer.vue'
 import SgAvatar from '../components/SgAvatar.vue'
 import ChannelGlyph from '../components/ChannelGlyph.vue'
-import { initials } from '../naming'
+import { displayName, initials } from '../naming'
 
 const props = defineProps({
   me: { type: Object, required: true },
@@ -68,14 +68,14 @@ defineExpose({ toBottom, keepPosition, distanceFromBottom: () => (feed.value ? f
   <section style="flex:1;min-width:0;background:var(--surface-panel);border-radius:var(--radius-panel);
                   display:flex;flex-direction:column;overflow:hidden">
     <PaneHeader
-      :title="title"
+      :title="direct() ? displayName(title) : title"
       :subtitle="direct() ? '@' + title
                           : channel.member_count + (channel.member_count === 1 ? ' member' : ' members')"
       :subtitle-upper="!direct()"
       @info="emit('info')"
     >
       <template #mark>
-        <SgAvatar v-if="direct()" :initials="initials(title)" :size="44" />
+        <SgAvatar v-if="direct()" :initials="initials(displayName(title))" :size="44" />
         <ChannelGlyph v-else :size="44" tone="blue" />
       </template>
     </PaneHeader>
@@ -91,8 +91,8 @@ defineExpose({ toBottom, keepPosition, distanceFromBottom: () => (feed.value ? f
         :own="m.author.id === me.id"
         :head="head"
         :status="m.status || 'delivered'"
-        :author="direct() ? '' : m.author.username"
-        :initials="initials(m.author.username)"
+        :author="direct() ? '' : displayName(m.author.username)"
+        :initials="initials(displayName(m.author.username))"
         :time="m.status && m.status !== 'delivered' ? '' : clock(m.created_at)"
         :ring="!!person && m.author.username === person"
         :style="head && i > 0 ? { marginTop: direct() ? '10px' : '18px' } : null"
@@ -103,7 +103,7 @@ defineExpose({ toBottom, keepPosition, distanceFromBottom: () => (feed.value ? f
     </div>
 
     <MessageComposer
-      :placeholder="direct() ? `Message ${title}…` : `Message #${channel.name}…`"
+      :placeholder="direct() ? `Message ${displayName(title)}…` : `Message #${channel.name}…`"
       @send="emit('send', $event)"
     />
   </section>
