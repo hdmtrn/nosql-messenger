@@ -2,7 +2,7 @@
   /* 4px grid */
   --radius-panel:20px;     /* panels, rails, message pane */
   --radius-pill:999px;     /* buttons, inputs, badges, avatars */
-  --radius-bubble:18px;    /* message bubbles — softened, not a full pill */
+  --radius-bubble:12px;    /* message bubbles; 16px+ with 15px text reads as a toy next to avatars */
   --radius-structure:var(--radius-panel);
   --radius-float:var(--radius-pill);
 

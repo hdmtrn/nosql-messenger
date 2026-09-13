@@ -20,7 +20,7 @@ const props = defineProps({
 defineEmits(['retry', 'discard', 'author'])
 
 const MONO = {
-  font: 'var(--text-machine)',
+  font: 'var(--text-meta)',
   textTransform: 'uppercase',
   letterSpacing: 'var(--mono-tracking)',
 }
@@ -66,8 +66,10 @@ const bubbleStyle = computed(() => ({
   // the clock hangs off the last line of the text, Telegram-style
   alignItems: 'flex-end',
   gap: '8px',
-  maxWidth: 'min(560px, 100%)',
-  padding: '11px 20px',
+  // ~65 characters per line is the readable measure; past 70% of the pane a
+  // bubble stops reading as one side of a conversation
+  maxWidth: 'min(65ch, 70%)',
+  padding: '8px 12px',
   borderRadius: corners.value,
   font: 'var(--text-body)',
   ...shells.value[props.status],
@@ -86,8 +88,9 @@ const bubbleStyle = computed(() => ({
     <!-- keeps the bubbles of a run flush with the head above them -->
     <div v-else :style="{ flex: `0 0 ${AVATAR}px` }" />
 
-    <div :style="{ display: 'flex', flexDirection: 'column',
-                   alignItems: own ? 'flex-end' : 'flex-start', gap: '6px', minWidth: 0 }">
+    <!-- flex: 1 gives the column the full row width, so the bubble's 70% is of the pane, not of itself -->
+    <div :style="{ flex: 1, display: 'flex', flexDirection: 'column',
+                   alignItems: own ? 'flex-end' : 'flex-start', gap: '4px', minWidth: 0 }">
       <div v-if="showHeader" style="display:flex;gap:8px;align-items:baseline">
         <component :is="own ? 'span' : 'button'" v-if="head && author" :type="own ? undefined : 'button'"
                    class="who name" @click="own || $emit('author')">{{ author }}</component>
@@ -119,7 +122,7 @@ const bubbleStyle = computed(() => ({
   color: inherit;
 }
 button.who { cursor: pointer; }
-.name { font: 600 13px/1.2 var(--font-ui); }
+.name { font: var(--text-name); }
 button.name:hover { text-decoration: underline; }
 /* the paper-coloured gap keeps the ring from merging into a blue avatar */
 .ring { box-shadow: 0 0 0 2px var(--surface-panel), 0 0 0 4px var(--blue); }
