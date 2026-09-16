@@ -71,7 +71,7 @@ async function loadChannels() {
 }
 
 async function selectChannel(id) {
-  if (pendingForward.value && pendingForward.value.channelId !== id) pendingForward.value = null
+  if (pendingAction.value && pendingAction.value.channelId !== id) pendingAction.value = null
   showProfile.value = false
   activeId.value = id
   unread.value = { ...unread.value, [id]: 0 }
@@ -145,6 +145,7 @@ async function deliver(entry) {
         channel_id: activeId.value,
         text: entry.text,
         client_msg_id: entry.client_msg_id,
+        reply_to: entry.reply_to,
       })
     Object.assign(entry, saved, { status: 'delivered' })
   } catch {
@@ -152,13 +153,14 @@ async function deliver(entry) {
   }
 }
 
-// The comment goes first and the forward after it, as in Telegram. The forward
-// waits for the comment's answer: sent in parallel, the server could store them
-// the other way round.
+// With a forward waiting, the typed text is a comment: it goes first and the
+// forward after it, as in Telegram. The forward waits for the comment's answer:
+// sent in parallel, the server could store them the other way round.
+// With a reply waiting, the typed text is the reply itself.
 async function send(text) {
-  const pending = pendingForward.value
-  const forwarding = pending && pending.channelId === activeId.value
-  if (forwarding) pendingForward.value = null
+  const action = pendingAction.value && pendingAction.value.channelId === activeId.value ? pendingAction.value : null
+  if (action) pendingAction.value = null
+  const forwarding = action && action.kind === 'forward'
 
   if (text.trim()) {
     messages.value = [...messages.value, {
@@ -167,13 +169,14 @@ async function send(text) {
       author: { id: props.me.id, username: props.me.username },
       created_at: new Date().toISOString(),
       status: 'sending',
+      reply_to: action && action.kind === 'reply' ? action.message.id : undefined,
     }]
     const comment = deliver(messages.value[messages.value.length - 1])
     conversation.value?.toBottom()
     if (forwarding) await comment
   }
   if (forwarding) {
-    queueForward(pending.message)
+    queueForward(action.message)
     conversation.value?.toBottom()
   }
 }
@@ -196,12 +199,17 @@ const forwardTargets = computed(() =>
     })
 )
 
-// { message, channelId }: picked in the menu, sent only when Send is pressed in
-// that chat. Leaving the chat drops it, the way a draft reply would be.
-const pendingForward = ref(null)
+// { kind: 'reply' | 'forward', message, channelId }: picked in the menu and
+// waiting above the field of that chat until Send. One at a time, as in Telegram:
+// picking the other replaces it. Leaving the chat drops it.
+const pendingAction = ref(null)
+
+function startReply(message) {
+  pendingAction.value = { kind: 'reply', message, channelId: activeId.value }
+}
 
 async function pickForward(message, channelId) {
-  pendingForward.value = { message, channelId }
+  pendingAction.value = { kind: 'forward', message, channelId }
   // Reloading the chat that is already open would only lose the scroll position.
   if (channelId !== activeId.value) await selectChannel(channelId)
 }
@@ -221,6 +229,44 @@ function queueForward(message) {
   }]
   deliver(messages.value[messages.value.length - 1])
 }
+
+/* ---------- reply quotes ---------- */
+
+// Originals of replies that are not in the loaded page, by id. null means the
+// server did not return it: the quote says it is not available.
+const originals = ref(new Map())
+const asked = new Set()
+
+// A reply stores only the id of its original, so the quote is filled in here:
+// from the loaded messages when it is among them, otherwise fetched, all the
+// missing ones in one request, as Telegram does with channels.getMessages.
+async function resolveReplies() {
+  const channelId = activeId.value
+  const loaded = new Set(messages.value.map((m) => m.id))
+  const missing = [...new Set(messages.value.map((m) => m.reply_to))]
+    .filter((id) => id && !loaded.has(id) && !asked.has(id))
+  if (!channelId || !missing.length) return
+  missing.forEach((id) => asked.add(id))
+
+  // The server takes at most 100 ids at a time.
+  for (let i = 0; i < missing.length; i += 100) {
+    const part = missing.slice(i, i + 100)
+    let found = []
+    try {
+      found = await api.messagesByIds(channelId, part)
+    } catch {
+      // Asked again on the next change of the feed.
+      part.forEach((id) => asked.delete(id))
+      continue
+    }
+    const next = new Map(originals.value)
+    for (const id of part) next.set(id, null)
+    for (const m of found) next.set(m.id, m)
+    originals.value = next
+  }
+}
+
+watch(messages, resolveReplies)
 
 /* ---------- socket ---------- */
 
@@ -357,9 +403,11 @@ onUnmounted(() => socket && socket.close())
         @load-older="loadOlder"
         @info="showInfo = !showInfo; person = ''"
         :forward-targets="forwardTargets"
-        :pending-forward="pendingForward && pendingForward.channelId === activeId ? pendingForward.message : null"
+        :pending="pendingAction && pendingAction.channelId === activeId ? pendingAction : null"
+        :originals="originals"
+        @reply="startReply"
         @forward="pickForward"
-        @cancel-forward="pendingForward = null"
+        @cancel-pending="pendingAction = null"
         @person="openPerson"
       />
 

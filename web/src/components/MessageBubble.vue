@@ -21,6 +21,9 @@ const props = defineProps({
   ring: Boolean,
   // Display name of the original author when this message is a forward.
   forwarded: { type: String, default: '' },
+  // Quote of the message this one answers: { author, text }, or { missing: true }
+  // when the original could not be loaded.
+  quote: { type: Object, default: null },
 })
 defineEmits(['retry', 'discard', 'author'])
 
@@ -79,6 +82,21 @@ const forwardStyle = computed(() => ({
   font: '500 13px/1.3 var(--font-ui)',
   color: props.own && props.status === 'delivered' ? 'rgba(255, 255, 255, 0.7)' : 'var(--text-muted)',
 }))
+// On a blue bubble the quote is a lighter band of the same blue; on a grey one it
+// is white, as on the mockup.
+const quoteStyle = computed(() => {
+  const onBlue = props.own && props.status === 'delivered'
+  return {
+    display: 'flex',
+    gap: '10px',
+    margin: '2px 0 6px',
+    padding: '6px 10px',
+    borderRadius: '10px',
+    background: onBlue ? 'rgba(255, 255, 255, 0.16)' : 'var(--surface-panel)',
+    '--quote-accent': onBlue ? '#fff' : 'var(--blue)',
+    '--quote-muted': onBlue ? 'rgba(255, 255, 255, 0.75)' : 'var(--text-muted)',
+  }
+})
 const avatarTone = computed(() =>
   props.own && props.status !== 'delivered' ? props.status : 'blue'
 )
@@ -129,6 +147,18 @@ const bubbleStyle = computed(() => ({
 
       <div :style="bubbleStyle">
         <!-- a line of its own above the text, so the clock still rides on the text's last line -->
+        <span v-if="quote" :style="quoteStyle">
+          <span class="quote-bar" />
+          <span style="display:flex;flex-direction:column;min-width:0">
+            <template v-if="quote.missing">
+              <span class="quote-text">Message not available</span>
+            </template>
+            <template v-else>
+              <span class="quote-author">{{ quote.author }}</span>
+              <span class="quote-text">{{ quote.text }}</span>
+            </template>
+          </span>
+        </span>
         <span v-if="forwarded" :style="forwardStyle">Forwarded from {{ forwarded }}</span>
         <slot />
         <template v-if="showStamp">
@@ -163,6 +193,24 @@ const bubbleStyle = computed(() => ({
 }
 button.who { cursor: pointer; }
 .name { font: var(--text-name); }
+.quote-bar {
+  flex: none;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--quote-accent);
+}
+.quote-author {
+  font: 500 13px/1.3 var(--font-ui);
+  color: var(--quote-accent);
+}
+/* one line, cut with an ellipsis: the quote only has to say which message it is */
+.quote-text {
+  font: 400 14px/1.35 var(--font-ui);
+  color: var(--quote-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 button.name:hover { text-decoration: underline; }
 /* the paper-coloured gap keeps the ring from merging into a blue avatar */
 .ring { box-shadow: 0 0 0 2px var(--surface-panel), 0 0 0 4px var(--blue); }

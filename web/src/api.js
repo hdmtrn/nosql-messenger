@@ -53,6 +53,8 @@ export const api = {
 
   messages: (params) => request('GET', '/messages' + qs(params)),
   send: (message) => request('POST', '/messages', message),
+  messagesByIds: (channelId, ids) =>
+    request('GET', '/messages' + qs({ channel_id: channelId, ids: ids.join(',') })),
   forward: (id, channelId, clientMsgId) =>
     request('POST', `/messages/${id}/forward`, { channel_id: channelId, client_msg_id: clientMsgId }),
 }

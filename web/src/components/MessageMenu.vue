@@ -10,10 +10,10 @@ const props = defineProps({
   // [{ id, title, direct, initials }] — chats the message can be forwarded to.
   targets: { type: Array, default: () => [] },
 })
-const emit = defineEmits(['copy', 'forward', 'close'])
+const emit = defineEmits(['reply', 'copy', 'forward', 'close'])
 
 const WIDTH = 220
-const HEIGHT = 124
+const HEIGHT = 170
 const SUB_WIDTH = 260
 const ROW = 46
 const SUB_MAX = 340
@@ -32,7 +32,8 @@ const top = Math.min(props.y, window.innerHeight - HEIGHT - MARGIN)
 // otherwise to the left, and lifted when it would run past the bottom.
 const subStyle = computed(() => {
   const height = Math.min(props.targets.length * ROW + 16, SUB_MAX)
-  const rowTop = 54
+  // Forward is the third row: 8px padding plus two 44px rows and their 2px gaps.
+  const rowTop = 100
   const shift = Math.min(0, window.innerHeight - MARGIN - (top + rowTop + height))
   const fitsRight = left + WIDTH + GAP + SUB_WIDTH <= window.innerWidth - MARGIN
   return {
@@ -78,6 +79,8 @@ onUnmounted(() => {
   <Teleport to="body">
     <div ref="root" class="anchor" :style="{ left: left + 'px', top: top + 'px' }">
       <div role="menu" class="panel" :style="{ width: WIDTH + 'px' }">
+        <button type="button" role="menuitem" class="item"
+                @mouseenter="subOpen = false" @click="emit('reply')">Reply</button>
         <button type="button" role="menuitem" class="item"
                 @mouseenter="subOpen = false" @click="emit('copy')">Copy text</button>
         <button type="button" role="menuitem" class="item" :class="{ open: subOpen }"

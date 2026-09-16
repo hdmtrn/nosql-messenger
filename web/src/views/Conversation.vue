@@ -17,14 +17,25 @@ const props = defineProps({
   person: { type: String, default: '' },
   infoOpen: Boolean,
   forwardTargets: { type: Array, default: () => [] },
-  // The message waiting above the field to be forwarded into this chat on Send.
-  pendingForward: { type: Object, default: null },
+  // { kind: 'reply' | 'forward', message } waiting above the field until Send.
+  pending: { type: Object, default: null },
+  // Originals of replies fetched because they are not in this page, by id.
+  originals: { type: Map, default: () => new Map() },
 })
 
 const emit = defineEmits(['send', 'retry', 'discard', 'load-older', 'info', 'person',
-  'forward', 'cancel-forward'])
+  'reply', 'forward', 'cancel-pending'])
 
 const feed = ref(null)
+const composer = ref(null)
+
+// A reply or a forward waiting above the field means the next thing to do is
+// type, so the cursor goes there, as in Telegram.
+watch(() => props.pending, async (action) => {
+  if (!action) return
+  await nextTick()
+  composer.value?.focus()
+})
 
 // The message whose menu is open, and where the menu stands.
 const menu = ref(null)
@@ -35,11 +46,29 @@ function openMenu(m, x, y) {
   if (m.id) menu.value = { m, x, y }
 }
 
-// A forward of a forward names the original author, as the server will store it.
-const forwardAuthor = computed(() => {
-  const m = props.pendingForward
-  return m ? displayName((m.forwarded || m).author.username) : ''
+// A forwarded message is shown under its original author, both in a quote and
+// in the bar above the field, the way the forward itself names it.
+function sourceAuthor(m) {
+  return displayName((m.forwarded || m).author.username)
+}
+
+const pendingAuthor = computed(() => (props.pending ? sourceAuthor(props.pending.message) : ''))
+
+const placeholder = computed(() => {
+  if (props.pending?.kind === 'reply') return `Reply to ${pendingAuthor.value}…`
+  if (props.pending?.kind === 'forward') return 'Add a comment…'
+  return direct() ? `Message ${displayName(props.title)}…` : `Message #${props.channel.name}…`
 })
+
+// The quote of a reply: from the loaded page, else from the fetched originals.
+// undefined while it is still being fetched, so nothing jumps in half-drawn.
+function quoteOf(m, byId) {
+  if (!m.reply_to) return null
+  const orig = byId.get(m.reply_to) ?? props.originals.get(m.reply_to)
+  if (orig === undefined) return null
+  if (orig === null) return { missing: true }
+  return { author: sourceAuthor(orig), text: orig.text }
+}
 function openMenuAtBubble(m, e) {
   const box = e.currentTarget.getBoundingClientRect()
   openMenu(m, box.left + 48, box.bottom)
@@ -53,6 +82,12 @@ async function copyText() {
   } catch {
     // Clipboard access can be refused by the browser; there is nothing to retry.
   }
+}
+
+function reply() {
+  const m = menu.value.m
+  menu.value = null
+  emit('reply', m)
 }
 
 function forward(channelId) {
@@ -69,16 +104,17 @@ const RUN_BREAK_MS = 5 * 60 * 1000
 
 // Consecutive messages from one author collapse into a run, and only its first
 // message carries the avatar, the name and the clock.
-const rows = computed(() =>
-  props.messages.map((m, i) => {
+const rows = computed(() => {
+  const byId = new Map(props.messages.map((m) => [m.id, m]))
+  return props.messages.map((m, i) => {
     const prev = props.messages[i - 1]
     const head =
       !prev ||
       prev.author.id !== m.author.id ||
       new Date(m.created_at) - new Date(prev.created_at) > RUN_BREAK_MS
-    return { m, head }
+    return { m, head, quote: quoteOf(m, byId) }
   })
-)
+})
 
 function clock(iso) {
   // 24-hour whatever the locale: "18:25" is a third narrower than "06:25 PM"
@@ -129,7 +165,7 @@ defineExpose({ toBottom, keepPosition, distanceFromBottom: () => (feed.value ? f
       </p>
 
       <MessageBubble
-        v-for="({ m, head }, i) in rows"
+        v-for="({ m, head, quote }, i) in rows"
         :key="m.id || m.client_msg_id"
         :own="m.author.id === me.id"
         :head="head"
@@ -140,6 +176,7 @@ defineExpose({ toBottom, keepPosition, distanceFromBottom: () => (feed.value ? f
         :time="m.status && m.status !== 'delivered' ? '' : clock(m.created_at)"
         :ring="!!person && m.author.username === person"
         :forwarded="m.forwarded ? displayName(m.forwarded.author.username) : ''"
+        :quote="quote"
         :style="head && i > 0 ? { marginTop: direct() ? '10px' : '18px' } : null"
         @retry="emit('retry', m)"
         @discard="emit('discard', m)"
@@ -156,25 +193,30 @@ defineExpose({ toBottom, keepPosition, distanceFromBottom: () => (feed.value ? f
       :x="menu.x"
       :y="menu.y"
       :targets="forwardTargets"
+      @reply="reply"
       @copy="copyText"
       @forward="forward"
       @close="menu = null"
     />
 
     <MessageComposer
-      :placeholder="pendingForward ? 'Add a comment…'
-                    : direct() ? `Message ${displayName(title)}…` : `Message #${channel.name}…`"
-      :ready="!!pendingForward"
+      ref="composer"
+      :placeholder="placeholder"
+      :ready="pending?.kind === 'forward'"
       @send="emit('send', $event)"
     >
-      <div v-if="pendingForward" class="pending">
+      <!-- a reply still needs its own text; a forward can go on its own -->
+      <div v-if="pending" class="pending">
         <span class="bar" />
         <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
-          <span class="pending-label">Forward from {{ forwardAuthor }}</span>
-          <span class="pending-text">{{ pendingForward.text }}</span>
+          <span class="pending-label">
+            {{ pending.kind === 'reply' ? 'Reply to' : 'Forward from' }} {{ pendingAuthor }}
+          </span>
+          <span class="pending-text">{{ pending.message.text }}</span>
         </div>
-        <button type="button" class="cancel" aria-label="Cancel forward"
-                @click="emit('cancel-forward')">×</button>
+        <button type="button" class="cancel"
+                :aria-label="pending.kind === 'reply' ? 'Cancel reply' : 'Cancel forward'"
+                @click="emit('cancel-pending')">×</button>
       </div>
     </MessageComposer>
   </section>
