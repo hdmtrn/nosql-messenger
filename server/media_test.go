@@ -112,3 +112,82 @@ func TestAvatarIsReadableByEveryone(t *testing.T) {
 		t.Fatalf("stranger reading an avatar: got %d, want 200", code)
 	}
 }
+
+func setAvatar(s *server, body []byte, sess Session) (int, []byte) {
+	r := httptest.NewRequest(http.MethodPost, "/auth/me/avatar", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	s.handleSetAvatar(w, r, sess)
+	return w.Code, w.Body.Bytes()
+}
+
+func TestReplacedAvatarIsDeleted(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	s := &server{users: newUserStore(db), media: newMediaStore(db)}
+
+	u := &User{Username: "alice", DisplayName: "Alice"}
+	if err := s.users.Create(ctx, u); err != nil {
+		t.Fatalf("creating user: %v", err)
+	}
+	alice := Session{UserID: u.ID, Username: u.Username}
+
+	avatarOf := func() *bson.ObjectID {
+		t.Helper()
+		got, err := s.users.GetByUsername(ctx, "alice")
+		if err != nil {
+			t.Fatalf("loading user: %v", err)
+		}
+		return got.AvatarID
+	}
+	gone := func(id bson.ObjectID) {
+		t.Helper()
+		m, err := s.media.col.CountDocuments(ctx, bson.M{"_id": id})
+		if err != nil {
+			t.Fatalf("counting media: %v", err)
+		}
+		files, err := db.Collection("fs.files").CountDocuments(ctx, bson.M{})
+		if err != nil {
+			t.Fatalf("counting files: %v", err)
+		}
+		if m != 0 || files != 1 {
+			t.Fatalf("after dropping %s: %d media documents and %d files, want 0 and 1", id.Hex(), m, files)
+		}
+	}
+
+	var first, second map[string]string
+	for _, into := range []*map[string]string{&first, &second} {
+		code, body := setAvatar(s, testPNG(t, 8, 8), alice)
+		if code != http.StatusOK {
+			t.Fatalf("setting avatar: got %d %s, want 200", code, body)
+		}
+		if err := json.Unmarshal(body, into); err != nil {
+			t.Fatalf("decoding answer: %v", err)
+		}
+	}
+
+	firstID, _ := bson.ObjectIDFromHex(first["avatar_id"])
+	secondID, _ := bson.ObjectIDFromHex(second["avatar_id"])
+	if got := avatarOf(); got == nil || *got != secondID {
+		t.Fatalf("user avatar is %v, want the second upload %s", got, secondID.Hex())
+	}
+	gone(firstID)
+
+	if code, body := setAvatar(s, append(testPNG(t, 1, 1), make([]byte, avatarMaxBytes)...), alice); code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized avatar: got %d %s, want 413", code, body)
+	}
+	if got := avatarOf(); got == nil || *got != secondID {
+		t.Fatalf("a refused upload changed the avatar to %v", got)
+	}
+
+	w := httptest.NewRecorder()
+	s.handleDeleteAvatar(w, httptest.NewRequest(http.MethodDelete, "/auth/me/avatar", nil), alice)
+	if w.Code != http.StatusOK {
+		t.Fatalf("removing avatar: got %d %s, want 200", w.Code, w.Body)
+	}
+	if got := avatarOf(); got != nil {
+		t.Fatalf("avatar after removal is %s, want none", got.Hex())
+	}
+	if n, _ := s.media.col.CountDocuments(ctx, bson.M{}); n != 0 {
+		t.Fatalf("%d media documents left after removal, want 0", n)
+	}
+}

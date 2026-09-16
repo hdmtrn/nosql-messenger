@@ -17,12 +17,13 @@ const searchLimit = 20
 // Username is the handle: lowercase, unique, and the key other documents embed.
 // DisplayName is what people read; it changes, so nothing embeds it.
 type User struct {
-	ID           bson.ObjectID `bson:"_id,omitempty"  json:"id"`
-	Username     string        `bson:"username"       json:"username"`
-	DisplayName  string        `bson:"display_name"   json:"display_name"`
-	Bio          string        `bson:"bio,omitempty"  json:"bio"`
-	PasswordHash string        `bson:"password_hash"  json:"-"`
-	CreatedAt    time.Time     `bson:"created_at"     json:"created_at"`
+	ID           bson.ObjectID  `bson:"_id,omitempty"       json:"id"`
+	Username     string         `bson:"username"            json:"username"`
+	DisplayName  string         `bson:"display_name"        json:"display_name"`
+	Bio          string         `bson:"bio,omitempty"       json:"bio"`
+	PasswordHash string         `bson:"password_hash"       json:"-"`
+	AvatarID     *bson.ObjectID `bson:"avatar_id,omitempty" json:"avatar_id,omitempty"`
+	CreatedAt    time.Time      `bson:"created_at"          json:"created_at"`
 }
 
 // normaliseUsername folds the handle so that Mara and mara cannot be two people,
@@ -116,4 +117,28 @@ func (s *userStore) UpdateProfile(ctx context.Context, id bson.ObjectID, display
 		bson.M{"$set": bson.M{"display_name": displayName, "bio": bio}},
 	)
 	return err
+}
+
+// SetAvatar swaps the avatar in one step and hands back the one it replaced, so
+// two uploads racing each other each delete the avatar they actually displaced.
+// A nil avatar removes it.
+func (s *userStore) SetAvatar(ctx context.Context, id bson.ObjectID, avatar *bson.ObjectID) (*bson.ObjectID, error) {
+	update := bson.M{"$unset": bson.M{"avatar_id": ""}}
+	if avatar != nil {
+		update = bson.M{"$set": bson.M{"avatar_id": *avatar}}
+	}
+
+	var before User
+	err := s.col.FindOneAndUpdate(ctx, bson.M{"_id": id}, update,
+		options.FindOneAndUpdate().
+			SetReturnDocument(options.Before).
+			SetProjection(bson.M{"avatar_id": 1}),
+	).Decode(&before)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, errUserNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return before.AvatarID, nil
 }

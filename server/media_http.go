@@ -22,25 +22,32 @@ func extendDeadlines(w http.ResponseWriter) {
 	}
 }
 
-func (s *server) handleUploadMedia(w http.ResponseWriter, r *http.Request, sess Session) {
+func (s *server) saveUpload(w http.ResponseWriter, r *http.Request, owner bson.ObjectID, kind string, limit int64) (Media, bool) {
 	extendDeadlines(w)
-	body := http.MaxBytesReader(w, r.Body, mediaMaxBytes)
+	body := http.MaxBytesReader(w, r.Body, limit)
 
-	m, err := s.media.Save(r.Context(), sess.UserID, mediaKindAttachment, body)
+	m, err := s.media.Save(r.Context(), owner, kind, body)
 	var tooLarge *http.MaxBytesError
 	switch {
 	case errors.As(err, &tooLarge):
 		writeError(w, http.StatusRequestEntityTooLarge, "file is too large")
-		return
+		return Media{}, false
 	case errors.Is(err, errUnsupportedMedia):
 		writeError(w, http.StatusUnsupportedMediaType, "only JPEG, PNG and GIF images are accepted")
-		return
+		return Media{}, false
 	case err != nil:
 		log.Printf("saving media: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
+		return Media{}, false
+	}
+	return m, true
+}
+
+func (s *server) handleUploadMedia(w http.ResponseWriter, r *http.Request, sess Session) {
+	m, ok := s.saveUpload(w, r, sess.UserID, mediaKindAttachment, mediaMaxBytes)
+	if !ok {
 		return
 	}
-
 	writeJSON(w, http.StatusCreated, m.Attachment())
 }
 

@@ -17,7 +17,8 @@ import (
 )
 
 const (
-	mediaMaxBytes = 10 << 20
+	mediaMaxBytes  = 10 << 20
+	avatarMaxBytes = 1 << 20
 
 	mediaKindAvatar     = "avatar"
 	mediaKindAttachment = "attachment"
@@ -107,6 +108,21 @@ func (s *mediaStore) ByID(ctx context.Context, id bson.ObjectID) (Media, error) 
 		return Media{}, fmt.Errorf("looking up media: %w", err)
 	}
 	return m, nil
+}
+
+func (s *mediaStore) Delete(ctx context.Context, id bson.ObjectID) error {
+	var m Media
+	err := s.col.FindOneAndDelete(ctx, bson.M{"_id": id}).Decode(&m)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return errMediaNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("deleting media: %w", err)
+	}
+	if err := s.bucket.Delete(ctx, m.FileID); err != nil {
+		return fmt.Errorf("deleting file: %w", err)
+	}
+	return nil
 }
 
 func (s *mediaStore) Open(ctx context.Context, m Media) (*mongo.GridFSDownloadStream, error) {

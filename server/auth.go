@@ -263,6 +263,7 @@ type meResponse struct {
 	Username    string    `json:"username"`
 	DisplayName string    `json:"display_name"`
 	Bio         string    `json:"bio"`
+	AvatarID    string    `json:"avatar_id,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 
@@ -282,11 +283,15 @@ func (a *auth) handleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, meResponse{
+	me := meResponse{
 		ID:          u.ID.Hex(),
 		Username:    u.Username,
 		DisplayName: u.DisplayName,
 		Bio:         u.Bio,
 		CreatedAt:   u.CreatedAt,
-	})
+	}
+	if u.AvatarID != nil {
+		me.AvatarID = u.AvatarID.Hex()
+	}
+	writeJSON(w, http.StatusOK, me)
 }

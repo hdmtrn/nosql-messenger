@@ -45,6 +45,8 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /auth/logout", s.auth.handleLogout)
 	mux.HandleFunc("GET /auth/me", s.auth.handleMe)
 	mux.HandleFunc("POST /auth/me/profile", s.requireAuth(s.handleUpdateProfile))
+	mux.HandleFunc("POST /auth/me/avatar", s.requireAuth(s.handleSetAvatar))
+	mux.HandleFunc("DELETE /auth/me/avatar", s.requireAuth(s.handleDeleteAvatar))
 	mux.HandleFunc("GET /auth/sessions", s.requireAuth(s.handleListSessions))
 	mux.HandleFunc("DELETE /auth/sessions/{id}", s.requireAuth(s.handleRevokeSession))
 
