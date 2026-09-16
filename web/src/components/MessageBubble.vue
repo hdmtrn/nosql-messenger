@@ -28,7 +28,7 @@ const props = defineProps({
   // [{ id, width, height, preview? }]: preview is the local copy shown while sending.
   attachments: { type: Array, default: () => [] },
 })
-defineEmits(['retry', 'discard', 'author', 'quote', 'forwarded-author'])
+defineEmits(['retry', 'discard', 'author', 'quote', 'forwarded-author', 'picture'])
 
 const MONO = {
   font: 'var(--text-meta)',
@@ -180,9 +180,10 @@ const bubbleStyle = computed(() => ({
         </span>
         <div v-if="attachments.length" class="pictures"
              :class="{ grid: attachments.length > 1 }">
-          <a v-for="a in attachments" :key="a.id" :href="pictureUrl(a)" target="_blank" rel="noopener">
+          <button v-for="(a, i) in attachments" :key="a.id" type="button" class="picture-open"
+                  aria-label="Open picture" @click="$emit('picture', i)">
             <img :src="pictureUrl(a)" alt="" loading="lazy" class="picture" :style="pictureStyle(a)">
-          </a>
+          </button>
         </div>
         <slot />
         <template v-if="showStamp">
@@ -226,7 +227,14 @@ button.who { cursor: pointer; }
   grid-template-columns: repeat(2, auto);
   gap: 4px;
 }
-.pictures a { display: block; max-width: 100%; }
+.picture-open {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: zoom-in;
+}
 .picture {
   display: block;
   max-width: 100%;

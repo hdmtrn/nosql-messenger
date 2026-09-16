@@ -6,6 +6,7 @@ import MessageComposer from '../components/MessageComposer.vue'
 import MessageMenu from '../components/MessageMenu.vue'
 import SgAvatar from '../components/SgAvatar.vue'
 import ChannelGlyph from '../components/ChannelGlyph.vue'
+import MediaViewer from '../components/MediaViewer.vue'
 import { avatarUrl, displayName, initials, messagePreview } from '../naming'
 
 const props = defineProps({
@@ -32,7 +33,23 @@ const composer = ref(null)
 // A reply or a forward waiting above the field means the next thing to do is
 // type, so the cursor goes there, as in Telegram.
 // The field stays mounted across chats; pictures picked in one must not be sent to another.
-watch(() => props.channel.id, () => composer.value?.clearFiles())
+watch(() => props.channel.id, () => {
+  composer.value?.clearFiles()
+  viewing.value = null
+})
+
+// Every loaded picture of the chat in feed order, so the viewer can flip past the
+// message that was clicked. A key names a picture by its message and position.
+const pictureKey = (m, i) => `${m.id || m.client_msg_id}:${i}`
+const pictures = computed(() => props.messages.flatMap((m) =>
+  (m.attachments || []).map((a, i) => ({ key: pictureKey(m, i), url: a.preview || `/media/${a.id}` }))))
+// Index in pictures of the one the viewer opened on, or null when it is closed.
+const viewing = ref(null)
+
+function openPicture(m, i) {
+  const at = pictures.value.findIndex((p) => p.key === pictureKey(m, i))
+  if (at >= 0) viewing.value = at
+}
 
 watch(() => props.pending, async (action) => {
   if (!action) return
@@ -212,9 +229,17 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
         @keydown.enter.self="openMenuAtBubble(m, $event)"
         @author="emit('person', m.author.username)"
         @quote="openQuote(m)"
+        @picture="openPicture(m, $event)"
         @forwarded-author="m.forwarded.author.id === me.id || emit('person', m.forwarded.author.username)"
       >{{ m.text }}</MessageBubble>
     </div>
+
+    <MediaViewer
+      v-if="viewing !== null"
+      :pictures="pictures"
+      :start="viewing"
+      @close="viewing = null"
+    />
 
     <MessageMenu
       v-if="menu"
