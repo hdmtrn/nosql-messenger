@@ -5,6 +5,8 @@ const props = defineProps({
   placeholder: { type: String, default: 'Message…' },
   disabled: Boolean,
   maxLength: { type: Number, default: 4000 },
+  // Something above the field (a forward) can be sent with no text of its own.
+  ready: Boolean,
 })
 const emit = defineEmits(['send'])
 
@@ -12,7 +14,7 @@ const text = ref('')
 const focused = ref(false)
 
 function send() {
-  if (!text.value.trim() || props.disabled) return
+  if ((!text.value.trim() && !props.ready) || props.disabled) return
   emit('send', text.value)
   text.value = ''
 }
@@ -20,6 +22,7 @@ function send() {
 
 <template>
   <div style="position:relative;padding:16px 28px 20px">
+    <slot />
     <div style="display:flex;align-items:center;gap:16px">
       <div
         :style="{ flex: 1, display: 'flex', alignItems: 'center', height: '48px', padding: '0 24px',

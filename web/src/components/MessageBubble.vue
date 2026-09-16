@@ -19,6 +19,8 @@ const props = defineProps({
   // The author whose page is open beside the feed gets a ring, so it stays clear
   // whose page that is.
   ring: Boolean,
+  // Display name of the original author when this message is a forward.
+  forwarded: { type: String, default: '' },
 })
 defineEmits(['retry', 'discard', 'author'])
 
@@ -71,6 +73,12 @@ const stampStyle = computed(() => ({
   bottom: '11px',
   color: props.own ? 'rgba(255, 255, 255, 0.7)' : 'var(--text-muted)',
 }))
+const forwardStyle = computed(() => ({
+  display: 'block',
+  marginBottom: '2px',
+  font: '500 13px/1.3 var(--font-ui)',
+  color: props.own && props.status === 'delivered' ? 'rgba(255, 255, 255, 0.7)' : 'var(--text-muted)',
+}))
 const avatarTone = computed(() =>
   props.own && props.status !== 'delivered' ? props.status : 'blue'
 )
@@ -120,6 +128,8 @@ const bubbleStyle = computed(() => ({
       </div>
 
       <div :style="bubbleStyle">
+        <!-- a line of its own above the text, so the clock still rides on the text's last line -->
+        <span v-if="forwarded" :style="forwardStyle">Forwarded from {{ forwarded }}</span>
         <slot />
         <template v-if="showStamp">
           <span aria-hidden="true" :style="stampRoom">
