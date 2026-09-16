@@ -3,11 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"image"
 	"image/png"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -364,5 +367,54 @@ func TestForwardCopiesThePictureRecordNotTheBytes(t *testing.T) {
 	}
 	if records != 2 || files != 1 {
 		t.Fatalf("after a forward and its retry: %d media records and %d files, want 2 and 1", records, files)
+	}
+}
+
+func TestConcurrentUploadsKeepTheirBytes(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	media := newMediaStore(db)
+
+	pictures := make([][]byte, 8)
+	for i := range pictures {
+		img := image.NewRGBA(image.Rect(0, 0, 600, 600))
+		if _, err := rand.Read(img.Pix); err != nil {
+			t.Fatalf("filling picture: %v", err)
+		}
+		var buf bytes.Buffer
+		if err := png.Encode(&buf, img); err != nil {
+			t.Fatalf("encoding picture: %v", err)
+		}
+		pictures[i] = buf.Bytes()
+	}
+
+	saved := make([]Media, len(pictures))
+	errs := make([]error, len(pictures))
+	var wg sync.WaitGroup
+	for i, p := range pictures {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			saved[i], errs[i] = media.Save(ctx, person("alice").UserID, mediaKindAttachment, bytes.NewReader(p))
+		}()
+	}
+	wg.Wait()
+
+	for i, m := range saved {
+		if errs[i] != nil {
+			t.Fatalf("saving picture %d: %v", i, errs[i])
+		}
+		ds, err := media.Open(ctx, m)
+		if err != nil {
+			t.Fatalf("opening picture %d: %v", i, err)
+		}
+		got, err := io.ReadAll(ds)
+		ds.Close()
+		if err != nil {
+			t.Fatalf("reading picture %d: %v", i, err)
+		}
+		if !bytes.Equal(got, pictures[i]) {
+			t.Fatalf("picture %d came back different: %d bytes, sent %d", i, len(got), len(pictures[i]))
+		}
 	}
 }

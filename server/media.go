@@ -58,15 +58,16 @@ func (m Media) Attachment() Attachment {
 }
 
 type mediaStore struct {
-	col    *mongo.Collection
-	bucket *mongo.GridFSBucket
+	db  *mongo.Database
+	col *mongo.Collection
 }
 
 func newMediaStore(db *mongo.Database) *mediaStore {
-	return &mediaStore{
-		col:    db.Collection("media"),
-		bucket: db.GridFSBucket(),
-	}
+	return &mediaStore{db: db, col: db.Collection("media")}
+}
+
+func (s *mediaStore) bucket() *mongo.GridFSBucket {
+	return s.db.GridFSBucket()
 }
 
 func (s *mediaStore) Save(ctx context.Context, owner bson.ObjectID, kind string, body io.Reader) (Media, error) {
@@ -76,7 +77,7 @@ func (s *mediaStore) Save(ctx context.Context, owner bson.ObjectID, kind string,
 		return Media{}, errUnsupportedMedia
 	}
 
-	fileID, err := s.bucket.UploadFromStream(ctx, "", io.MultiReader(&head, body))
+	fileID, err := s.bucket().UploadFromStream(ctx, "", io.MultiReader(&head, body))
 	if err != nil {
 		return Media{}, fmt.Errorf("uploading file: %w", err)
 	}
@@ -92,7 +93,7 @@ func (s *mediaStore) Save(ctx context.Context, owner bson.ObjectID, kind string,
 		CreatedAt:   time.Now(),
 	}
 	if _, err := s.col.InsertOne(ctx, m); err != nil {
-		_ = s.bucket.Delete(ctx, fileID)
+		_ = s.bucket().Delete(ctx, fileID)
 		return Media{}, fmt.Errorf("inserting media: %w", err)
 	}
 	return m, nil
@@ -201,14 +202,14 @@ func (s *mediaStore) Delete(ctx context.Context, id bson.ObjectID) error {
 	if err != nil {
 		return fmt.Errorf("deleting media: %w", err)
 	}
-	if err := s.bucket.Delete(ctx, m.FileID); err != nil {
+	if err := s.bucket().Delete(ctx, m.FileID); err != nil {
 		return fmt.Errorf("deleting file: %w", err)
 	}
 	return nil
 }
 
 func (s *mediaStore) Open(ctx context.Context, m Media) (*mongo.GridFSDownloadStream, error) {
-	ds, err := s.bucket.OpenDownloadStream(ctx, m.FileID)
+	ds, err := s.bucket().OpenDownloadStream(ctx, m.FileID)
 	if errors.Is(err, mongo.ErrFileNotFound) {
 		return nil, errMediaNotFound
 	}
