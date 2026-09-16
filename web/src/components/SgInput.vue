@@ -18,7 +18,7 @@ const inputId = useId()
 const focused = ref(false)
 
 const monoLine = {
-  font: 'var(--text-machine)',
+  font: 'var(--text-meta)',
   textTransform: 'uppercase',
   letterSpacing: 'var(--mono-tracking)',
 }
@@ -54,7 +54,7 @@ const inputStyle = computed(() => ({
 
 <template>
   <div style="display:flex;flex-direction:column;gap:8px">
-    <label v-if="label" :for="inputId" :style="{ ...monoLine, color: 'var(--text-primary)' }">
+    <label v-if="label" :for="inputId" :style="{ ...monoLine, font: 'var(--text-label)', color: 'var(--text-primary)' }">
       {{ label }}
     </label>
 

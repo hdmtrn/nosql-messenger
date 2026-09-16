@@ -15,6 +15,7 @@ const props = defineProps({
   messages: { type: Array, default: () => [] },
   // username whose page is open beside the feed
   person: { type: String, default: '' },
+  infoOpen: Boolean,
   forwardTargets: { type: Array, default: () => [] },
   // The message waiting above the field to be forwarded into this chat on Send.
   pendingForward: { type: Object, default: null },
@@ -80,7 +81,8 @@ const rows = computed(() =>
 )
 
 function clock(iso) {
-  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  // 24-hour whatever the locale: "18:25" is a third narrower than "06:25 PM"
+  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
 }
 
 function onScroll() {
@@ -112,6 +114,7 @@ defineExpose({ toBottom, keepPosition, distanceFromBottom: () => (feed.value ? f
       :subtitle="direct() ? '@' + title
                           : channel.member_count + (channel.member_count === 1 ? ' member' : ' members')"
       :subtitle-upper="!direct()"
+      :open="infoOpen"
       @info="emit('info')"
     >
       <template #mark>
@@ -130,6 +133,7 @@ defineExpose({ toBottom, keepPosition, distanceFromBottom: () => (feed.value ? f
         :key="m.id || m.client_msg_id"
         :own="m.author.id === me.id"
         :head="head"
+        :avatar="!direct()"
         :status="m.status || 'delivered'"
         :author="direct() ? '' : displayName(m.author.username)"
         :initials="initials(displayName(m.author.username))"

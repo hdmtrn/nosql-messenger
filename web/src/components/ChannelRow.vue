@@ -14,17 +14,19 @@ const props = defineProps({
 })
 defineEmits(['click'])
 
-const mark = computed(() => (props.compact ? 28 : 22))
+// One layout for both rail widths: the mark keeps its size and its 40px column,
+// so collapsing hides the name and nothing else moves.
+const MARK = 24
 
 const style = computed(() => ({
   position: 'relative',
   display: 'flex',
   alignItems: 'center',
-  justifyContent: props.compact ? 'center' : 'flex-start',
-  gap: '12px',
+  gap: '8px',
   width: '100%',
-  height: props.compact ? '44px' : '38px',
-  padding: props.compact ? '0' : '0 14px',
+  height: '40px',
+  // Collapsed, the row is exactly the 40px column, so the active pill is a circle.
+  padding: props.compact ? '0' : '0 12px 0 0',
   textAlign: 'left',
   cursor: 'pointer',
   border: 'none',
@@ -55,8 +57,10 @@ const badge = computed(() => ({
     :style="style"
     @click="$emit('click')"
   >
-    <SgAvatar v-if="avatar" :initials="avatar" :size="mark" :tone="active ? 'blue' : 'onBlue'" />
-    <ChannelGlyph v-else :size="mark" :tone="active ? 'blue' : 'onBlue'" />
+    <span style="flex:0 0 40px;display:flex;justify-content:center">
+      <SgAvatar v-if="avatar" :initials="avatar" :size="MARK" :tone="active ? 'blue' : 'onBlue'" />
+      <ChannelGlyph v-else :size="MARK" :tone="active ? 'blue' : 'onBlue'" />
+    </span>
     <span v-if="!compact"
           style="flex:1;min-width:0;font:var(--text-body);overflow:hidden;
                  text-overflow:ellipsis;white-space:nowrap">{{ name }}</span>
