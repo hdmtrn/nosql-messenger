@@ -10,10 +10,12 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"log"
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
 const (
@@ -22,6 +24,9 @@ const (
 
 	mediaMaxSide   = 10_000
 	mediaMaxPixels = 40_000_000
+
+	mediaUnsentTTL     = 24 * time.Hour
+	mediaSweepInterval = time.Hour
 
 	mediaKindAvatar     = "avatar"
 	mediaKindAttachment = "attachment"
@@ -43,6 +48,7 @@ type Media struct {
 	Height      int            `bson:"height"`
 	ChannelID   *bson.ObjectID `bson:"channel_id,omitempty"`
 	CreatedAt   time.Time      `bson:"created_at"`
+	ExpiresAt   *time.Time     `bson:"expires_at,omitempty"`
 }
 
 type Attachment struct {
@@ -71,6 +77,15 @@ func newMediaStore(db *mongo.Database) *mediaStore {
 	return &mediaStore{db: db, col: db.Collection("media"), files: db.GridFSBucket()}
 }
 
+func (s *mediaStore) ensureIndexes(ctx context.Context) error {
+	_, err := s.col.Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys: bson.D{{Key: "expires_at", Value: 1}},
+		Options: options.Index().SetPartialFilterExpression(
+			bson.M{"expires_at": bson.M{"$exists": true}}),
+	})
+	return err
+}
+
 func (s *mediaStore) Save(ctx context.Context, owner bson.ObjectID, kind string, body io.Reader) (Media, error) {
 	var head bytes.Buffer
 	cfg, format, err := image.DecodeConfig(io.TeeReader(body, &head))
@@ -96,6 +111,10 @@ func (s *mediaStore) Save(ctx context.Context, owner bson.ObjectID, kind string,
 		Width:       cfg.Width,
 		Height:      cfg.Height,
 		CreatedAt:   time.Now(),
+	}
+	if kind == mediaKindAttachment {
+		expires := m.CreatedAt.Add(mediaUnsentTTL)
+		m.ExpiresAt = &expires
 	}
 	if _, err := s.col.InsertOne(ctx, m); err != nil {
 		_ = s.files.Delete(ctx, fileID)
@@ -153,7 +172,10 @@ func (s *mediaStore) Attach(ctx context.Context, ids []bson.ObjectID, owner, cha
 				{"channel_id": channel},
 			},
 		},
-		bson.M{"$set": bson.M{"channel_id": channel}},
+		bson.M{
+			"$set":   bson.M{"channel_id": channel},
+			"$unset": bson.M{"expires_at": ""},
+		},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("attaching media: %w", err)
@@ -199,8 +221,12 @@ func (s *mediaStore) CopyTo(ctx context.Context, from []Attachment, owner, chann
 }
 
 func (s *mediaStore) Delete(ctx context.Context, id bson.ObjectID) error {
+	return s.deleteWhere(ctx, bson.M{"_id": id})
+}
+
+func (s *mediaStore) deleteWhere(ctx context.Context, filter bson.M) error {
 	var m Media
-	err := s.col.FindOneAndDelete(ctx, bson.M{"_id": id}).Decode(&m)
+	err := s.col.FindOneAndDelete(ctx, filter).Decode(&m)
 	if errors.Is(err, mongo.ErrNoDocuments) {
 		return errMediaNotFound
 	}
@@ -211,6 +237,55 @@ func (s *mediaStore) Delete(ctx context.Context, id bson.ObjectID) error {
 		return fmt.Errorf("deleting file: %w", err)
 	}
 	return nil
+}
+
+func (s *mediaStore) DeleteExpired(ctx context.Context, now time.Time) (int, error) {
+	cur, err := s.col.Find(ctx,
+		bson.M{"expires_at": bson.M{"$lte": now}},
+		options.Find().SetProjection(bson.M{"_id": 1}),
+	)
+	if err != nil {
+		return 0, fmt.Errorf("finding expired media: %w", err)
+	}
+	var expired []struct {
+		ID bson.ObjectID `bson:"_id"`
+	}
+	if err := cur.All(ctx, &expired); err != nil {
+		return 0, fmt.Errorf("decoding expired media: %w", err)
+	}
+
+	deleted := 0
+	for _, e := range expired {
+		err := s.deleteWhere(ctx, bson.M{"_id": e.ID, "expires_at": bson.M{"$lte": now}})
+		if errors.Is(err, errMediaNotFound) {
+			continue
+		}
+		if err != nil {
+			return deleted, err
+		}
+		deleted++
+	}
+	return deleted, nil
+}
+
+func (s *mediaStore) sweepExpired(ctx context.Context) {
+	ticker := time.NewTicker(mediaSweepInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			n, err := s.DeleteExpired(ctx, now)
+			if err != nil {
+				log.Printf("deleting unsent media: %v", err)
+			}
+			if n > 0 {
+				log.Printf("deleted %d unsent media files", n)
+			}
+		}
+	}
 }
 
 func (s *mediaStore) Open(ctx context.Context, m Media) (*mongo.GridFSDownloadStream, error) {

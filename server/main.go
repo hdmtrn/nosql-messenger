@@ -58,6 +58,10 @@ func run(ctx context.Context) error {
 	}
 
 	media := newMediaStore(db)
+	if err := media.ensureIndexes(ctx); err != nil {
+		return fmt.Errorf("creating media indexes: %w", err)
+	}
+	go media.sweepExpired(ctx)
 
 	authSvc, err := newAuth(users, sessions)
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"hash/crc32"
 	"image"
 	"image/png"
@@ -14,6 +15,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 )
@@ -477,5 +479,62 @@ func TestHugeImagesAreRefusedByTheirHeader(t *testing.T) {
 	}
 	if files != 1 {
 		t.Fatalf("%d files stored, want only the one at the limit", files)
+	}
+}
+
+func TestOnlyUnsentPicturesExpire(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	channels, _ := newMessageTestStores(t, db)
+	media := newMediaStore(db)
+	if err := media.ensureIndexes(ctx); err != nil {
+		t.Fatalf("media indexes: %v", err)
+	}
+
+	alice := person("alice")
+	room := createChannel(t, channels, "room", alice)
+	save := func(kind string) Media {
+		t.Helper()
+		m, err := media.Save(ctx, alice.UserID, kind, bytes.NewReader(testPNG(t, 2, 2)))
+		if err != nil {
+			t.Fatalf("saving %s: %v", kind, err)
+		}
+		return m
+	}
+
+	unsent, sent, avatar := save(mediaKindAttachment), save(mediaKindAttachment), save(mediaKindAvatar)
+	if unsent.ExpiresAt == nil || avatar.ExpiresAt != nil {
+		t.Fatalf("expiry: attachment %v, avatar %v; want a time and none", unsent.ExpiresAt, avatar.ExpiresAt)
+	}
+	if _, err := media.Attach(ctx, []bson.ObjectID{sent.ID}, alice.UserID, room.ID); err != nil {
+		t.Fatalf("attaching: %v", err)
+	}
+	copies, err := media.CopyTo(ctx, []Attachment{sent.Attachment()}, alice.UserID, room.ID)
+	if err != nil {
+		t.Fatalf("copying: %v", err)
+	}
+
+	if n, err := media.DeleteExpired(ctx, time.Now()); err != nil || n != 0 {
+		t.Fatalf("sweeping before the deadline: deleted %d, err %v; want 0", n, err)
+	}
+	n, err := media.DeleteExpired(ctx, time.Now().Add(mediaUnsentTTL+time.Minute))
+	if err != nil || n != 1 {
+		t.Fatalf("sweeping after the deadline: deleted %d, err %v; want 1", n, err)
+	}
+
+	if _, err := media.ByID(ctx, unsent.ID); !errors.Is(err, errMediaNotFound) {
+		t.Fatalf("unsent picture after the sweep: %v, want not found", err)
+	}
+	for name, id := range map[string]bson.ObjectID{"sent": sent.ID, "forwarded": copies[0].ID, "avatar": avatar.ID} {
+		if _, err := media.ByID(ctx, id); err != nil {
+			t.Fatalf("%s picture after the sweep: %v", name, err)
+		}
+	}
+	files, err := db.Collection("fs.files").CountDocuments(ctx, bson.M{"_id": unsent.FileID})
+	if err != nil {
+		t.Fatalf("counting files: %v", err)
+	}
+	if files != 0 {
+		t.Fatal("the bytes of the unsent picture are still stored")
 	}
 }
