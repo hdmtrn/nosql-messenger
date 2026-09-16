@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"unicode/utf8"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -186,6 +187,17 @@ func (s *server) handleListMessages(w http.ResponseWriter, r *http.Request, sess
 		return
 	}
 
+	// ids asks for particular messages (the originals replies point at) rather
+	// than a page, so the page parameters make no sense next to it.
+	if raw := q.Get("ids"); raw != "" {
+		if q.Has("before") || q.Has("limit") {
+			writeError(w, http.StatusBadRequest, "ids cannot be combined with before or limit")
+			return
+		}
+		s.listMessagesByID(w, r, channelID, raw)
+		return
+	}
+
 	var before bson.ObjectID
 	if raw := q.Get("before"); raw != "" {
 		id, err := bson.ObjectIDFromHex(raw)
@@ -209,6 +221,35 @@ func (s *server) handleListMessages(w http.ResponseWriter, r *http.Request, sess
 	messages, err := s.messages.List(r.Context(), channelID, before, limit)
 	if err != nil {
 		log.Printf("listing messages: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, messages)
+}
+
+// listMessagesByID answers with the listed messages of the channel. An id that is
+// not there is simply left out; the client shows its quote as unavailable.
+func (s *server) listMessagesByID(w http.ResponseWriter, r *http.Request, channelID bson.ObjectID, raw string) {
+	// SplitN stops one piece past the limit, so a query with a million commas is
+	// refused without first allocating a million strings.
+	parts := strings.SplitN(raw, ",", messagesMaxLimit+1)
+	if len(parts) > messagesMaxLimit {
+		writeError(w, http.StatusBadRequest, "too many ids")
+		return
+	}
+	ids := make([]bson.ObjectID, 0, len(parts))
+	for _, p := range parts {
+		id, err := bson.ObjectIDFromHex(p)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "malformed message id")
+			return
+		}
+		ids = append(ids, id)
+	}
+
+	messages, err := s.messages.ByIDs(r.Context(), channelID, ids)
+	if err != nil {
+		log.Printf("looking up messages: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}

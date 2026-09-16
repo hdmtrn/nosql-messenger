@@ -139,6 +139,25 @@ func (s *messageStore) ByClientMsgID(ctx context.Context, clientMsgID string) (M
 	return msg, nil
 }
 
+// ByIDs returns the messages of one channel whose ids are listed, in no particular
+// order. The channel is part of the filter, so an id from another channel is not
+// found, exactly like a missing one.
+func (s *messageStore) ByIDs(ctx context.Context, channelID bson.ObjectID, ids []bson.ObjectID) ([]Message, error) {
+	cur, err := s.col.Find(ctx, bson.M{
+		"channel_id": channelID,
+		"_id":        bson.M{"$in": ids},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("looking up messages by id: %w", err)
+	}
+
+	messages := []Message{}
+	if err := cur.All(ctx, &messages); err != nil {
+		return nil, fmt.Errorf("decoding messages: %w", err)
+	}
+	return messages, nil
+}
+
 func (s *messageStore) List(ctx context.Context, channelID bson.ObjectID, before bson.ObjectID, limit int) ([]Message, error) {
 	if limit <= 0 {
 		limit = messagesPageSize
