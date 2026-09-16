@@ -24,19 +24,21 @@ const input = ref(null)
 const picker = ref(null)
 
 // Each picture uploads as soon as it is picked, so Send only has to name it. While
-// there are any, they wait in the send box, which edits this same text.
+// there are any, they wait in the send box with a caption of their own.
 // { key, url, name, size, status: 'queued' | 'uploading' | 'done' | 'failed', error, att }
 const files = ref([])
+// As in Telegram, what was typed moves into the caption when the box opens and
+// comes back to the field when the box is closed without sending.
+const caption = ref('')
 
 const uploading = computed(() => files.value.some((f) => f.status === 'queued' || f.status === 'uploading'))
 const broken = computed(() => files.value.some((f) => f.status === 'failed'))
-const canSend = computed(() =>
-  !props.disabled && !uploading.value && !broken.value
-  && (!!text.value.trim() || props.ready || files.value.length > 0))
+const canSend = computed(() => !props.disabled && (!!text.value.trim() || props.ready))
 const canSendFiles = computed(() =>
   !props.disabled && !uploading.value && !broken.value && files.value.length > 0)
 
 function addFiles(list) {
+  const opening = files.value.length === 0
   for (const file of list) {
     if (file.type && !file.type.startsWith('image/')) continue
     const item = reactive({
@@ -52,7 +54,16 @@ function addFiles(list) {
     files.value.push(item)
     waiting.push({ item, file })
   }
+  if (opening && files.value.length) {
+    caption.value = text.value
+    text.value = ''
+  }
   pump()
+}
+
+function closeBox() {
+  text.value = caption.value
+  caption.value = ''
 }
 
 const waiting = []
@@ -111,6 +122,7 @@ function remove(item) {
   item.dropped = true
   URL.revokeObjectURL(item.url)
   files.value = files.value.filter((f) => f !== item)
+  if (!files.value.length) closeBox()
 }
 
 function clearFiles() {
@@ -118,6 +130,7 @@ function clearFiles() {
     f.dropped = true
     URL.revokeObjectURL(f.url)
   }
+  if (files.value.length) closeBox()
   files.value = []
 }
 
@@ -126,12 +139,18 @@ defineExpose({ focus: () => input.value?.focus(), clearFiles })
 
 // The local copies go along as previews for the bubble until the server answers,
 // so their URLs are not revoked here.
-function send() {
-  if (!canSend.value) return
-  emit('send', text.value, files.value.map((f) => ({ ...f.att, preview: f.url })))
-  text.value = ''
+function sendFiles() {
+  if (!canSendFiles.value) return
+  emit('send', caption.value, files.value.map((f) => ({ ...f.att, preview: f.url })))
+  caption.value = ''
   files.value = []
   input.value?.focus()
+}
+
+function send() {
+  if (!canSend.value) return
+  emit('send', text.value, [])
+  text.value = ''
 }
 </script>
 
@@ -141,14 +160,14 @@ function send() {
     <slot />
     <SendFilesDialog
       v-if="files.length"
-      v-model="text"
+      v-model="caption"
       :files="files"
       :can-send="canSendFiles"
       :max-length="maxLength"
       @close="clearFiles(); input?.focus()"
       @remove="remove"
       @add="addFiles"
-      @send="send"
+      @send="sendFiles"
     />
     <div style="display:flex;align-items:center;gap:16px">
       <div
