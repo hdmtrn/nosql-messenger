@@ -245,7 +245,7 @@ func TestDiscardTakesInvitesWithIt(t *testing.T) {
 	if _, err := invites.Create(ctx, ch.ID, owner.UserID); err != nil {
 		t.Fatalf("creating invite: %v", err)
 	}
-	if _, err := messages.Insert(ctx, ch.ID, owner, "hello", "c1", nil); err != nil {
+	if _, err := messages.Insert(ctx, ch.ID, owner, "hello", "c1", nil, nil); err != nil {
 		t.Fatalf("inserting message: %v", err)
 	}
 

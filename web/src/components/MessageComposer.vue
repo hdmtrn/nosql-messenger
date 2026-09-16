@@ -12,6 +12,10 @@ const emit = defineEmits(['send'])
 
 const text = ref('')
 const focused = ref(false)
+const input = ref(null)
+
+// Picking Reply or Forward in a menu leaves focus nowhere; the chat puts it here.
+defineExpose({ focus: () => input.value?.focus() })
 
 function send() {
   if ((!text.value.trim() && !props.ready) || props.disabled) return
@@ -30,6 +34,7 @@ function send() {
                   boxShadow: focused ? 'inset 0 0 0 2px var(--border-active)' : 'none' }"
       >
         <input
+          ref="input"
           v-model="text"
           :disabled="disabled"
           :placeholder="placeholder"

@@ -42,6 +42,10 @@ type Message struct {
 
 	// A pointer, so that ordinary messages store no forwarded field at all.
 	Forwarded *ForwardedFrom `bson:"forwarded,omitempty" json:"forwarded,omitempty"`
+
+	// The message this one answers. Only the id: the quote is filled in by the
+	// client from the original, so an edited original shows its current text.
+	ReplyTo *bson.ObjectID `bson:"reply_to,omitempty" json:"reply_to,omitempty"`
 }
 
 // forwardOf is what a copy of m carries about its source: a forward of a
@@ -84,7 +88,7 @@ func (s *messageStore) ensureIndexes(ctx context.Context) error {
 	return err
 }
 
-func (s *messageStore) Insert(ctx context.Context, channelID bson.ObjectID, author Session, text, clientMsgID string, fwd *ForwardedFrom) (Message, error) {
+func (s *messageStore) Insert(ctx context.Context, channelID bson.ObjectID, author Session, text, clientMsgID string, fwd *ForwardedFrom, replyTo *bson.ObjectID) (Message, error) {
 	msg := Message{
 		ChannelID: channelID,
 		Author: MessageAuthor{
@@ -95,6 +99,7 @@ func (s *messageStore) Insert(ctx context.Context, channelID bson.ObjectID, auth
 		CreatedAt:   time.Now(),
 		ClientMsgID: clientMsgID,
 		Forwarded:   fwd,
+		ReplyTo:     replyTo,
 	}
 
 	res, err := s.col.InsertOne(ctx, msg)
@@ -132,6 +137,25 @@ func (s *messageStore) ByClientMsgID(ctx context.Context, clientMsgID string) (M
 		return Message{}, fmt.Errorf("looking up message by client id: %w", err)
 	}
 	return msg, nil
+}
+
+// ByIDs returns the messages of one channel whose ids are listed, in no particular
+// order. The channel is part of the filter, so an id from another channel is not
+// found, exactly like a missing one.
+func (s *messageStore) ByIDs(ctx context.Context, channelID bson.ObjectID, ids []bson.ObjectID) ([]Message, error) {
+	cur, err := s.col.Find(ctx, bson.M{
+		"channel_id": channelID,
+		"_id":        bson.M{"$in": ids},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("looking up messages by id: %w", err)
+	}
+
+	messages := []Message{}
+	if err := cur.All(ctx, &messages); err != nil {
+		return nil, fmt.Errorf("decoding messages: %w", err)
+	}
+	return messages, nil
 }
 
 func (s *messageStore) List(ctx context.Context, channelID bson.ObjectID, before bson.ObjectID, limit int) ([]Message, error) {

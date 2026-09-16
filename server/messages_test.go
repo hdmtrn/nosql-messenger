@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -51,7 +52,7 @@ func TestForwardReachesOnlyMessagesYouCanSee(t *testing.T) {
 	aliceNotes := createChannel(t, channels, "alice-notes", alice)
 	malloryRoom := createChannel(t, channels, "mallory-room", mallory)
 
-	orig, err := messages.Insert(ctx, aliceRoom.ID, alice, "the plan", "", nil)
+	orig, err := messages.Insert(ctx, aliceRoom.ID, alice, "the plan", "", nil, nil)
 	if err != nil {
 		t.Fatalf("inserting message: %v", err)
 	}
@@ -130,6 +131,173 @@ func TestRepeatedClientMsgIDIsNotBroadcastAgain(t *testing.T) {
 	}
 	if n := len(watcher.send); n != 1 {
 		t.Fatalf("channel saw %d broadcasts, want 1", n)
+	}
+}
+
+func TestReplyStaysInItsChannel(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	channels, messages := newMessageTestStores(t, db)
+
+	alice, mallory := person("alice"), person("mallory")
+	aliceRoom := createChannel(t, channels, "alice-room", alice)
+	aliceNotes := createChannel(t, channels, "alice-notes", alice)
+	malloryRoom := createChannel(t, channels, "mallory-room", mallory)
+
+	orig, err := messages.Insert(ctx, aliceRoom.ID, alice, "the plan", "", nil, nil)
+	if err != nil {
+		t.Fatalf("inserting message: %v", err)
+	}
+
+	s := &server{channels: channels, messages: messages, hub: NewHub()}
+	reply := func(sess Session, channelID bson.ObjectID, replyTo string) (int, []byte) {
+		return callMessageHandler(t, s.handleSendMessage, "", map[string]string{
+			"channel_id": channelID.Hex(),
+			"text":       "agreed",
+			"reply_to":   replyTo,
+		}, sess)
+	}
+
+	// The allowed case first: without it a handler that always answers 404
+	// would pass everything below.
+	code, body := reply(alice, aliceRoom.ID, orig.ID.Hex())
+	if code != http.StatusCreated {
+		t.Fatalf("replying in the same channel: got %d %s, want 201", code, body)
+	}
+	var sent Message
+	if err := json.Unmarshal(body, &sent); err != nil {
+		t.Fatalf("decoding reply: %v", err)
+	}
+	stored, err := messages.ByID(ctx, sent.ID)
+	if err != nil {
+		t.Fatalf("loading stored reply: %v", err)
+	}
+	if stored.ReplyTo == nil || *stored.ReplyTo != orig.ID {
+		t.Fatalf("stored reply points at %v, want %s", stored.ReplyTo, orig.ID.Hex())
+	}
+
+	// Alice can read the original, but a reply in another channel would show its
+	// text there. That, a foreign message and a missing one must all look the same.
+	otherChannel, otherBody := reply(alice, aliceNotes.ID, orig.ID.Hex())
+	foreign, foreignBody := reply(mallory, malloryRoom.ID, orig.ID.Hex())
+	invented, inventedBody := reply(mallory, malloryRoom.ID, bson.NewObjectID().Hex())
+	if otherChannel != http.StatusNotFound || foreign != http.StatusNotFound || invented != http.StatusNotFound {
+		t.Fatalf("other channel gave %d, foreign %d, invented %d, want 404 for all",
+			otherChannel, foreign, invented)
+	}
+	if !bytes.Equal(otherBody, inventedBody) || !bytes.Equal(foreignBody, inventedBody) {
+		t.Fatalf("answers differ: other channel %s, foreign %s, missing %s", otherBody, foreignBody, inventedBody)
+	}
+
+	for _, ch := range []Channel{aliceNotes, malloryRoom} {
+		leaked, err := messages.List(ctx, ch.ID, bson.ObjectID{}, 0)
+		if err != nil {
+			t.Fatalf("listing messages: %v", err)
+		}
+		if len(leaked) != 0 {
+			t.Fatalf("%s holds %d messages after refused replies, want 0", ch.Name, len(leaked))
+		}
+	}
+}
+
+// A plain message must not grow an empty reply_to: old documents lack the field,
+// and the client tells a reply apart by the field being there at all.
+func TestPlainMessageHasNoReplyTo(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	channels, messages := newMessageTestStores(t, db)
+
+	owner := person("owner")
+	ch := createChannel(t, channels, "room", owner)
+	s := &server{channels: channels, messages: messages, hub: NewHub()}
+
+	code, body := callMessageHandler(t, s.handleSendMessage, "", map[string]string{
+		"channel_id": ch.ID.Hex(),
+		"text":       "hello",
+	}, owner)
+	if code != http.StatusCreated {
+		t.Fatalf("sending: got %d %s, want 201", code, body)
+	}
+	if bytes.Contains(body, []byte(`"reply_to"`)) {
+		t.Fatalf("answer %s carries reply_to", body)
+	}
+
+	var sent Message
+	if err := json.Unmarshal(body, &sent); err != nil {
+		t.Fatalf("decoding answer: %v", err)
+	}
+	raw, err := db.Collection("messages").FindOne(ctx, bson.M{"_id": sent.ID}).Raw()
+	if err != nil {
+		t.Fatalf("loading raw document: %v", err)
+	}
+	if _, err := raw.LookupErr("reply_to"); err == nil {
+		t.Fatalf("stored document %s has a reply_to field", raw)
+	}
+}
+
+func TestMessagesByIDStayInTheAskedChannel(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	channels, messages := newMessageTestStores(t, db)
+
+	alice, mallory := person("alice"), person("mallory")
+	aliceRoom := createChannel(t, channels, "alice-room", alice)
+	aliceNotes := createChannel(t, channels, "alice-notes", alice)
+	malloryRoom := createChannel(t, channels, "mallory-room", mallory)
+
+	insert := func(ch Channel, sess Session, text string) Message {
+		m, err := messages.Insert(ctx, ch.ID, sess, text, "", nil, nil)
+		if err != nil {
+			t.Fatalf("inserting message: %v", err)
+		}
+		return m
+	}
+	inRoom := insert(aliceRoom, alice, "in the room")
+	insert(aliceRoom, alice, "not asked for")
+	inNotes := insert(aliceNotes, alice, "in the notes")
+
+	s := &server{channels: channels, messages: messages, hub: NewHub()}
+	lookup := func(sess Session, query string) (int, []Message) {
+		r := httptest.NewRequest(http.MethodGet, "/messages?"+query, nil)
+		w := httptest.NewRecorder()
+		s.handleListMessages(w, r, sess)
+		var got []Message
+		if w.Code == http.StatusOK {
+			if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+				t.Fatalf("decoding %s: %v", w.Body.Bytes(), err)
+			}
+		}
+		return w.Code, got
+	}
+	ids := func(ms ...string) string { return strings.Join(ms, ",") }
+
+	// Only the listed message of the asked channel comes back. Alice can read her
+	// notes too, but a notes id asked for under the room is not the room's.
+	code, got := lookup(alice, "channel_id="+aliceRoom.ID.Hex()+"&ids="+
+		ids(inRoom.ID.Hex(), inNotes.ID.Hex(), bson.NewObjectID().Hex()))
+	if code != http.StatusOK || len(got) != 1 || got[0].ID != inRoom.ID {
+		t.Fatalf("lookup in alice-room gave %d %+v, want only %s", code, got, inRoom.ID.Hex())
+	}
+
+	// Naming her own channel does not let mallory read alice's message.
+	code, got = lookup(mallory, "channel_id="+malloryRoom.ID.Hex()+"&ids="+inRoom.ID.Hex())
+	if code != http.StatusOK || len(got) != 0 {
+		t.Fatalf("mallory's lookup gave %d %+v, want 200 and nothing", code, got)
+	}
+	if code, _ := lookup(mallory, "channel_id="+aliceRoom.ID.Hex()+"&ids="+inRoom.ID.Hex()); code != http.StatusNotFound {
+		t.Fatalf("lookup in a channel mallory is not in gave %d, want 404", code)
+	}
+
+	if code, _ := lookup(alice, "channel_id="+aliceRoom.ID.Hex()+"&ids="+inRoom.ID.Hex()+"&limit=5"); code != http.StatusBadRequest {
+		t.Fatalf("ids with limit gave %d, want 400", code)
+	}
+
+	many := make([]string, messagesMaxLimit+1)
+	for i := range many {
+		many[i] = inRoom.ID.Hex()
+	}
+	if code, _ := lookup(alice, "channel_id="+aliceRoom.ID.Hex()+"&ids="+ids(many...)); code != http.StatusBadRequest {
+		t.Fatalf("%d ids gave %d, want 400", len(many), code)
 	}
 }
 
