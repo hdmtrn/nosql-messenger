@@ -118,7 +118,13 @@ func (s *server) handleSendMessage(w http.ResponseWriter, r *http.Request, sess 
 		replyTo = &orig.ID
 	}
 
-	s.deliverMessage(w, r, channelID, sess, req.Text, req.ClientMsgID, nil, replyTo)
+	s.deliverMessage(w, r, Message{
+		ChannelID:   channelID,
+		Author:      authorOf(sess),
+		Text:        req.Text,
+		ClientMsgID: req.ClientMsgID,
+		ReplyTo:     replyTo,
+	})
 }
 
 type forwardMessageRequest struct {
@@ -144,17 +150,22 @@ func (s *server) handleForwardMessage(w http.ResponseWriter, r *http.Request, se
 		return
 	}
 
-	s.deliverMessage(w, r, channelID, sess, orig.Text, req.ClientMsgID, orig.forwardOf(), nil)
+	s.deliverMessage(w, r, Message{
+		ChannelID:   channelID,
+		Author:      authorOf(sess),
+		Text:        orig.Text,
+		ClientMsgID: req.ClientMsgID,
+		Forwarded:   orig.forwardOf(),
+	})
 }
 
 // deliverMessage is the one way a checked message gets into a channel: persisted
 // first, broadcast only after the write succeeded, then answered to the sender.
 // A repeated client_msg_id gets the stored message back and is not broadcast again.
-func (s *server) deliverMessage(w http.ResponseWriter, r *http.Request, channelID bson.ObjectID,
-	sess Session, text, clientMsgID string, fwd *ForwardedFrom, replyTo *bson.ObjectID) {
-	msg, err := s.messages.Insert(r.Context(), channelID, sess, text, clientMsgID, fwd, replyTo)
+func (s *server) deliverMessage(w http.ResponseWriter, r *http.Request, msg Message) {
+	stored, err := s.messages.Insert(r.Context(), msg)
 	if errors.Is(err, errDuplicateMessage) {
-		existing, ferr := s.messages.ByClientMsgID(r.Context(), clientMsgID)
+		existing, ferr := s.messages.ByClientMsgID(r.Context(), msg.ClientMsgID)
 		if ferr != nil {
 			log.Printf("resolving duplicate message: %v", ferr)
 			writeError(w, http.StatusInternalServerError, "internal error")
@@ -169,14 +180,14 @@ func (s *server) deliverMessage(w http.ResponseWriter, r *http.Request, channelI
 		return
 	}
 
-	payload, err := json.Marshal(msg)
+	payload, err := json.Marshal(stored)
 	if err != nil {
 		log.Printf("encoding message for broadcast: %v", err)
 	} else {
-		s.hub.Publish(channelID.Hex(), payload)
+		s.hub.Publish(stored.ChannelID.Hex(), payload)
 	}
 
-	writeJSON(w, http.StatusCreated, msg)
+	writeJSON(w, http.StatusCreated, stored)
 }
 
 func (s *server) handleListMessages(w http.ResponseWriter, r *http.Request, sess Session) {

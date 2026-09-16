@@ -88,19 +88,15 @@ func (s *messageStore) ensureIndexes(ctx context.Context) error {
 	return err
 }
 
-func (s *messageStore) Insert(ctx context.Context, channelID bson.ObjectID, author Session, text, clientMsgID string, fwd *ForwardedFrom, replyTo *bson.ObjectID) (Message, error) {
-	msg := Message{
-		ChannelID: channelID,
-		Author: MessageAuthor{
-			ID:       author.UserID,
-			Username: author.Username,
-		},
-		Text:        text,
-		CreatedAt:   time.Now(),
-		ClientMsgID: clientMsgID,
-		Forwarded:   fwd,
-		ReplyTo:     replyTo,
-	}
+func authorOf(sess Session) MessageAuthor {
+	return MessageAuthor{ID: sess.UserID, Username: sess.Username}
+}
+
+// Insert stores a message the caller has filled in and checked; the id and the
+// time are the store's to set.
+func (s *messageStore) Insert(ctx context.Context, msg Message) (Message, error) {
+	msg.ID = bson.ObjectID{}
+	msg.CreatedAt = time.Now()
 
 	res, err := s.col.InsertOne(ctx, msg)
 	if mongo.IsDuplicateKeyError(err) {
