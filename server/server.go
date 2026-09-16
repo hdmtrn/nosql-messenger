@@ -32,6 +32,7 @@ type server struct {
 	messages *messageStore
 	friends  *friendStore
 	invites  *inviteStore
+	media    *mediaStore
 }
 
 func (s *server) routes() http.Handler {
@@ -70,6 +71,9 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /friends/requests/{id}/accept", s.requireAuth(s.handleAcceptFriendRequest))
 	mux.HandleFunc("POST /friends/requests/{id}/decline", s.requireAuth(s.handleDeclineFriendRequest))
 	mux.HandleFunc("GET /friends", s.requireAuth(s.handleListFriends))
+
+	mux.HandleFunc("POST /media", s.requireAuth(s.handleUploadMedia))
+	mux.HandleFunc("GET /media/{id}", s.requireAuth(s.handleGetMedia))
 
 	mux.HandleFunc("GET /ws", s.requireAuth(s.handleWS))
 
