@@ -20,6 +20,9 @@ const (
 	mediaMaxBytes  = 10 << 20
 	avatarMaxBytes = 1 << 20
 
+	mediaMaxSide   = 10_000
+	mediaMaxPixels = 40_000_000
+
 	mediaKindAvatar     = "avatar"
 	mediaKindAttachment = "attachment"
 )
@@ -27,6 +30,7 @@ const (
 var (
 	errMediaNotFound    = errors.New("media not found")
 	errUnsupportedMedia = errors.New("unsupported media type")
+	errImageTooLarge    = errors.New("image is too large")
 )
 
 type Media struct {
@@ -72,6 +76,10 @@ func (s *mediaStore) Save(ctx context.Context, owner bson.ObjectID, kind string,
 	cfg, format, err := image.DecodeConfig(io.TeeReader(body, &head))
 	if err != nil {
 		return Media{}, errUnsupportedMedia
+	}
+	if cfg.Width > mediaMaxSide || cfg.Height > mediaMaxSide ||
+		int64(cfg.Width)*int64(cfg.Height) > mediaMaxPixels {
+		return Media{}, errImageTooLarge
 	}
 
 	fileID, err := s.db.GridFSBucket().UploadFromStream(ctx, "", io.MultiReader(&head, body))

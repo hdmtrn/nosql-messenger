@@ -32,6 +32,9 @@ func (s *server) saveUpload(w http.ResponseWriter, r *http.Request, owner bson.O
 	case errors.As(err, &tooLarge):
 		writeError(w, http.StatusRequestEntityTooLarge, "file is too large")
 		return Media{}, false
+	case errors.Is(err, errImageTooLarge):
+		writeError(w, http.StatusRequestEntityTooLarge, "image is larger than 10000 px a side or 40 megapixels")
+		return Media{}, false
 	case errors.Is(err, errUnsupportedMedia):
 		writeError(w, http.StatusUnsupportedMediaType, "only JPEG, PNG and GIF images are accepted")
 		return Media{}, false

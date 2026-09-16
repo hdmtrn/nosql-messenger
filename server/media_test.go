@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/json"
+	"hash/crc32"
 	"image"
 	"image/png"
 	"io"
@@ -431,5 +433,49 @@ func TestConcurrentUploadsKeepTheirBytes(t *testing.T) {
 		if !bytes.Equal(got[i], pictures[i/2]) {
 			t.Fatalf("picture %d came back different: %d bytes, sent %d", i/2, len(got[i]), len(pictures[i/2]))
 		}
+	}
+}
+
+// pngHeader is the start of a PNG claiming the given size: the signature and the
+// IHDR chunk are all DecodeConfig reads, so no pixels need to exist.
+func pngHeader(w, h uint32) []byte {
+	ihdr := make([]byte, 13)
+	binary.BigEndian.PutUint32(ihdr[0:], w)
+	binary.BigEndian.PutUint32(ihdr[4:], h)
+	ihdr[8], ihdr[9] = 8, 6 // 8-bit RGBA
+
+	var b bytes.Buffer
+	b.WriteString("\x89PNG\r\n\x1a\n")
+	_ = binary.Write(&b, binary.BigEndian, uint32(len(ihdr)))
+	chunk := append([]byte("IHDR"), ihdr...)
+	b.Write(chunk)
+	_ = binary.Write(&b, binary.BigEndian, crc32.ChecksumIEEE(chunk))
+	return b.Bytes()
+}
+
+func TestHugeImagesAreRefusedByTheirHeader(t *testing.T) {
+	db := testDB(t)
+	s := &server{media: newMediaStore(db)}
+	alice := person("alice")
+
+	for name, size := range map[string][2]uint32{
+		"a side over the limit": {mediaMaxSide + 1, 1},
+		"too many pixels":       {6400, 6400},
+	} {
+		code, body := uploadMedia(s, pngHeader(size[0], size[1]), alice)
+		if code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("%s (%dx%d): got %d %s, want 413", name, size[0], size[1], code, body)
+		}
+	}
+	if code, body := uploadMedia(s, pngHeader(mediaMaxSide, mediaMaxPixels/mediaMaxSide), alice); code != http.StatusCreated {
+		t.Fatalf("an image exactly at the limit: got %d %s, want 201", code, body)
+	}
+
+	files, err := db.Collection("fs.files").CountDocuments(context.Background(), bson.M{})
+	if err != nil {
+		t.Fatalf("counting files: %v", err)
+	}
+	if files != 1 {
+		t.Fatalf("%d files stored, want only the one at the limit", files)
 	}
 }
