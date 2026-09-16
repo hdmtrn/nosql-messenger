@@ -110,6 +110,88 @@ func (s *mediaStore) ByID(ctx context.Context, id bson.ObjectID) (Media, error) 
 	return m, nil
 }
 
+func (s *mediaStore) byIDs(ctx context.Context, filter bson.M, ids []bson.ObjectID) ([]Media, error) {
+	filter["_id"] = bson.M{"$in": ids}
+	cur, err := s.col.Find(ctx, filter)
+	if err != nil {
+		return nil, fmt.Errorf("looking up media: %w", err)
+	}
+	var found []Media
+	if err := cur.All(ctx, &found); err != nil {
+		return nil, fmt.Errorf("decoding media: %w", err)
+	}
+
+	byID := make(map[bson.ObjectID]Media, len(found))
+	for _, m := range found {
+		byID[m.ID] = m
+	}
+	out := make([]Media, 0, len(ids))
+	for _, id := range ids {
+		m, ok := byID[id]
+		if !ok {
+			return nil, errMediaNotFound
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+func (s *mediaStore) Attach(ctx context.Context, ids []bson.ObjectID, owner, channel bson.ObjectID) ([]Attachment, error) {
+	_, err := s.col.UpdateMany(ctx,
+		bson.M{
+			"_id":      bson.M{"$in": ids},
+			"owner_id": owner,
+			"kind":     mediaKindAttachment,
+			"$or": []bson.M{
+				{"channel_id": bson.M{"$exists": false}},
+				{"channel_id": channel},
+			},
+		},
+		bson.M{"$set": bson.M{"channel_id": channel}},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("attaching media: %w", err)
+	}
+
+	attached, err := s.byIDs(ctx, bson.M{"owner_id": owner, "kind": mediaKindAttachment, "channel_id": channel}, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Attachment, 0, len(attached))
+	for _, m := range attached {
+		out = append(out, m.Attachment())
+	}
+	return out, nil
+}
+
+func (s *mediaStore) CopyTo(ctx context.Context, from []Attachment, owner, channel bson.ObjectID) ([]Attachment, error) {
+	ids := make([]bson.ObjectID, 0, len(from))
+	for _, a := range from {
+		ids = append(ids, a.ID)
+	}
+	sources, err := s.byIDs(ctx, bson.M{}, ids)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now()
+	copies := make([]Media, 0, len(sources))
+	out := make([]Attachment, 0, len(sources))
+	for _, src := range sources {
+		c := src
+		c.ID = bson.NewObjectID()
+		c.OwnerID = owner
+		c.ChannelID = &channel
+		c.CreatedAt = now
+		copies = append(copies, c)
+		out = append(out, c.Attachment())
+	}
+	if _, err := s.col.InsertMany(ctx, copies); err != nil {
+		return nil, fmt.Errorf("copying media: %w", err)
+	}
+	return out, nil
+}
+
 func (s *mediaStore) Delete(ctx context.Context, id bson.ObjectID) error {
 	var m Media
 	err := s.col.FindOneAndDelete(ctx, bson.M{"_id": id}).Decode(&m)

@@ -15,6 +15,8 @@ const (
 	messageMaxLen    = 4000
 	messagesPageSize = 50
 	messagesMaxLimit = 100
+
+	messageMaxAttachments = 10
 )
 
 type MessageAuthor struct {
@@ -46,6 +48,8 @@ type Message struct {
 	// The message this one answers. Only the id: the quote is filled in by the
 	// client from the original, so an edited original shows its current text.
 	ReplyTo *bson.ObjectID `bson:"reply_to,omitempty" json:"reply_to,omitempty"`
+
+	Attachments []Attachment `bson:"attachments,omitempty" json:"attachments,omitempty"`
 }
 
 // forwardOf is what a copy of m carries about its source: a forward of a
