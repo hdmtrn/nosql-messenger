@@ -15,6 +15,7 @@ export default defineConfig({
       '/messages': api,
       '/users': api,
       '/friends': api,
+      '/media': api,
       '/health': api,
       '/ws': { ...api, ws: true },
     },

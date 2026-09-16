@@ -7,7 +7,7 @@ const props = defineProps({
   // Viewport point the menu opens at: the cursor, or the bubble for the keyboard.
   x: { type: Number, required: true },
   y: { type: Number, required: true },
-  // [{ id, title, direct, initials }] — chats the message can be forwarded to.
+  // [{ id, title, direct, initials, avatar }] — chats the message can be forwarded to.
   targets: { type: Array, default: () => [] },
 })
 const emit = defineEmits(['reply', 'copy', 'forward', 'close'])
@@ -96,7 +96,7 @@ onUnmounted(() => {
         <p v-if="!targets.length" class="note">No other chats</p>
         <button v-for="t in targets" :key="t.id" type="button" role="menuitem" class="item"
                 @click="emit('forward', t.id)">
-          <SgAvatar v-if="t.direct" :initials="t.initials" :size="22" tone="onBlue" />
+          <SgAvatar v-if="t.direct" :initials="t.initials" :src="t.avatar" :size="22" tone="onBlue" />
           <ChannelGlyph v-else :size="22" />
           <span class="title">{{ t.title }}</span>
         </button>

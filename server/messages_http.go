@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -13,21 +14,43 @@ import (
 )
 
 type sendMessageRequest struct {
-	ChannelID   string `json:"channel_id"`
-	Text        string `json:"text"`
-	ClientMsgID string `json:"client_msg_id,omitempty"`
-	ReplyTo     string `json:"reply_to,omitempty"`
+	ChannelID   string   `json:"channel_id"`
+	Text        string   `json:"text"`
+	ClientMsgID string   `json:"client_msg_id,omitempty"`
+	ReplyTo     string   `json:"reply_to,omitempty"`
+	Attachments []string `json:"attachments,omitempty"`
 }
 
-func validateMessageText(s string) error {
+// validateMessageText lets the text be empty only under a picture.
+func validateMessageText(s string, attachments int) error {
 	n := utf8.RuneCountInString(s)
-	if n == 0 {
+	if n == 0 && attachments == 0 {
 		return errors.New("message text must not be empty")
 	}
 	if n > messageMaxLen {
 		return errors.New("message text is too long")
 	}
 	return nil
+}
+
+func parseMediaIDs(raw []string) ([]bson.ObjectID, error) {
+	if len(raw) > messageMaxAttachments {
+		return nil, fmt.Errorf("at most %d attachments per message", messageMaxAttachments)
+	}
+	ids := make([]bson.ObjectID, 0, len(raw))
+	seen := make(map[bson.ObjectID]bool, len(raw))
+	for _, r := range raw {
+		id, err := bson.ObjectIDFromHex(r)
+		if err != nil {
+			return nil, errors.New("malformed attachment id")
+		}
+		if seen[id] {
+			return nil, errors.New("an attachment is listed twice")
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 func (s *server) channelForMember(w http.ResponseWriter, r *http.Request, raw string, sess Session) (bson.ObjectID, bool) {
@@ -97,7 +120,12 @@ func (s *server) handleSendMessage(w http.ResponseWriter, r *http.Request, sess 
 	if !ok {
 		return
 	}
-	if err := validateMessageText(req.Text); err != nil {
+	mediaIDs, err := parseMediaIDs(req.Attachments)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validateMessageText(req.Text, len(mediaIDs)); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -118,7 +146,31 @@ func (s *server) handleSendMessage(w http.ResponseWriter, r *http.Request, sess 
 		replyTo = &orig.ID
 	}
 
-	s.deliverMessage(w, r, channelID, sess, req.Text, req.ClientMsgID, nil, replyTo)
+	// Attaching goes last, once nothing else can refuse the message: a file bound
+	// to a channel without a message is harmless, a message pointing at files no
+	// one may open is not.
+	var attachments []Attachment
+	if len(mediaIDs) > 0 {
+		attachments, err = s.media.Attach(r.Context(), mediaIDs, sess.UserID, channelID)
+		if errors.Is(err, errMediaNotFound) {
+			writeError(w, http.StatusNotFound, "media not found")
+			return
+		}
+		if err != nil {
+			log.Printf("attaching media: %v", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+	}
+
+	s.deliverMessage(w, r, Message{
+		ChannelID:   channelID,
+		Author:      authorOf(sess),
+		Text:        req.Text,
+		ClientMsgID: req.ClientMsgID,
+		ReplyTo:     replyTo,
+		Attachments: attachments,
+	})
 }
 
 type forwardMessageRequest struct {
@@ -144,17 +196,49 @@ func (s *server) handleForwardMessage(w http.ResponseWriter, r *http.Request, se
 		return
 	}
 
-	s.deliverMessage(w, r, channelID, sess, orig.Text, req.ClientMsgID, orig.forwardOf(), nil)
+	// A repeat is answered before copying, so a retried forward leaves no second
+	// set of media records behind.
+	if req.ClientMsgID != "" {
+		existing, err := s.messages.ByClientMsgID(r.Context(), req.ClientMsgID)
+		if err == nil {
+			writeJSON(w, http.StatusOK, existing)
+			return
+		}
+		if !errors.Is(err, errMessageNotFound) {
+			log.Printf("looking up message by client id: %v", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+	}
+
+	var attachments []Attachment
+	if len(orig.Attachments) > 0 {
+		copied, err := s.media.CopyTo(r.Context(), orig.Attachments, sess.UserID, channelID)
+		if err != nil {
+			log.Printf("copying media: %v", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		attachments = copied
+	}
+
+	s.deliverMessage(w, r, Message{
+		ChannelID:   channelID,
+		Author:      authorOf(sess),
+		Text:        orig.Text,
+		ClientMsgID: req.ClientMsgID,
+		Forwarded:   orig.forwardOf(),
+		Attachments: attachments,
+	})
 }
 
 // deliverMessage is the one way a checked message gets into a channel: persisted
 // first, broadcast only after the write succeeded, then answered to the sender.
 // A repeated client_msg_id gets the stored message back and is not broadcast again.
-func (s *server) deliverMessage(w http.ResponseWriter, r *http.Request, channelID bson.ObjectID,
-	sess Session, text, clientMsgID string, fwd *ForwardedFrom, replyTo *bson.ObjectID) {
-	msg, err := s.messages.Insert(r.Context(), channelID, sess, text, clientMsgID, fwd, replyTo)
+func (s *server) deliverMessage(w http.ResponseWriter, r *http.Request, msg Message) {
+	stored, err := s.messages.Insert(r.Context(), msg)
 	if errors.Is(err, errDuplicateMessage) {
-		existing, ferr := s.messages.ByClientMsgID(r.Context(), clientMsgID)
+		existing, ferr := s.messages.ByClientMsgID(r.Context(), msg.ClientMsgID)
 		if ferr != nil {
 			log.Printf("resolving duplicate message: %v", ferr)
 			writeError(w, http.StatusInternalServerError, "internal error")
@@ -169,14 +253,14 @@ func (s *server) deliverMessage(w http.ResponseWriter, r *http.Request, channelI
 		return
 	}
 
-	payload, err := json.Marshal(msg)
+	payload, err := json.Marshal(stored)
 	if err != nil {
 		log.Printf("encoding message for broadcast: %v", err)
 	} else {
-		s.hub.Publish(channelID.Hex(), payload)
+		s.hub.Publish(stored.ChannelID.Hex(), payload)
 	}
 
-	writeJSON(w, http.StatusCreated, msg)
+	writeJSON(w, http.StatusCreated, stored)
 }
 
 func (s *server) handleListMessages(w http.ResponseWriter, r *http.Request, sess Session) {

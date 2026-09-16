@@ -11,6 +11,15 @@ async function request(method, path, body) {
     headers: body ? { 'Content-Type': 'application/json' } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   })
+  return parse(res)
+}
+
+// Files go as the raw body: the server streams it straight into storage.
+async function upload(path, blob) {
+  return parse(await fetch(path, { method: 'POST', headers: { 'Content-Type': blob.type || 'application/octet-stream' }, body: blob }))
+}
+
+async function parse(res) {
   const text = await res.text()
   const data = text ? JSON.parse(text) : null
   if (!res.ok) {
@@ -42,6 +51,8 @@ export const api = {
   searchUsers: (q) => request('GET', '/users' + qs({ q })),
   user: (username) => request('GET', `/users/${encodeURIComponent(username)}`),
   updateProfile: (display_name, bio) => request('POST', '/auth/me/profile', { display_name, bio }),
+  setAvatar: (blob) => upload('/auth/me/avatar', blob),
+  removeAvatar: () => request('DELETE', '/auth/me/avatar'),
   sessions: () => request('GET', '/auth/sessions'),
   revokeSession: (id) => request('DELETE', `/auth/sessions/${id}`),
 
@@ -51,6 +62,7 @@ export const api = {
   declineFriendRequest: (id) => request('POST', `/friends/requests/${id}/decline`),
   friends: () => request('GET', '/friends'),
 
+  uploadMedia: (file) => upload('/media', file),
   messages: (params) => request('GET', '/messages' + qs(params)),
   send: (message) => request('POST', '/messages', message),
   messagesByIds: (channelId, ids) =>

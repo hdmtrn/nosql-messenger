@@ -52,7 +52,7 @@ func TestForwardReachesOnlyMessagesYouCanSee(t *testing.T) {
 	aliceNotes := createChannel(t, channels, "alice-notes", alice)
 	malloryRoom := createChannel(t, channels, "mallory-room", mallory)
 
-	orig, err := messages.Insert(ctx, aliceRoom.ID, alice, "the plan", "", nil, nil)
+	orig, err := messages.Insert(ctx, Message{ChannelID: aliceRoom.ID, Author: authorOf(alice), Text: "the plan"})
 	if err != nil {
 		t.Fatalf("inserting message: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestReplyStaysInItsChannel(t *testing.T) {
 	aliceNotes := createChannel(t, channels, "alice-notes", alice)
 	malloryRoom := createChannel(t, channels, "mallory-room", mallory)
 
-	orig, err := messages.Insert(ctx, aliceRoom.ID, alice, "the plan", "", nil, nil)
+	orig, err := messages.Insert(ctx, Message{ChannelID: aliceRoom.ID, Author: authorOf(alice), Text: "the plan"})
 	if err != nil {
 		t.Fatalf("inserting message: %v", err)
 	}
@@ -246,7 +246,7 @@ func TestMessagesByIDStayInTheAskedChannel(t *testing.T) {
 	malloryRoom := createChannel(t, channels, "mallory-room", mallory)
 
 	insert := func(ch Channel, sess Session, text string) Message {
-		m, err := messages.Insert(ctx, ch.ID, sess, text, "", nil, nil)
+		m, err := messages.Insert(ctx, Message{ChannelID: ch.ID, Author: authorOf(sess), Text: text})
 		if err != nil {
 			t.Fatalf("inserting message: %v", err)
 		}

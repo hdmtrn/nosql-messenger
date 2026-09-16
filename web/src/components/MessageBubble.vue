@@ -9,6 +9,7 @@ const props = defineProps({
   status: { type: String, default: 'delivered' },
   author: String,
   initials: String,
+  avatarSrc: { type: String, default: '' },
   time: String,
   // First message of a run by the same author: it carries the avatar and the
   // header. The rest of the run is bare bubbles under it.
@@ -24,8 +25,10 @@ const props = defineProps({
   // Quote of the message this one answers: { author, text }, or { missing: true }
   // when the original could not be loaded.
   quote: { type: Object, default: null },
+  // [{ id, width, height, preview? }]: preview is the local copy shown while sending.
+  attachments: { type: Array, default: () => [] },
 })
-defineEmits(['retry', 'discard', 'author', 'quote', 'forwarded-author'])
+defineEmits(['retry', 'discard', 'author', 'quote', 'forwarded-author', 'picture'])
 
 const MONO = {
   font: 'var(--text-meta)',
@@ -97,6 +100,17 @@ const quoteStyle = computed(() => {
     '--quote-muted': onBlue ? 'rgba(255, 255, 255, 0.75)' : 'var(--text-muted)',
   }
 })
+// One picture keeps its proportions inside a 280px box; several go into a grid of
+// squares. The size is known before the file arrives, so the feed does not jump.
+const PICTURE = 280
+const TILE = 136
+function pictureStyle(a) {
+  if (props.attachments.length > 1) return { width: TILE + 'px', height: TILE + 'px' }
+  const scale = Math.min(1, PICTURE / a.width, PICTURE / a.height)
+  return { width: Math.round(a.width * scale) + 'px', aspectRatio: `${a.width} / ${a.height}` }
+}
+const pictureUrl = (a) => a.preview || `/media/${a.id}`
+
 const avatarTone = computed(() =>
   props.own && props.status !== 'delivered' ? props.status : 'blue'
 )
@@ -130,7 +144,7 @@ const bubbleStyle = computed(() => ({
       <component :is="own ? 'span' : 'button'" v-if="head" :type="own ? undefined : 'button'"
                  class="who" :class="{ ring }" :aria-label="own ? undefined : 'Open profile'"
                  @click="own || $emit('author')">
-        <SgAvatar :initials="initials" :size="AVATAR" :tone="avatarTone" />
+        <SgAvatar :initials="initials" :src="avatarSrc" :size="AVATAR" :tone="avatarTone" />
       </component>
       <!-- keeps the bubbles of a run flush with the head above them -->
       <div v-else :style="{ flex: `0 0 ${AVATAR}px` }" />
@@ -164,6 +178,13 @@ const bubbleStyle = computed(() => ({
         <span v-if="forwarded" :style="forwardStyle">Forwarded from
           <button type="button" class="source" @click="$emit('forwarded-author')">{{ forwarded }}</button>
         </span>
+        <div v-if="attachments.length" class="pictures"
+             :class="{ grid: attachments.length > 1 }">
+          <button v-for="(a, i) in attachments" :key="a.id" type="button" class="picture-open"
+                  aria-label="Open picture" @click="$emit('picture', i)">
+            <img :src="pictureUrl(a)" alt="" loading="lazy" class="picture" :style="pictureStyle(a)">
+          </button>
+        </div>
         <slot />
         <template v-if="showStamp">
           <span aria-hidden="true" :style="stampRoom">
@@ -197,6 +218,30 @@ const bubbleStyle = computed(() => ({
 }
 button.who { cursor: pointer; }
 .name { font: var(--text-name); }
+.pictures {
+  display: flex;
+  margin: 4px -4px 4px;
+}
+.pictures.grid {
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  gap: 4px;
+}
+.picture-open {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: zoom-in;
+}
+.picture {
+  display: block;
+  max-width: 100%;
+  object-fit: cover;
+  border-radius: 12px;
+  background: var(--surface-panel);
+}
 .quote {
   width: 100%;
   border: none;

@@ -57,6 +57,12 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("creating invite indexes: %w", err)
 	}
 
+	media := newMediaStore(db)
+	if err := media.ensureIndexes(ctx); err != nil {
+		return fmt.Errorf("creating media indexes: %w", err)
+	}
+	go media.sweepExpired(ctx)
+
 	authSvc, err := newAuth(users, sessions)
 	if err != nil {
 		return fmt.Errorf("initializing auth: %w", err)
@@ -72,6 +78,7 @@ func run(ctx context.Context) error {
 		messages: messages,
 		friends:  friends,
 		invites:  invites,
+		media:    media,
 	}
 
 	httpSrv := &http.Server{

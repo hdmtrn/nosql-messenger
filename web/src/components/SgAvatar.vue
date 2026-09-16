@@ -1,8 +1,10 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 const props = defineProps({
   initials: { type: String, default: '' },
+  // A picture that fails to load falls back to the initials.
+  src: { type: String, default: '' },
   size: { type: Number, default: 36 },
   tone: { type: String, default: 'blue' },
 })
@@ -28,6 +30,22 @@ const style = computed(() => ({
   letterSpacing: 'var(--mono-tracking)',
   ...tones[props.tone],
 }))
+
+const failed = ref(false)
+watch(() => props.src, () => { failed.value = false })
+
+const imageStyle = computed(() => ({
+  display: 'block',
+  flex: 'none',
+  width: props.size + 'px',
+  height: props.size + 'px',
+  borderRadius: 'var(--radius-pill)',
+  objectFit: 'cover',
+  boxShadow: tones[props.tone]?.boxShadow,
+}))
 </script>
 
-<template><span :style="style">{{ [...initials].slice(0, 2).join('') }}</span></template>
+<template>
+  <img v-if="src && !failed" :src="src" alt="" :style="imageStyle" @error="failed = true">
+  <span v-else :style="style">{{ [...initials].slice(0, 2).join('') }}</span>
+</template>

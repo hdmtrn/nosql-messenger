@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -121,4 +122,43 @@ func (s *server) handleRevokeSession(w http.ResponseWriter, r *http.Request, ses
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
+}
+
+func (s *server) dropAvatar(ctx context.Context, id *bson.ObjectID) {
+	if id == nil {
+		return
+	}
+	if err := s.media.Delete(ctx, *id); err != nil {
+		log.Printf("deleting avatar %s: %v", id.Hex(), err)
+	}
+}
+
+func (s *server) handleSetAvatar(w http.ResponseWriter, r *http.Request, sess Session) {
+	m, ok := s.saveUpload(w, r, sess.UserID, mediaKindAvatar, avatarMaxBytes)
+	if !ok {
+		return
+	}
+
+	prev, err := s.users.SetAvatar(r.Context(), sess.UserID, &m.ID)
+	if err != nil {
+		log.Printf("setting avatar: %v", err)
+		s.dropAvatar(r.Context(), &m.ID)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	s.dropAvatar(r.Context(), prev)
+
+	writeJSON(w, http.StatusOK, map[string]string{"avatar_id": m.ID.Hex()})
+}
+
+func (s *server) handleDeleteAvatar(w http.ResponseWriter, r *http.Request, sess Session) {
+	prev, err := s.users.SetAvatar(r.Context(), sess.UserID, nil)
+	if err != nil {
+		log.Printf("removing avatar: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	s.dropAvatar(r.Context(), prev)
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

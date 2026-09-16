@@ -15,6 +15,8 @@ const (
 	messageMaxLen    = 4000
 	messagesPageSize = 50
 	messagesMaxLimit = 100
+
+	messageMaxAttachments = 10
 )
 
 type MessageAuthor struct {
@@ -46,6 +48,8 @@ type Message struct {
 	// The message this one answers. Only the id: the quote is filled in by the
 	// client from the original, so an edited original shows its current text.
 	ReplyTo *bson.ObjectID `bson:"reply_to,omitempty" json:"reply_to,omitempty"`
+
+	Attachments []Attachment `bson:"attachments,omitempty" json:"attachments,omitempty"`
 }
 
 // forwardOf is what a copy of m carries about its source: a forward of a
@@ -88,19 +92,15 @@ func (s *messageStore) ensureIndexes(ctx context.Context) error {
 	return err
 }
 
-func (s *messageStore) Insert(ctx context.Context, channelID bson.ObjectID, author Session, text, clientMsgID string, fwd *ForwardedFrom, replyTo *bson.ObjectID) (Message, error) {
-	msg := Message{
-		ChannelID: channelID,
-		Author: MessageAuthor{
-			ID:       author.UserID,
-			Username: author.Username,
-		},
-		Text:        text,
-		CreatedAt:   time.Now(),
-		ClientMsgID: clientMsgID,
-		Forwarded:   fwd,
-		ReplyTo:     replyTo,
-	}
+func authorOf(sess Session) MessageAuthor {
+	return MessageAuthor{ID: sess.UserID, Username: sess.Username}
+}
+
+// Insert stores a message the caller has filled in and checked; the id and the
+// time are the store's to set.
+func (s *messageStore) Insert(ctx context.Context, msg Message) (Message, error) {
+	msg.ID = bson.ObjectID{}
+	msg.CreatedAt = time.Now()
 
 	res, err := s.col.InsertOne(ctx, msg)
 	if mongo.IsDuplicateKeyError(err) {

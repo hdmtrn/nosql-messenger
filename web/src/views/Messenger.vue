@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api } from '../api'
 import { createSocket } from '../socket'
-import { channelTitle, displayName, initials, rememberName } from '../naming'
+import { avatarUrl, channelTitle, displayName, initials, rememberUser } from '../naming'
 import { takePendingInvite } from '../pending'
 import ChannelRail from '../components/ChannelRail.vue'
 import SgButton from '../components/SgButton.vue'
@@ -44,7 +44,7 @@ const activeTitle = computed(() => channelTitle(active.value, props.me.id))
 
 // Our own messages are looked up by username like anyone else's; a rename in the
 // profile has to reach them without a reload.
-watch(() => props.me.display_name, (name) => rememberName(props.me.username, name), { immediate: true })
+watch(() => [props.me.display_name, props.me.avatar_id], () => rememberUser(props.me), { immediate: true })
 
 /* ---------- address bar ---------- */
 
@@ -160,6 +160,7 @@ async function deliver(entry) {
         text: entry.text,
         client_msg_id: entry.client_msg_id,
         reply_to: entry.reply_to,
+        attachments: (entry.attachments || []).map((a) => a.id),
       })
     Object.assign(entry, saved, { status: 'delivered' })
   } catch {
@@ -167,28 +168,45 @@ async function deliver(entry) {
   }
 }
 
+// The server takes at most this many pictures per message; more go as several
+// messages in a row, as Telegram splits albums.
+const PICTURES_PER_MESSAGE = 10
+
 // With a forward waiting, the typed text is a comment: it goes first and the
-// forward after it, as in Telegram. The forward waits for the comment's answer:
-// sent in parallel, the server could store them the other way round.
-// With a reply waiting, the typed text is the reply itself.
-async function send(text) {
+// forward after it, as in Telegram. With a reply waiting, the typed text is the
+// reply itself. Pictures beyond one message go as several, the text with the last
+// of them, as Telegram puts the caption under the last album.
+// Each message waits for the one before it: sent in parallel, the server could
+// store them the other way round.
+async function send(text, attachments = []) {
   const action = pendingAction.value && pendingAction.value.channelId === activeId.value ? pendingAction.value : null
   if (action) pendingAction.value = null
   const forwarding = action && action.kind === 'forward'
 
-  if (text.trim()) {
-    messages.value = [...messages.value, {
-      client_msg_id: crypto.randomUUID(),
-      text,
-      author: { id: props.me.id, username: props.me.username },
-      created_at: new Date().toISOString(),
-      status: 'sending',
-      reply_to: action && action.kind === 'reply' ? action.message.id : undefined,
-    }]
-    const comment = deliver(messages.value[messages.value.length - 1])
-    conversation.value?.toBottom()
-    if (forwarding) await comment
+  const groups = []
+  for (let i = 0; i < attachments.length; i += PICTURES_PER_MESSAGE) {
+    groups.push(attachments.slice(i, i + PICTURES_PER_MESSAGE))
   }
+  if (text.trim() && !groups.length) groups.push([])
+
+  const entries = groups.map((group, i) => ({
+    client_msg_id: crypto.randomUUID(),
+    text: i === groups.length - 1 ? text : '',
+    attachments: group,
+    author: { id: props.me.id, username: props.me.username },
+    created_at: new Date().toISOString(),
+    status: 'sending',
+    reply_to: action && action.kind === 'reply' ? action.message.id : undefined,
+  }))
+  if (entries.length) {
+    messages.value = [...messages.value, ...entries]
+    conversation.value?.toBottom()
+  }
+  // The entries are read back from the list: Vue wraps them there, and a change
+  // made through the plain objects would not reach the screen.
+  const queued = messages.value.slice(messages.value.length - entries.length)
+  for (const entry of queued) await deliver(entry)
+
   if (forwarding) {
     queueForward(action.message)
     conversation.value?.toBottom()
@@ -208,8 +226,9 @@ const forwardTargets = computed(() =>
   channels.value
     .map((c) => {
       const direct = c.kind === 'direct'
-      const title = direct ? displayName(channelTitle(c, props.me.id)) : c.name
-      return { id: c.id, title, direct, initials: initials(title) }
+      const username = direct ? channelTitle(c, props.me.id) : ''
+      const title = direct ? displayName(username) : c.name
+      return { id: c.id, title, direct, initials: initials(title), avatar: avatarUrl(username) }
     })
 )
 
@@ -236,6 +255,7 @@ function queueForward(message) {
     client_msg_id: crypto.randomUUID(),
     sourceId: message.id,
     text: message.text,
+    attachments: message.attachments,
     author: { id: props.me.id, username: props.me.username },
     forwarded: message.forwarded || { author: message.author },
     created_at: new Date().toISOString(),

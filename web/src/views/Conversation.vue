@@ -6,7 +6,8 @@ import MessageComposer from '../components/MessageComposer.vue'
 import MessageMenu from '../components/MessageMenu.vue'
 import SgAvatar from '../components/SgAvatar.vue'
 import ChannelGlyph from '../components/ChannelGlyph.vue'
-import { displayName, initials } from '../naming'
+import MediaViewer from '../components/MediaViewer.vue'
+import { avatarUrl, displayName, initials, messagePreview } from '../naming'
 
 const props = defineProps({
   me: { type: Object, required: true },
@@ -31,6 +32,25 @@ const composer = ref(null)
 
 // A reply or a forward waiting above the field means the next thing to do is
 // type, so the cursor goes there, as in Telegram.
+// The field stays mounted across chats; pictures picked in one must not be sent to another.
+watch(() => props.channel.id, () => {
+  composer.value?.clearFiles()
+  viewing.value = null
+})
+
+// Every loaded picture of the chat in feed order, so the viewer can flip past the
+// message that was clicked. A key names a picture by its message and position.
+const pictureKey = (m, i) => `${m.id || m.client_msg_id}:${i}`
+const pictures = computed(() => props.messages.flatMap((m) =>
+  (m.attachments || []).map((a, i) => ({ key: pictureKey(m, i), url: a.preview || `/media/${a.id}` }))))
+// Index in pictures of the one the viewer opened on, or null when it is closed.
+const viewing = ref(null)
+
+function openPicture(m, i) {
+  const at = pictures.value.findIndex((p) => p.key === pictureKey(m, i))
+  if (at >= 0) viewing.value = at
+}
+
 watch(() => props.pending, async (action) => {
   if (!action) return
   await nextTick()
@@ -67,7 +87,7 @@ function quoteOf(m, byId) {
   const orig = byId.get(m.reply_to) ?? props.originals.get(m.reply_to)
   if (orig === undefined) return null
   if (orig === null) return { missing: true }
-  return { author: sourceAuthor(orig), text: orig.text }
+  return { author: sourceAuthor(orig), text: messagePreview(orig) }
 }
 function openMenuAtBubble(m, e) {
   const box = e.currentTarget.getBoundingClientRect()
@@ -173,7 +193,7 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
       @info="emit('info')"
     >
       <template #mark>
-        <SgAvatar v-if="direct()" :initials="initials(displayName(title))" :size="44" />
+        <SgAvatar v-if="direct()" :initials="initials(displayName(title))" :src="avatarUrl(title)" :size="44" />
         <ChannelGlyph v-else :size="44" tone="blue" />
       </template>
     </PaneHeader>
@@ -192,6 +212,8 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
         :status="m.status || 'delivered'"
         :author="direct() ? '' : displayName(m.author.username)"
         :initials="initials(displayName(m.author.username))"
+        :avatar-src="avatarUrl(m.author.username)"
+        :attachments="m.attachments"
         :time="m.status && m.status !== 'delivered' ? '' : clock(m.created_at)"
         :ring="!!person && m.author.username === person"
         :forwarded="m.forwarded ? displayName(m.forwarded.author.username) : ''"
@@ -207,9 +229,17 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
         @keydown.enter.self="openMenuAtBubble(m, $event)"
         @author="emit('person', m.author.username)"
         @quote="openQuote(m)"
+        @picture="openPicture(m, $event)"
         @forwarded-author="m.forwarded.author.id === me.id || emit('person', m.forwarded.author.username)"
       >{{ m.text }}</MessageBubble>
     </div>
+
+    <MediaViewer
+      v-if="viewing !== null"
+      :pictures="pictures"
+      :start="viewing"
+      @close="viewing = null"
+    />
 
     <MessageMenu
       v-if="menu"
@@ -226,7 +256,7 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
       ref="composer"
       :placeholder="placeholder"
       :ready="pending?.kind === 'forward'"
-      @send="emit('send', $event)"
+      @send="(text, attachments) => emit('send', text, attachments)"
     >
       <!-- a reply still needs its own text; a forward can go on its own -->
       <div v-if="pending" class="pending">
@@ -235,7 +265,7 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
           <span class="pending-label">
             {{ pending.kind === 'reply' ? 'Reply to' : 'Forward from' }} {{ pendingAuthor }}
           </span>
-          <span class="pending-text">{{ pending.message.text }}</span>
+          <span class="pending-text">{{ messagePreview(pending.message) }}</span>
         </div>
         <button type="button" class="cancel"
                 :aria-label="pending.kind === 'reply' ? 'Cancel reply' : 'Cancel forward'"

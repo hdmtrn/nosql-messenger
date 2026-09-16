@@ -3,7 +3,7 @@ import { computed, onUnmounted, ref, watch } from 'vue'
 import ChannelRow from './ChannelRow.vue'
 import SgAvatar from './SgAvatar.vue'
 import SgButton from './SgButton.vue'
-import { channelTitle, displayName, initials, rememberName } from '../naming'
+import { avatarUrl, channelTitle, displayName, initials, rememberUser } from '../naming'
 import { api } from '../api'
 
 const props = defineProps({
@@ -67,7 +67,7 @@ function search() {
   timer = setTimeout(async () => {
     const q = query.value.trim()
     const hits = q ? await api.searchUsers(q).catch(() => []) : []
-    for (const u of hits) rememberName(u.username, u.display_name)
+    for (const u of hits) rememberUser(u)
     found.value = hits.filter((u) => u.id !== props.me.id)
   }, 200)
 }
@@ -253,7 +253,7 @@ const footerStyle = computed(() => ({
         <div v-for="u in found" :key="u.id"
              style="display:flex;align-items:center;gap:8px;height:40px;padding-right:12px">
           <button type="button" :style="person" @click="emit('person', u.username)">
-            <span :style="markCol"><SgAvatar :initials="initials(u.display_name)" :size="24" tone="onBlue" /></span>
+            <span :style="markCol"><SgAvatar :initials="initials(u.display_name)" :src="avatarUrl(u.username)" :size="24" tone="onBlue" /></span>
             <span :style="personName">{{ u.display_name }}</span>
           </button>
           <SgButton
@@ -278,14 +278,14 @@ const footerStyle = computed(() => ({
                     style="display:flex;align-items:center;width:40px;height:40px;padding:0;
                            border:none;background:transparent;cursor:pointer"
                     @click="collapsed = false">
-              <span :style="markCol"><SgAvatar :initials="initials(displayName(r.from.username))" :size="24" tone="onBlue" /></span>
+              <span :style="markCol"><SgAvatar :initials="initials(displayName(r.from.username))" :src="avatarUrl(r.from.username)" :size="24" tone="onBlue" /></span>
             </button>
           </template>
           <template v-else>
             <div v-for="r in requests" :key="r.id"
                  style="display:flex;align-items:center;gap:8px;height:40px;padding-right:12px">
               <button type="button" :style="person" @click="emit('person', r.from.username)">
-                <span :style="markCol"><SgAvatar :initials="initials(displayName(r.from.username))" :size="24" tone="onBlue" /></span>
+                <span :style="markCol"><SgAvatar :initials="initials(displayName(r.from.username))" :src="avatarUrl(r.from.username)" :size="24" tone="onBlue" /></span>
                 <span :style="personName">{{ displayName(r.from.username) }}</span>
               </button>
               <SgButton variant="outline" size="sm" on-blue
@@ -319,6 +319,7 @@ const footerStyle = computed(() => ({
           :key="d.username"
           :name="displayName(d.username)"
           :avatar="initials(displayName(d.username))"
+          :avatar-src="avatarUrl(d.username)"
           :compact="collapsed"
           :active="!profileOpen && d.channel && d.channel.id === activeId"
           :unread="d.channel ? unread[d.channel.id] || 0 : 0"
@@ -333,7 +334,7 @@ const footerStyle = computed(() => ({
     <button type="button" :style="footerStyle" :title="collapsed ? me.display_name : undefined"
             :aria-label="collapsed ? me.display_name : undefined" @click="emit('profile')">
       <span :style="markCol">
-        <SgAvatar :initials="initials(me.display_name)" :size="32"
+        <SgAvatar :initials="initials(me.display_name)" :src="avatarUrl(me.username)" :size="32"
                   :tone="profileOpen ? 'blue' : 'onBlue'" />
       </span>
       <span v-if="!collapsed"

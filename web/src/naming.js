@@ -19,25 +19,46 @@ export function initials(name) {
   return first + [...words[words.length - 1]][0]
 }
 
-// Documents embed the username only, because the display name changes. The client
-// looks each person up once per session instead, and a reactive map re-renders
-// whoever asked as soon as the answer arrives.
-const names = reactive(new Map())
+// Documents embed the username only, because the display name and the avatar
+// change. The client looks each person up once per session instead, and a
+// reactive map re-renders whoever asked as soon as the answer arrives.
+const people = reactive(new Map())
 const asked = new Set()
+
+function lookUp(username) {
+  if (asked.has(username)) return
+  asked.add(username)
+  api.user(username)
+    .then(rememberUser)
+    .catch(() => people.set(username, { name: username, avatar: '' }))
+}
 
 export function displayName(username) {
   if (!username) return ''
-  if (names.has(username)) return names.get(username)
-  if (!asked.has(username)) {
-    asked.add(username)
-    api.user(username)
-      .then((u) => names.set(username, u.display_name || username))
-      .catch(() => names.set(username, username))
-  }
-  return username
+  lookUp(username)
+  return people.get(username)?.name || username
 }
 
-// For answers that already carry the name: our own profile, search results.
-export function rememberName(username, name) {
-  if (username && name) names.set(username, name)
+// Empty while the person is unknown or has no picture: the avatar shows initials.
+export function avatarUrl(username) {
+  if (!username) return ''
+  lookUp(username)
+  const id = people.get(username)?.avatar
+  return id ? `/media/${id}` : ''
+}
+
+// For answers that already carry the user: our own profile, search results.
+export function rememberUser(u) {
+  if (!u || !u.username) return
+  asked.add(u.username)
+  people.set(u.username, { name: u.display_name || u.username, avatar: u.avatar_id || '' })
+}
+
+// What a message reads as in a quote or a pending reply: its text, or a word for
+// the pictures when it has none.
+export function messagePreview(m) {
+  if (!m) return ''
+  if (m.text) return m.text
+  const n = (m.attachments || []).length
+  return n > 1 ? `${n} photos` : n ? 'Photo' : ''
 }
