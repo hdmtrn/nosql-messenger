@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api } from '../api'
 import { createSocket } from '../socket'
-import { channelTitle, rememberName } from '../naming'
+import { channelTitle, displayName, initials, rememberName } from '../naming'
 import { takePendingInvite } from '../pending'
 import ChannelRail from '../components/ChannelRail.vue'
 import SgButton from '../components/SgButton.vue'
@@ -71,6 +71,7 @@ async function loadChannels() {
 }
 
 async function selectChannel(id) {
+  if (pendingForward.value && pendingForward.value.channelId !== id) pendingForward.value = null
   showProfile.value = false
   activeId.value = id
   unread.value = { ...unread.value, [id]: 0 }
@@ -138,31 +139,87 @@ async function loadOlder() {
 async function deliver(entry) {
   entry.status = 'sending'
   try {
-    const saved = await api.send({
-      channel_id: activeId.value,
-      text: entry.text,
-      client_msg_id: entry.client_msg_id,
-    })
+    const saved = entry.sourceId
+      ? await api.forward(entry.sourceId, activeId.value, entry.client_msg_id)
+      : await api.send({
+        channel_id: activeId.value,
+        text: entry.text,
+        client_msg_id: entry.client_msg_id,
+      })
     Object.assign(entry, saved, { status: 'delivered' })
   } catch {
     entry.status = 'failed'
   }
 }
 
-function send(text) {
-  messages.value = [...messages.value, {
-    client_msg_id: crypto.randomUUID(),
-    text,
-    author: { id: props.me.id, username: props.me.username },
-    created_at: new Date().toISOString(),
-    status: 'sending',
-  }]
-  conversation.value?.toBottom()
-  deliver(messages.value[messages.value.length - 1])
+// The comment goes first and the forward after it, as in Telegram. The forward
+// waits for the comment's answer: sent in parallel, the server could store them
+// the other way round.
+async function send(text) {
+  const pending = pendingForward.value
+  const forwarding = pending && pending.channelId === activeId.value
+  if (forwarding) pendingForward.value = null
+
+  if (text.trim()) {
+    messages.value = [...messages.value, {
+      client_msg_id: crypto.randomUUID(),
+      text,
+      author: { id: props.me.id, username: props.me.username },
+      created_at: new Date().toISOString(),
+      status: 'sending',
+    }]
+    const comment = deliver(messages.value[messages.value.length - 1])
+    conversation.value?.toBottom()
+    if (forwarding) await comment
+  }
+  if (forwarding) {
+    queueForward(pending.message)
+    conversation.value?.toBottom()
+  }
 }
 
 function discard(entry) {
   messages.value = messages.value.filter((m) => m !== entry)
+}
+
+/* ---------- forwarding ---------- */
+
+// Only chats that already exist: a friend without a conversation yet has no
+// channel id to forward into. The open chat stays in the list: forwarding an old
+// message there brings it back to the bottom.
+const forwardTargets = computed(() =>
+  channels.value
+    .map((c) => {
+      const direct = c.kind === 'direct'
+      const title = direct ? displayName(channelTitle(c, props.me.id)) : c.name
+      return { id: c.id, title, direct, initials: initials(title) }
+    })
+)
+
+// { message, channelId }: picked in the menu, sent only when Send is pressed in
+// that chat. Leaving the chat drops it, the way a draft reply would be.
+const pendingForward = ref(null)
+
+async function pickForward(message, channelId) {
+  pendingForward.value = { message, channelId }
+  // Reloading the chat that is already open would only lose the scroll position.
+  if (channelId !== activeId.value) await selectChannel(channelId)
+}
+
+// Goes through deliver() like any typed message, so it shows Sending and gets
+// Retry and Discard. The snapshot is filled in ahead so the bubble already reads
+// "Forwarded from"; the server's answer replaces it.
+function queueForward(message) {
+  messages.value = [...messages.value, {
+    client_msg_id: crypto.randomUUID(),
+    sourceId: message.id,
+    text: message.text,
+    author: { id: props.me.id, username: props.me.username },
+    forwarded: message.forwarded || { author: message.author },
+    created_at: new Date().toISOString(),
+    status: 'sending',
+  }]
+  deliver(messages.value[messages.value.length - 1])
 }
 
 /* ---------- socket ---------- */
@@ -298,6 +355,10 @@ onUnmounted(() => socket && socket.close())
         @discard="discard"
         @load-older="loadOlder"
         @info="showInfo = !showInfo; person = ''"
+        :forward-targets="forwardTargets"
+        :pending-forward="pendingForward && pendingForward.channelId === activeId ? pendingForward.message : null"
+        @forward="pickForward"
+        @cancel-forward="pendingForward = null"
         @person="openPerson"
       />
 

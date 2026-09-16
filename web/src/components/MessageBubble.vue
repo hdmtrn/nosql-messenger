@@ -16,6 +16,8 @@ const props = defineProps({
   // The author whose page is open beside the feed gets a ring, so it stays clear
   // whose page that is.
   ring: Boolean,
+  // Display name of the original author when this message is a forward.
+  forwarded: { type: String, default: '' },
 })
 defineEmits(['retry', 'discard', 'author'])
 
@@ -51,6 +53,10 @@ const timeStyle = computed(() => ({
   ...MONO,
   flex: '0 0 auto',
   color: props.own ? 'rgba(255, 255, 255, 0.7)' : 'var(--text-muted)',
+}))
+const forwardStyle = computed(() => ({
+  font: '500 13px/1.3 var(--font-ui)',
+  color: props.own && props.status === 'delivered' ? 'rgba(255, 255, 255, 0.7)' : 'var(--text-muted)',
 }))
 const avatarTone = computed(() =>
   props.own && props.status !== 'delivered' ? props.status : 'blue'
@@ -95,7 +101,11 @@ const bubbleStyle = computed(() => ({
       </div>
 
       <div :style="bubbleStyle">
-        <span><slot /></span>
+        <!-- the source sits above the text, so the clock still hangs off its last line -->
+        <span style="display:flex;flex-direction:column;gap:4px;min-width:0">
+          <span v-if="forwarded" :style="forwardStyle">Forwarded from {{ forwarded }}</span>
+          <span><slot /></span>
+        </span>
         <SgSpinner v-if="status === 'sending'" />
         <span v-else-if="time" :style="timeStyle">{{ time }}</span>
       </div>
