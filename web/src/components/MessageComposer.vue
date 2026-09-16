@@ -1,7 +1,7 @@
 <script setup>
 import { computed, reactive, ref } from 'vue'
 import { api } from '../api'
-import SgSpinner from './SgSpinner.vue'
+import SendFilesDialog from './SendFilesDialog.vue'
 
 const props = defineProps({
   placeholder: { type: String, default: 'Message…' },
@@ -19,8 +19,9 @@ const focused = ref(false)
 const input = ref(null)
 const picker = ref(null)
 
-// Each picture uploads as soon as it is picked, so Send only has to name it.
-// { key, url, status: 'uploading' | 'done' | 'failed', error, att }
+// Each picture uploads as soon as it is picked, so Send only has to name it. While
+// there are any, they wait in the send box, which edits this same text.
+// { key, url, name, size, status: 'uploading' | 'done' | 'failed', error, att }
 const files = ref([])
 
 const uploading = computed(() => files.value.some((f) => f.status === 'uploading'))
@@ -28,6 +29,8 @@ const broken = computed(() => files.value.some((f) => f.status === 'failed'))
 const canSend = computed(() =>
   !props.disabled && !uploading.value && !broken.value
   && (!!text.value.trim() || props.ready || files.value.length > 0))
+const canSendFiles = computed(() =>
+  !props.disabled && !uploading.value && !broken.value && files.value.length > 0)
 
 function addFiles(list) {
   for (const file of list) {
@@ -35,6 +38,8 @@ function addFiles(list) {
     const item = reactive({
       key: crypto.randomUUID(),
       url: URL.createObjectURL(file),
+      name: file.name || 'Pasted image',
+      size: file.size,
       status: 'uploading',
       error: '',
       att: null,
@@ -81,6 +86,7 @@ function send() {
   emit('send', text.value, files.value.map((f) => ({ ...f.att, preview: f.url })))
   text.value = ''
   files.value = []
+  input.value?.focus()
 }
 </script>
 
@@ -88,14 +94,17 @@ function send() {
   <div style="position:relative;padding:16px 28px 20px"
        @dragover.prevent @drop.prevent="addFiles($event.dataTransfer.files)">
     <slot />
-    <div v-if="files.length" class="files">
-      <div v-for="f in files" :key="f.key" class="file" :class="f.status" :title="f.error || undefined">
-        <img :src="f.url" alt="">
-        <span v-if="f.status === 'uploading'" class="veil"><SgSpinner /></span>
-        <span v-else-if="f.status === 'failed'" class="veil">!</span>
-        <button type="button" class="drop" aria-label="Remove picture" @click="remove(f)">×</button>
-      </div>
-    </div>
+    <SendFilesDialog
+      v-if="files.length"
+      v-model="text"
+      :files="files"
+      :can-send="canSendFiles"
+      :max-length="maxLength"
+      @close="clearFiles(); input?.focus()"
+      @remove="remove"
+      @add="addFiles"
+      @send="send"
+    />
     <div style="display:flex;align-items:center;gap:16px">
       <div
         :style="{ flex: 1, display: 'flex', alignItems: 'center', gap: '12px', height: '48px',
@@ -142,51 +151,6 @@ function send() {
 </template>
 
 <style scoped>
-.files {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-.file {
-  position: relative;
-  width: 64px;
-  height: 64px;
-  border-radius: 12px;
-  overflow: hidden;
-  background: var(--surface-sunken);
-}
-.file img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-.file.failed { box-shadow: inset 0 0 0 2px var(--border-error); }
-.veil {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(255, 255, 255, 0.6);
-  font: 600 20px/1 var(--font-ui);
-  color: var(--status-error);
-}
-.drop {
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-pill);
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
-  font: 14px/20px var(--font-ui);
-  cursor: pointer;
-}
 .attach {
   display: flex;
   flex: none;
