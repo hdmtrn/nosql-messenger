@@ -4,6 +4,7 @@ import { api } from '../api'
 import SgAvatar from '../components/SgAvatar.vue'
 import SgButton from '../components/SgButton.vue'
 import { avatarUrl, initials } from '../naming'
+import { toJpeg } from '../images'
 
 const props = defineProps({ me: { type: Object, required: true } })
 const emit = defineEmits(['saved', 'log-out'])
@@ -16,25 +17,6 @@ const AVATAR_SIDE = 256
 const picker = ref(null)
 const uploading = ref(false)
 
-// The centre square, scaled down and re-encoded here, so the server always gets a
-// small JPEG whatever the camera produced. createImageBitmap applies the EXIF
-// rotation and reads formats the server refuses, such as WebP and HEIC.
-async function squareJpeg(file) {
-  const bitmap = await createImageBitmap(file)
-  const side = Math.min(bitmap.width, bitmap.height)
-  const canvas = document.createElement('canvas')
-  canvas.width = canvas.height = AVATAR_SIDE
-  const ctx = canvas.getContext('2d')
-  ctx.fillStyle = '#fff'
-  ctx.fillRect(0, 0, AVATAR_SIDE, AVATAR_SIDE)
-  ctx.drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side,
-    0, 0, AVATAR_SIDE, AVATAR_SIDE)
-  bitmap.close()
-  return new Promise((resolve, reject) =>
-    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('could not encode the image'))),
-      'image/jpeg', 0.9))
-}
-
 async function changeAvatar(event) {
   const file = event.target.files[0]
   event.target.value = ''
@@ -42,7 +24,7 @@ async function changeAvatar(event) {
   error.value = ''
   uploading.value = true
   try {
-    await api.setAvatar(await squareJpeg(file))
+    await api.setAvatar(await toJpeg(file, { side: AVATAR_SIDE, square: true }))
     emit('saved')
   } catch (e) {
     error.value = e.status ? `${e.message} (${e.status})` : 'This file is not an image'

@@ -56,7 +56,7 @@ function paste(event) {
           <h2 class="title">{{ title }}</h2>
           <button type="button" class="round" aria-label="Add pictures" title="Add pictures"
                   @click="picker.click()">+</button>
-          <input ref="picker" type="file" accept="image/png,image/jpeg,image/gif" multiple hidden
+          <input ref="picker" type="file" accept="image/*" multiple hidden
                  @change="pick">
         </header>
 

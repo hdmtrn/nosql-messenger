@@ -1,6 +1,7 @@
 <script setup>
 import { computed, reactive, ref } from 'vue'
 import { api } from '../api'
+import { prepareForSending } from '../images'
 import SendFilesDialog from './SendFilesDialog.vue'
 
 const props = defineProps({
@@ -45,13 +46,30 @@ function addFiles(list) {
       att: null,
     })
     files.value.push(item)
-    if (file.size > MAX_BYTES) {
-      Object.assign(item, { status: 'failed', error: 'Larger than 10 MB' })
-      continue
-    }
-    api.uploadMedia(file)
-      .then((att) => Object.assign(item, { status: 'done', att }))
-      .catch((e) => Object.assign(item, { status: 'failed', error: e.message }))
+    upload(item, file)
+  }
+}
+
+// The limit is checked on what is sent, not on the original: a 12 MB photo is
+// a few hundred KB once scaled down.
+async function upload(item, file) {
+  let blob
+  try {
+    blob = await prepareForSending(file)
+  } catch {
+    Object.assign(item, { status: 'failed', error: 'This browser cannot read the picture' })
+    return
+  }
+  item.size = blob.size
+  if (blob.size > MAX_BYTES) {
+    Object.assign(item, { status: 'failed', error: 'Larger than 10 MB' })
+    return
+  }
+  try {
+    item.att = await api.uploadMedia(blob)
+    item.status = 'done'
+  } catch (e) {
+    Object.assign(item, { status: 'failed', error: e.message })
   }
 }
 
@@ -119,7 +137,7 @@ function send() {
             <path d="M21 11.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l8.6-8.6a3.7 3.7 0 0 1 5.2 5.2l-8.6 8.6a1.8 1.8 0 0 1-2.6-2.6l7.9-7.9" />
           </svg>
         </button>
-        <input ref="picker" type="file" accept="image/png,image/jpeg,image/gif" multiple hidden
+        <input ref="picker" type="file" accept="image/*" multiple hidden
                @change="pick">
         <input
           ref="input"
