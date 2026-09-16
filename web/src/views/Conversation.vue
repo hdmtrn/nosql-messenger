@@ -231,7 +231,7 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
       ref="composer"
       :placeholder="placeholder"
       :ready="pending?.kind === 'forward'"
-      @send="emit('send', $event)"
+      @send="(text, attachments) => emit('send', text, attachments)"
     >
       <!-- a reply still needs its own text; a forward can go on its own -->
       <div v-if="pending" class="pending">
