@@ -134,6 +134,20 @@ async function loadOlder() {
   loadingOlder.value = false
 }
 
+// A quote whose original is further back than the loaded page: older pages are
+// loaded, as scrolling up would, until it turns up. Twenty pages is where it
+// stops; jumping straight to a far message would need a page around it.
+async function findMessage(id) {
+  const channelId = activeId.value
+  const loaded = () => messages.value.some((m) => m.id === id)
+  for (let page = 0; page < 20 && !loaded() && hasOlder.value; page++) {
+    while (loadingOlder.value) await new Promise((r) => setTimeout(r, 50))
+    if (activeId.value !== channelId) return
+    await loadOlder()
+  }
+  if (activeId.value === channelId && loaded()) conversation.value?.highlight(id)
+}
+
 /* ---------- sending ---------- */
 
 async function deliver(entry) {
@@ -406,6 +420,7 @@ onUnmounted(() => socket && socket.close())
         :pending="pendingAction && pendingAction.channelId === activeId ? pendingAction : null"
         :originals="originals"
         @reply="startReply"
+        @find="findMessage"
         @forward="pickForward"
         @cancel-pending="pendingAction = null"
         @person="openPerson"

@@ -25,7 +25,7 @@ const props = defineProps({
   // when the original could not be loaded.
   quote: { type: Object, default: null },
 })
-defineEmits(['retry', 'discard', 'author'])
+defineEmits(['retry', 'discard', 'author', 'quote', 'forwarded-author'])
 
 const MONO = {
   font: 'var(--text-meta)',
@@ -147,7 +147,9 @@ const bubbleStyle = computed(() => ({
 
       <div :style="bubbleStyle">
         <!-- a line of its own above the text, so the clock still rides on the text's last line -->
-        <span v-if="quote" :style="quoteStyle">
+        <!-- a quote leads to its original; one that could not be loaded leads nowhere -->
+        <button v-if="quote" type="button" class="quote" :style="quoteStyle"
+                :disabled="quote.missing" @click="$emit('quote')">
           <span class="quote-bar" />
           <span style="display:flex;flex-direction:column;min-width:0">
             <template v-if="quote.missing">
@@ -158,8 +160,10 @@ const bubbleStyle = computed(() => ({
               <span class="quote-text">{{ quote.text }}</span>
             </template>
           </span>
+        </button>
+        <span v-if="forwarded" :style="forwardStyle">Forwarded from
+          <button type="button" class="source" @click="$emit('forwarded-author')">{{ forwarded }}</button>
         </span>
-        <span v-if="forwarded" :style="forwardStyle">Forwarded from {{ forwarded }}</span>
         <slot />
         <template v-if="showStamp">
           <span aria-hidden="true" :style="stampRoom">
@@ -193,6 +197,22 @@ const bubbleStyle = computed(() => ({
 }
 button.who { cursor: pointer; }
 .name { font: var(--text-name); }
+.quote {
+  width: 100%;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+}
+.quote:disabled { cursor: default; }
+.source {
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.source:hover { text-decoration: underline; }
 .quote-bar {
   flex: none;
   width: 2px;

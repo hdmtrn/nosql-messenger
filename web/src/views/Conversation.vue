@@ -24,7 +24,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['send', 'retry', 'discard', 'load-older', 'info', 'person',
-  'reply', 'forward', 'cancel-pending'])
+  'reply', 'forward', 'cancel-pending', 'find'])
 
 const feed = ref(null)
 const composer = ref(null)
@@ -139,7 +139,26 @@ async function keepPosition(before) {
 
 watch(() => props.channel.id, toBottom)
 
-defineExpose({ toBottom, keepPosition, distanceFromBottom: () => (feed.value ? feed.value.scrollHeight - feed.value.scrollTop : 0) })
+// The message a quote led to is lit for a moment, so the eye finds it.
+const lit = ref('')
+let litTimer = null
+
+async function highlight(id) {
+  await nextTick()
+  const el = feed.value?.querySelector(`[data-id="${id}"]`)
+  if (!el) return
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  lit.value = id
+  clearTimeout(litTimer)
+  litTimer = setTimeout(() => { lit.value = '' }, 1200)
+}
+
+function openQuote(m) {
+  if (props.messages.some((x) => x.id === m.reply_to)) highlight(m.reply_to)
+  else emit('find', m.reply_to)
+}
+
+defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (feed.value ? feed.value.scrollHeight - feed.value.scrollTop : 0) })
 </script>
 
 <template>
@@ -182,9 +201,13 @@ defineExpose({ toBottom, keepPosition, distanceFromBottom: () => (feed.value ? f
         @discard="emit('discard', m)"
         :tabindex="m.id ? 0 : undefined"
         class="message"
+        :class="{ lit: lit && lit === m.id }"
+        :data-id="m.id"
         @contextmenu.prevent="openMenu(m, $event.clientX, $event.clientY)"
         @keydown.enter.self="openMenuAtBubble(m, $event)"
         @author="emit('person', m.author.username)"
+        @quote="openQuote(m)"
+        @forwarded-author="m.forwarded.author.id === me.id || emit('person', m.forwarded.author.username)"
       >{{ m.text }}</MessageBubble>
     </div>
 
@@ -235,6 +258,21 @@ defineExpose({ toBottom, keepPosition, distanceFromBottom: () => (feed.value ? f
 /* short conversations hug the bottom; long ones still scroll from the top */
 .feed > :first-child { margin-top: auto; }
 .message { border-radius: var(--radius-bubble); }
+/* The band a quote leads to spans the whole pane, past the feed's 28px padding,
+   with room above and below. As in Telegram it lies over the message, a see-through
+   wash of the accent, so a blue bubble is lit too; clicks go through it. */
+.message { position: relative; }
+.message::before {
+  content: '';
+  position: absolute;
+  inset: -8px -28px;
+  z-index: 1;
+  background: rgba(26, 24, 229, 0.12);
+  opacity: 0;
+  transition: opacity 300ms linear;
+  pointer-events: none;
+}
+.message.lit::before { opacity: 1; }
 .message:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .pending {
   display: flex;
