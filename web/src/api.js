@@ -16,7 +16,7 @@ async function request(method, path, body) {
 
 // Files go as the raw body: the server streams it straight into storage.
 async function upload(path, blob) {
-  return parse(await fetch(path, { method: 'POST', headers: { 'Content-Type': blob.type }, body: blob }))
+  return parse(await fetch(path, { method: 'POST', headers: { 'Content-Type': blob.type || 'application/octet-stream' }, body: blob }))
 }
 
 async function parse(res) {
@@ -62,6 +62,7 @@ export const api = {
   declineFriendRequest: (id) => request('POST', `/friends/requests/${id}/decline`),
   friends: () => request('GET', '/friends'),
 
+  uploadMedia: (file) => upload('/media', file),
   messages: (params) => request('GET', '/messages' + qs(params)),
   send: (message) => request('POST', '/messages', message),
   messagesByIds: (channelId, ids) =>

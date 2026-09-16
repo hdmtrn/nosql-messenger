@@ -53,3 +53,12 @@ export function rememberUser(u) {
   asked.add(u.username)
   people.set(u.username, { name: u.display_name || u.username, avatar: u.avatar_id || '' })
 }
+
+// What a message reads as in a quote or a pending reply: its text, or a word for
+// the pictures when it has none.
+export function messagePreview(m) {
+  if (!m) return ''
+  if (m.text) return m.text
+  const n = (m.attachments || []).length
+  return n > 1 ? `${n} photos` : n ? 'Photo' : ''
+}

@@ -6,7 +6,7 @@ import MessageComposer from '../components/MessageComposer.vue'
 import MessageMenu from '../components/MessageMenu.vue'
 import SgAvatar from '../components/SgAvatar.vue'
 import ChannelGlyph from '../components/ChannelGlyph.vue'
-import { avatarUrl, displayName, initials } from '../naming'
+import { avatarUrl, displayName, initials, messagePreview } from '../naming'
 
 const props = defineProps({
   me: { type: Object, required: true },
@@ -31,6 +31,9 @@ const composer = ref(null)
 
 // A reply or a forward waiting above the field means the next thing to do is
 // type, so the cursor goes there, as in Telegram.
+// The field stays mounted across chats; pictures picked in one must not be sent to another.
+watch(() => props.channel.id, () => composer.value?.clearFiles())
+
 watch(() => props.pending, async (action) => {
   if (!action) return
   await nextTick()
@@ -67,7 +70,7 @@ function quoteOf(m, byId) {
   const orig = byId.get(m.reply_to) ?? props.originals.get(m.reply_to)
   if (orig === undefined) return null
   if (orig === null) return { missing: true }
-  return { author: sourceAuthor(orig), text: orig.text }
+  return { author: sourceAuthor(orig), text: messagePreview(orig) }
 }
 function openMenuAtBubble(m, e) {
   const box = e.currentTarget.getBoundingClientRect()
@@ -193,6 +196,7 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
         :author="direct() ? '' : displayName(m.author.username)"
         :initials="initials(displayName(m.author.username))"
         :avatar-src="avatarUrl(m.author.username)"
+        :attachments="m.attachments"
         :time="m.status && m.status !== 'delivered' ? '' : clock(m.created_at)"
         :ring="!!person && m.author.username === person"
         :forwarded="m.forwarded ? displayName(m.forwarded.author.username) : ''"
@@ -236,7 +240,7 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
           <span class="pending-label">
             {{ pending.kind === 'reply' ? 'Reply to' : 'Forward from' }} {{ pendingAuthor }}
           </span>
-          <span class="pending-text">{{ pending.message.text }}</span>
+          <span class="pending-text">{{ messagePreview(pending.message) }}</span>
         </div>
         <button type="button" class="cancel"
                 :aria-label="pending.kind === 'reply' ? 'Cancel reply' : 'Cancel forward'"
