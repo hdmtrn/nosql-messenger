@@ -51,7 +51,7 @@ func TestForwardReachesOnlyMessagesYouCanSee(t *testing.T) {
 	aliceNotes := createChannel(t, channels, "alice-notes", alice)
 	malloryRoom := createChannel(t, channels, "mallory-room", mallory)
 
-	orig, err := messages.Insert(ctx, aliceRoom.ID, alice, "the plan", "", nil)
+	orig, err := messages.Insert(ctx, aliceRoom.ID, alice, "the plan", "", nil, nil)
 	if err != nil {
 		t.Fatalf("inserting message: %v", err)
 	}
@@ -130,6 +130,107 @@ func TestRepeatedClientMsgIDIsNotBroadcastAgain(t *testing.T) {
 	}
 	if n := len(watcher.send); n != 1 {
 		t.Fatalf("channel saw %d broadcasts, want 1", n)
+	}
+}
+
+func TestReplyStaysInItsChannel(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	channels, messages := newMessageTestStores(t, db)
+
+	alice, mallory := person("alice"), person("mallory")
+	aliceRoom := createChannel(t, channels, "alice-room", alice)
+	aliceNotes := createChannel(t, channels, "alice-notes", alice)
+	malloryRoom := createChannel(t, channels, "mallory-room", mallory)
+
+	orig, err := messages.Insert(ctx, aliceRoom.ID, alice, "the plan", "", nil, nil)
+	if err != nil {
+		t.Fatalf("inserting message: %v", err)
+	}
+
+	s := &server{channels: channels, messages: messages, hub: NewHub()}
+	reply := func(sess Session, channelID bson.ObjectID, replyTo string) (int, []byte) {
+		return callMessageHandler(t, s.handleSendMessage, "", map[string]string{
+			"channel_id": channelID.Hex(),
+			"text":       "agreed",
+			"reply_to":   replyTo,
+		}, sess)
+	}
+
+	// The allowed case first: without it a handler that always answers 404
+	// would pass everything below.
+	code, body := reply(alice, aliceRoom.ID, orig.ID.Hex())
+	if code != http.StatusCreated {
+		t.Fatalf("replying in the same channel: got %d %s, want 201", code, body)
+	}
+	var sent Message
+	if err := json.Unmarshal(body, &sent); err != nil {
+		t.Fatalf("decoding reply: %v", err)
+	}
+	stored, err := messages.ByID(ctx, sent.ID)
+	if err != nil {
+		t.Fatalf("loading stored reply: %v", err)
+	}
+	if stored.ReplyTo == nil || *stored.ReplyTo != orig.ID {
+		t.Fatalf("stored reply points at %v, want %s", stored.ReplyTo, orig.ID.Hex())
+	}
+
+	// Alice can read the original, but a reply in another channel would show its
+	// text there. That, a foreign message and a missing one must all look the same.
+	otherChannel, otherBody := reply(alice, aliceNotes.ID, orig.ID.Hex())
+	foreign, foreignBody := reply(mallory, malloryRoom.ID, orig.ID.Hex())
+	invented, inventedBody := reply(mallory, malloryRoom.ID, bson.NewObjectID().Hex())
+	if otherChannel != http.StatusNotFound || foreign != http.StatusNotFound || invented != http.StatusNotFound {
+		t.Fatalf("other channel gave %d, foreign %d, invented %d, want 404 for all",
+			otherChannel, foreign, invented)
+	}
+	if !bytes.Equal(otherBody, inventedBody) || !bytes.Equal(foreignBody, inventedBody) {
+		t.Fatalf("answers differ: other channel %s, foreign %s, missing %s", otherBody, foreignBody, inventedBody)
+	}
+
+	for _, ch := range []Channel{aliceNotes, malloryRoom} {
+		leaked, err := messages.List(ctx, ch.ID, bson.ObjectID{}, 0)
+		if err != nil {
+			t.Fatalf("listing messages: %v", err)
+		}
+		if len(leaked) != 0 {
+			t.Fatalf("%s holds %d messages after refused replies, want 0", ch.Name, len(leaked))
+		}
+	}
+}
+
+// A plain message must not grow an empty reply_to: old documents lack the field,
+// and the client tells a reply apart by the field being there at all.
+func TestPlainMessageHasNoReplyTo(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	channels, messages := newMessageTestStores(t, db)
+
+	owner := person("owner")
+	ch := createChannel(t, channels, "room", owner)
+	s := &server{channels: channels, messages: messages, hub: NewHub()}
+
+	code, body := callMessageHandler(t, s.handleSendMessage, "", map[string]string{
+		"channel_id": ch.ID.Hex(),
+		"text":       "hello",
+	}, owner)
+	if code != http.StatusCreated {
+		t.Fatalf("sending: got %d %s, want 201", code, body)
+	}
+	if bytes.Contains(body, []byte(`"reply_to"`)) {
+		t.Fatalf("answer %s carries reply_to", body)
+	}
+
+	var sent Message
+	if err := json.Unmarshal(body, &sent); err != nil {
+		t.Fatalf("decoding answer: %v", err)
+	}
+	raw, err := db.Collection("messages").FindOne(ctx, bson.M{"_id": sent.ID}).Raw()
+	if err != nil {
+		t.Fatalf("loading raw document: %v", err)
+	}
+	if _, err := raw.LookupErr("reply_to"); err == nil {
+		t.Fatalf("stored document %s has a reply_to field", raw)
 	}
 }
 

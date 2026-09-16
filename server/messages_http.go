@@ -15,6 +15,7 @@ type sendMessageRequest struct {
 	ChannelID   string `json:"channel_id"`
 	Text        string `json:"text"`
 	ClientMsgID string `json:"client_msg_id,omitempty"`
+	ReplyTo     string `json:"reply_to,omitempty"`
 }
 
 func validateMessageText(s string) error {
@@ -100,7 +101,23 @@ func (s *server) handleSendMessage(w http.ResponseWriter, r *http.Request, sess 
 		return
 	}
 
-	s.deliverMessage(w, r, channelID, sess, req.Text, req.ClientMsgID, nil)
+	var replyTo *bson.ObjectID
+	if req.ReplyTo != "" {
+		orig, ok := s.messageForMember(w, r, req.ReplyTo, sess)
+		if !ok {
+			return
+		}
+		// A reply stays in its channel. Pointing at a message from another channel
+		// would have clients show its text to people who cannot read that channel;
+		// it answers like a missing message, as a foreign one does.
+		if orig.ChannelID != channelID {
+			writeError(w, http.StatusNotFound, "message not found")
+			return
+		}
+		replyTo = &orig.ID
+	}
+
+	s.deliverMessage(w, r, channelID, sess, req.Text, req.ClientMsgID, nil, replyTo)
 }
 
 type forwardMessageRequest struct {
@@ -126,15 +143,15 @@ func (s *server) handleForwardMessage(w http.ResponseWriter, r *http.Request, se
 		return
 	}
 
-	s.deliverMessage(w, r, channelID, sess, orig.Text, req.ClientMsgID, orig.forwardOf())
+	s.deliverMessage(w, r, channelID, sess, orig.Text, req.ClientMsgID, orig.forwardOf(), nil)
 }
 
 // deliverMessage is the one way a checked message gets into a channel: persisted
 // first, broadcast only after the write succeeded, then answered to the sender.
 // A repeated client_msg_id gets the stored message back and is not broadcast again.
 func (s *server) deliverMessage(w http.ResponseWriter, r *http.Request, channelID bson.ObjectID,
-	sess Session, text, clientMsgID string, fwd *ForwardedFrom) {
-	msg, err := s.messages.Insert(r.Context(), channelID, sess, text, clientMsgID, fwd)
+	sess Session, text, clientMsgID string, fwd *ForwardedFrom, replyTo *bson.ObjectID) {
+	msg, err := s.messages.Insert(r.Context(), channelID, sess, text, clientMsgID, fwd, replyTo)
 	if errors.Is(err, errDuplicateMessage) {
 		existing, ferr := s.messages.ByClientMsgID(r.Context(), clientMsgID)
 		if ferr != nil {

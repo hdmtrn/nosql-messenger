@@ -42,6 +42,10 @@ type Message struct {
 
 	// A pointer, so that ordinary messages store no forwarded field at all.
 	Forwarded *ForwardedFrom `bson:"forwarded,omitempty" json:"forwarded,omitempty"`
+
+	// The message this one answers. Only the id: the quote is filled in by the
+	// client from the original, so an edited original shows its current text.
+	ReplyTo *bson.ObjectID `bson:"reply_to,omitempty" json:"reply_to,omitempty"`
 }
 
 // forwardOf is what a copy of m carries about its source: a forward of a
@@ -84,7 +88,7 @@ func (s *messageStore) ensureIndexes(ctx context.Context) error {
 	return err
 }
 
-func (s *messageStore) Insert(ctx context.Context, channelID bson.ObjectID, author Session, text, clientMsgID string, fwd *ForwardedFrom) (Message, error) {
+func (s *messageStore) Insert(ctx context.Context, channelID bson.ObjectID, author Session, text, clientMsgID string, fwd *ForwardedFrom, replyTo *bson.ObjectID) (Message, error) {
 	msg := Message{
 		ChannelID: channelID,
 		Author: MessageAuthor{
@@ -95,6 +99,7 @@ func (s *messageStore) Insert(ctx context.Context, channelID bson.ObjectID, auth
 		CreatedAt:   time.Now(),
 		ClientMsgID: clientMsgID,
 		Forwarded:   fwd,
+		ReplyTo:     replyTo,
 	}
 
 	res, err := s.col.InsertOne(ctx, msg)
