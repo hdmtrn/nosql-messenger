@@ -400,21 +400,36 @@ func TestConcurrentUploadsKeepTheirBytes(t *testing.T) {
 	}
 	wg.Wait()
 
-	for i, m := range saved {
+	for i := range saved {
 		if errs[i] != nil {
 			t.Fatalf("saving picture %d: %v", i, errs[i])
 		}
-		ds, err := media.Open(ctx, m)
-		if err != nil {
-			t.Fatalf("opening picture %d: %v", i, err)
+	}
+
+	// Reads share one bucket, so they run at once too, twice per picture.
+	got := make([][]byte, 2*len(saved))
+	readErrs := make([]error, len(got))
+	for i := range got {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ds, err := media.Open(ctx, saved[i/2])
+			if err != nil {
+				readErrs[i] = err
+				return
+			}
+			defer ds.Close()
+			got[i], readErrs[i] = io.ReadAll(ds)
+		}()
+	}
+	wg.Wait()
+
+	for i := range got {
+		if readErrs[i] != nil {
+			t.Fatalf("reading picture %d: %v", i/2, readErrs[i])
 		}
-		got, err := io.ReadAll(ds)
-		ds.Close()
-		if err != nil {
-			t.Fatalf("reading picture %d: %v", i, err)
-		}
-		if !bytes.Equal(got, pictures[i]) {
-			t.Fatalf("picture %d came back different: %d bytes, sent %d", i, len(got), len(pictures[i]))
+		if !bytes.Equal(got[i], pictures[i/2]) {
+			t.Fatalf("picture %d came back different: %d bytes, sent %d", i/2, len(got[i]), len(pictures[i/2]))
 		}
 	}
 }
