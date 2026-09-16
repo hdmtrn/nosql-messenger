@@ -6,7 +6,7 @@ import SgSpinner from './SgSpinner.vue'
 // check and prune, one comment for all of them, Send. The files and the text
 // belong to the field underneath; this box only shows and edits them.
 const props = defineProps({
-  // [{ key, url, name, size, status: 'uploading' | 'done' | 'failed', error }]
+  // [{ key, url, name, size, status: 'queued' | 'uploading' | 'done' | 'failed', error }]
   files: { type: Array, required: true },
   canSend: Boolean,
   maxLength: { type: Number, default: 4000 },
@@ -29,6 +29,7 @@ function size(bytes) {
 }
 
 function note(f) {
+  if (f.status === 'queued') return 'Waiting…'
   if (f.status === 'uploading') return 'Uploading…'
   if (f.status === 'failed') return f.error || 'Not uploaded'
   return size(f.size)
@@ -65,6 +66,7 @@ function paste(event) {
             <span class="thumb" :class="f.status">
               <img :src="f.url" alt="">
               <span v-if="f.status === 'uploading'" class="veil"><SgSpinner /></span>
+              <span v-else-if="f.status === 'queued'" class="veil" />
             </span>
             <span class="meta">
               <span class="name">{{ f.name }}</span>

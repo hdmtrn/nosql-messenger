@@ -14,6 +14,9 @@ const props = defineProps({
 const emit = defineEmits(['send'])
 
 const MAX_BYTES = 10 << 20
+// At most this many pictures are prepared and uploaded at once, as Telegram's
+// client limits its own uploads: the server holds a 16 MB driver buffer for each.
+const MAX_PARALLEL = 3
 
 const text = ref('')
 const focused = ref(false)
@@ -22,10 +25,10 @@ const picker = ref(null)
 
 // Each picture uploads as soon as it is picked, so Send only has to name it. While
 // there are any, they wait in the send box, which edits this same text.
-// { key, url, name, size, status: 'uploading' | 'done' | 'failed', error, att }
+// { key, url, name, size, status: 'queued' | 'uploading' | 'done' | 'failed', error, att }
 const files = ref([])
 
-const uploading = computed(() => files.value.some((f) => f.status === 'uploading'))
+const uploading = computed(() => files.value.some((f) => f.status === 'queued' || f.status === 'uploading'))
 const broken = computed(() => files.value.some((f) => f.status === 'failed'))
 const canSend = computed(() =>
   !props.disabled && !uploading.value && !broken.value
@@ -41,12 +44,32 @@ function addFiles(list) {
       url: URL.createObjectURL(file),
       name: file.name || 'Pasted image',
       size: file.size,
-      status: 'uploading',
+      status: 'queued',
       error: '',
       att: null,
+      dropped: false,
     })
     files.value.push(item)
-    upload(item, file)
+    waiting.push({ item, file })
+  }
+  pump()
+}
+
+const waiting = []
+let active = 0
+
+// Starts queued pictures while there is room; each one that finishes makes room
+// for the next. A picture removed while waiting is skipped.
+function pump() {
+  while (active < MAX_PARALLEL && waiting.length) {
+    const { item, file } = waiting.shift()
+    if (item.dropped) continue
+    active++
+    item.status = 'uploading'
+    upload(item, file).finally(() => {
+      active--
+      pump()
+    })
   }
 }
 
@@ -85,12 +108,16 @@ function paste(event) {
 }
 
 function remove(item) {
+  item.dropped = true
   URL.revokeObjectURL(item.url)
   files.value = files.value.filter((f) => f !== item)
 }
 
 function clearFiles() {
-  for (const f of files.value) URL.revokeObjectURL(f.url)
+  for (const f of files.value) {
+    f.dropped = true
+    URL.revokeObjectURL(f.url)
+  }
   files.value = []
 }
 
