@@ -9,6 +9,7 @@ const props = defineProps({
   unread: { type: Number, default: 0 },
   // A person is shown by their initials where a channel shows the glyph.
   avatar: { type: String, default: '' },
+  avatarSrc: { type: String, default: '' },
   // The collapsed rail keeps the mark alone; the name moves into the tooltip.
   compact: Boolean,
 })
@@ -58,7 +59,7 @@ const badge = computed(() => ({
     @click="$emit('click')"
   >
     <span style="flex:0 0 40px;display:flex;justify-content:center">
-      <SgAvatar v-if="avatar" :initials="avatar" :size="MARK" :tone="active ? 'blue' : 'onBlue'" />
+      <SgAvatar v-if="avatar" :initials="avatar" :src="avatarSrc" :size="MARK" :tone="active ? 'blue' : 'onBlue'" />
       <ChannelGlyph v-else :size="MARK" :tone="active ? 'blue' : 'onBlue'" />
     </span>
     <span v-if="!compact"

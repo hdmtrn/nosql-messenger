@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { api } from '../api'
 import SgAvatar from '../components/SgAvatar.vue'
 import SgButton from '../components/SgButton.vue'
-import { initials } from '../naming'
+import { avatarUrl, initials } from '../naming'
 
 const props = defineProps({ me: { type: Object, required: true } })
 const emit = defineEmits(['saved', 'log-out'])
@@ -11,6 +11,55 @@ const emit = defineEmits(['saved', 'log-out'])
 const displayName = ref(props.me.display_name)
 const bio = ref(props.me.bio || '')
 const error = ref('')
+
+const AVATAR_SIDE = 256
+const picker = ref(null)
+const uploading = ref(false)
+
+// The centre square, scaled down and re-encoded here, so the server always gets a
+// small JPEG whatever the camera produced. createImageBitmap applies the EXIF
+// rotation and reads formats the server refuses, such as WebP and HEIC.
+async function squareJpeg(file) {
+  const bitmap = await createImageBitmap(file)
+  const side = Math.min(bitmap.width, bitmap.height)
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = AVATAR_SIDE
+  const ctx = canvas.getContext('2d')
+  ctx.fillStyle = '#fff'
+  ctx.fillRect(0, 0, AVATAR_SIDE, AVATAR_SIDE)
+  ctx.drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side,
+    0, 0, AVATAR_SIDE, AVATAR_SIDE)
+  bitmap.close()
+  return new Promise((resolve, reject) =>
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('could not encode the image'))),
+      'image/jpeg', 0.9))
+}
+
+async function changeAvatar(event) {
+  const file = event.target.files[0]
+  event.target.value = ''
+  if (!file) return
+  error.value = ''
+  uploading.value = true
+  try {
+    await api.setAvatar(await squareJpeg(file))
+    emit('saved')
+  } catch (e) {
+    error.value = e.status ? `${e.message} (${e.status})` : 'This file is not an image'
+  } finally {
+    uploading.value = false
+  }
+}
+
+async function removeAvatar() {
+  error.value = ''
+  try {
+    await api.removeAvatar()
+    emit('saved')
+  } catch (e) {
+    error.value = `${e.message} (${e.status})`
+  }
+}
 
 const sessions = ref([])
 const sessionsOpen = ref(false)
@@ -107,7 +156,16 @@ toggleSessions()
       </header>
 
       <div :style="panel" style="padding:24px 28px;display:flex;align-items:flex-start;gap:20px">
-        <SgAvatar :initials="initials(me.display_name)" :size="44" />
+        <div style="display:flex;flex-direction:column;align-items:center;gap:6px">
+          <button type="button" class="avatar" :disabled="uploading"
+                  :title="uploading ? 'Uploading…' : 'Change photo'" aria-label="Change photo"
+                  @click="picker.click()">
+            <SgAvatar :initials="initials(me.display_name)" :src="avatarUrl(me.username)" :size="44" />
+          </button>
+          <button v-if="me.avatar_id" type="button" class="remove" :style="mono"
+                  @click="removeAvatar">Remove</button>
+          <input ref="picker" type="file" accept="image/*" hidden @change="changeAvatar">
+        </div>
 
         <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:10px">
           <input
@@ -172,3 +230,22 @@ toggleSessions()
     </div>
   </section>
 </template>
+
+<style scoped>
+.avatar {
+  padding: 0;
+  border: none;
+  background: none;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+.avatar:hover { opacity: 0.8; }
+.avatar:disabled { opacity: 0.5; cursor: progress; }
+.remove {
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+.remove:hover { color: var(--status-error) !important; }
+</style>

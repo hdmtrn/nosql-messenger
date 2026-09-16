@@ -9,6 +9,7 @@ const props = defineProps({
   status: { type: String, default: 'delivered' },
   author: String,
   initials: String,
+  avatarSrc: { type: String, default: '' },
   time: String,
   // First message of a run by the same author: it carries the avatar and the
   // header. The rest of the run is bare bubbles under it.
@@ -130,7 +131,7 @@ const bubbleStyle = computed(() => ({
       <component :is="own ? 'span' : 'button'" v-if="head" :type="own ? undefined : 'button'"
                  class="who" :class="{ ring }" :aria-label="own ? undefined : 'Open profile'"
                  @click="own || $emit('author')">
-        <SgAvatar :initials="initials" :size="AVATAR" :tone="avatarTone" />
+        <SgAvatar :initials="initials" :src="avatarSrc" :size="AVATAR" :tone="avatarTone" />
       </component>
       <!-- keeps the bubbles of a run flush with the head above them -->
       <div v-else :style="{ flex: `0 0 ${AVATAR}px` }" />

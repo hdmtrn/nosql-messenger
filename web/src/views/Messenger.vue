@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api } from '../api'
 import { createSocket } from '../socket'
-import { channelTitle, displayName, initials, rememberName } from '../naming'
+import { avatarUrl, channelTitle, displayName, initials, rememberUser } from '../naming'
 import { takePendingInvite } from '../pending'
 import ChannelRail from '../components/ChannelRail.vue'
 import SgButton from '../components/SgButton.vue'
@@ -44,7 +44,7 @@ const activeTitle = computed(() => channelTitle(active.value, props.me.id))
 
 // Our own messages are looked up by username like anyone else's; a rename in the
 // profile has to reach them without a reload.
-watch(() => props.me.display_name, (name) => rememberName(props.me.username, name), { immediate: true })
+watch(() => [props.me.display_name, props.me.avatar_id], () => rememberUser(props.me), { immediate: true })
 
 /* ---------- address bar ---------- */
 
@@ -208,8 +208,9 @@ const forwardTargets = computed(() =>
   channels.value
     .map((c) => {
       const direct = c.kind === 'direct'
-      const title = direct ? displayName(channelTitle(c, props.me.id)) : c.name
-      return { id: c.id, title, direct, initials: initials(title) }
+      const username = direct ? channelTitle(c, props.me.id) : ''
+      const title = direct ? displayName(username) : c.name
+      return { id: c.id, title, direct, initials: initials(title), avatar: avatarUrl(username) }
     })
 )
 

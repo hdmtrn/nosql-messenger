@@ -4,7 +4,7 @@ import { api } from '../api'
 import ChannelGlyph from '../components/ChannelGlyph.vue'
 import SgAvatar from '../components/SgAvatar.vue'
 import SgButton from '../components/SgButton.vue'
-import { initials } from '../naming'
+import { avatarUrl, initials } from '../naming'
 
 const props = defineProps({
   username: { type: String, required: true },
@@ -62,7 +62,7 @@ const row = { display: 'flex', alignItems: 'center', gap: '12px', padding: '0 24
     <div :style="panel" style="padding:24px;display:flex;flex-direction:column;
                                align-items:flex-start;gap:16px">
       <div style="display:flex;align-items:center;gap:16px;min-width:0;max-width:100%">
-        <SgAvatar :initials="initials(person ? person.display_name : username)" :size="56" />
+        <SgAvatar :initials="initials(person ? person.display_name : username)" :src="avatarUrl(username)" :size="56" />
         <div style="min-width:0">
           <div style="font:600 20px/1.2 var(--font-ui);overflow:hidden;text-overflow:ellipsis;
                       white-space:nowrap">{{ person ? person.display_name : username }}</div>

@@ -4,7 +4,7 @@ import { api } from '../api'
 import ChannelGlyph from '../components/ChannelGlyph.vue'
 import SgAvatar from '../components/SgAvatar.vue'
 import SgButton from '../components/SgButton.vue'
-import { displayName, initials } from '../naming'
+import { avatarUrl, displayName, initials } from '../naming'
 import { inviteLink } from '../pending'
 
 const props = defineProps({
@@ -108,7 +108,7 @@ const row = { display: 'flex', alignItems: 'center', gap: '12px', padding: '0 24
 
     <div :style="panel" style="padding:24px;display:flex;flex-direction:column;
                                align-items:center;gap:12px;text-align:center">
-      <SgAvatar v-if="direct()" :initials="initials(displayName(title))" :size="64" />
+      <SgAvatar v-if="direct()" :initials="initials(displayName(title))" :src="avatarUrl(title)" :size="64" />
       <ChannelGlyph v-else :size="64" tone="blue" />
 
       <div>
@@ -163,7 +163,7 @@ const row = { display: 'flex', alignItems: 'center', gap: '12px', padding: '0 24
                    :style="m.user_id === me.id ? row
                      : { ...row, width: '100%', border: 'none', background: 'none', cursor: 'pointer' }"
                    @click="m.user_id === me.id || emit('person', m.username)">
-          <SgAvatar :initials="initials(displayName(m.username))" :size="28" />
+          <SgAvatar :initials="initials(displayName(m.username))" :src="avatarUrl(m.username)" :size="28" />
           <span style="flex:1;text-align:left;font:var(--text-body)">{{ displayName(m.username) }}</span>
           <span :style="mono">{{ m.user_id === me.id ? 'You' : m.role === 'owner' ? 'Owner' : '' }}</span>
         </component>

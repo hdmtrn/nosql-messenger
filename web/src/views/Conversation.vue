@@ -6,7 +6,7 @@ import MessageComposer from '../components/MessageComposer.vue'
 import MessageMenu from '../components/MessageMenu.vue'
 import SgAvatar from '../components/SgAvatar.vue'
 import ChannelGlyph from '../components/ChannelGlyph.vue'
-import { displayName, initials } from '../naming'
+import { avatarUrl, displayName, initials } from '../naming'
 
 const props = defineProps({
   me: { type: Object, required: true },
@@ -173,7 +173,7 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
       @info="emit('info')"
     >
       <template #mark>
-        <SgAvatar v-if="direct()" :initials="initials(displayName(title))" :size="44" />
+        <SgAvatar v-if="direct()" :initials="initials(displayName(title))" :src="avatarUrl(title)" :size="44" />
         <ChannelGlyph v-else :size="44" tone="blue" />
       </template>
     </PaneHeader>
@@ -192,6 +192,7 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
         :status="m.status || 'delivered'"
         :author="direct() ? '' : displayName(m.author.username)"
         :initials="initials(displayName(m.author.username))"
+        :avatar-src="avatarUrl(m.author.username)"
         :time="m.status && m.status !== 'delivered' ? '' : clock(m.created_at)"
         :ring="!!person && m.author.username === person"
         :forwarded="m.forwarded ? displayName(m.forwarded.author.username) : ''"
