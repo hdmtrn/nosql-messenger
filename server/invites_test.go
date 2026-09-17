@@ -279,7 +279,8 @@ func TestFollowingAnInviteTwiceIsNotAnError(t *testing.T) {
 		t.Fatalf("creating invite: %v", err)
 	}
 
-	s := &server{channels: channels, invites: invites, hub: NewHub()}
+	h := NewHub()
+	s := &server{channels: channels, invites: invites, hub: h, bus: h}
 	joiner := person("joiner")
 
 	// The second call is the case that matters: a member clicking the link they
@@ -324,7 +325,8 @@ func TestFollowingARevokedInviteLeadsNowhere(t *testing.T) {
 		t.Fatalf("revoking: %v", err)
 	}
 
-	s := &server{channels: channels, invites: invites, hub: NewHub()}
+	h := NewHub()
+	s := &server{channels: channels, invites: invites, hub: h, bus: h}
 	// A revoked code and a code that never existed must be the same answer.
 	revoked, _ := followInvite(t, s, inv.Code, person("joiner"))
 	invented, _ := followInvite(t, s, "NOSUCHCODE", person("joiner"))

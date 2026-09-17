@@ -68,9 +68,22 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("initializing auth: %w", err)
 	}
 
+	hub := NewHub()
+
+	bus, err := newBus(ctx, hub)
+	if err != nil {
+		return err
+	}
+	// Method values: hub keeps the two functions, not the bus itself, so it
+	// stays unaware of what is on the other end.
+	hub.watch, hub.unwatch = bus.Watch, bus.Unwatch
+	go bus.Run(ctx)
+	log.Println("connected to Redis")
+
 	srv := &server{
 		mongo:    mongoClient,
-		hub:      NewHub(),
+		hub:      hub,
+		bus:      bus,
 		auth:     authSvc,
 		sessions: sessions,
 		users:    users,

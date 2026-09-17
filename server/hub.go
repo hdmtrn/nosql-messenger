@@ -22,12 +22,22 @@ type Hub struct {
 	mu        sync.Mutex
 	byChannel map[string]map[*Subscriber]struct{}
 	byUser    map[string]map[*Subscriber]struct{}
+
+	// Called when this instance gains its first local subscriber of a channel
+	// and loses its last one, so that it listens on the bus only for channels
+	// somebody here is actually watching. They run under the mutex and must
+	// not block; the bus only leaves itself a note. Without a bus they do
+	// nothing, which is what tests and a single instance need.
+	watch   func(chID string)
+	unwatch func(chID string)
 }
 
 func NewHub() *Hub {
 	return &Hub{
 		byChannel: make(map[string]map[*Subscriber]struct{}),
 		byUser:    make(map[string]map[*Subscriber]struct{}),
+		watch:     func(string) {},
+		unwatch:   func(string) {},
 	}
 }
 
@@ -67,8 +77,12 @@ func (h *Hub) Unsubscribe(userID, chID string) {
 		delete(h.byChannel[chID], c)
 		delete(c.channels, chID)
 	}
-	if len(h.byChannel[chID]) == 0 {
+	// The check is on presence, not on length: a channel nobody here watched
+	// reads as empty too, and unwatching it would be a message to Redis about
+	// a subscription we never had.
+	if subs, ok := h.byChannel[chID]; ok && len(subs) == 0 {
 		delete(h.byChannel, chID)
+		h.unwatch(chID)
 	}
 }
 
@@ -91,6 +105,7 @@ func (h *Hub) attach(c *Subscriber, chID string) {
 	}
 	if h.byChannel[chID] == nil {
 		h.byChannel[chID] = make(map[*Subscriber]struct{})
+		h.watch(chID)
 	}
 	h.byChannel[chID][c] = struct{}{}
 	c.channels[chID] = struct{}{}
@@ -106,6 +121,7 @@ func (h *Hub) drop(c *Subscriber) {
 		delete(h.byChannel[chID], c)
 		if len(h.byChannel[chID]) == 0 {
 			delete(h.byChannel, chID)
+			h.unwatch(chID)
 		}
 	}
 	c.channels = nil

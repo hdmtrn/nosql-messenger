@@ -309,7 +309,8 @@ func TestPicturesGoOnlyWhereTheirOwnerSendsThem(t *testing.T) {
 	ctx := context.Background()
 	db := testDB(t)
 	channels, messages := newMessageTestStores(t, db)
-	s := &server{channels: channels, messages: messages, media: newMediaStore(db), hub: NewHub()}
+	h := NewHub()
+	s := &server{channels: channels, messages: messages, media: newMediaStore(db), hub: h, bus: h}
 
 	alice, bob, mallory := person("alice"), person("bob"), person("mallory")
 	room := createChannel(t, channels, "room", alice)
@@ -390,7 +391,8 @@ func TestForwardCopiesThePictureRecordNotTheBytes(t *testing.T) {
 	ctx := context.Background()
 	db := testDB(t)
 	channels, messages := newMessageTestStores(t, db)
-	s := &server{channels: channels, messages: messages, media: newMediaStore(db), hub: NewHub()}
+	h := NewHub()
+	s := &server{channels: channels, messages: messages, media: newMediaStore(db), hub: h, bus: h}
 
 	alice, bob, carol := person("alice"), person("bob"), person("carol")
 	room := createChannel(t, channels, "room", alice)

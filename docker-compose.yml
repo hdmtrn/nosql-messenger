@@ -26,6 +26,22 @@ services:
       mongosh --host mongo:27017 --quiet --eval
       "try { rs.status().ok } catch (e) { rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'mongo:27017'}]}) }"
 
+  redis:
+    image: redis:8.0-alpine
+    # No volume and no persistence: the bus carries only what may be lost on a
+    # restart. Saving it to disk would buy nothing and cost writes.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    # Loopback only, like mongo. Nothing outside the instance talks to it.
+    ports:
+      - "127.0.0.1:6379:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
   app:
     # build is for local work; image is so that on the instance, which has no
     # sources, this same file starts the image delivered by docker load
@@ -33,6 +49,8 @@ services:
     build: .
     image: messenger:latest
     depends_on:
+      redis:
+        condition: service_healthy
       # A healthy mongod does NOT yet mean an initiated replica set, and the app
       # fails its ping against an uninitiated one. So it waits not for mongo but
       # for the one-shot mongo-init to exit with code zero.
@@ -43,6 +61,7 @@ services:
       # mongo:27017, and without this flag the driver would follow the
       # advertised topology instead of the address in the URI.
       MONGO_URI: "mongodb://mongo:27017/?directConnection=true"
+      REDIS_ADDR: "redis:6379"
       # The code defaults to true, and the browser will not accept such a cookie
       # over http, so login would not work. On the instance with TLS the
       # variable is not set.
