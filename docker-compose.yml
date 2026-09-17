@@ -66,8 +66,15 @@ services:
       # over http, so login would not work. On the instance with TLS the
       # variable is not set.
       COOKIE_SECURE: "false"
+    # Two nodes from the start, so that anything that works only inside one
+    # process breaks here and not on the instance. Each replica takes one host
+    # port from the range: 8080 and 8081. There is no load balancer in front of
+    # them on purpose — two browsers on two ports make it obvious which node
+    # answers, which a round-robin proxy would hide.
+    deploy:
+      replicas: 2
     ports:
-      - "8080:8080"
+      - "8080-8081:8080"
     volumes:
       # Let's Encrypt certificate cache. It must survive restarts: otherwise
       # autocert requests a certificate every time and hits the weekly limit
