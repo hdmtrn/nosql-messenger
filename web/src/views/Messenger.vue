@@ -437,6 +437,7 @@ onUnmounted(() => socket && socket.close())
       <Conversation
         v-else-if="active"
         ref="conversation"
+        :class="{ 'under-side': showInfo || person }"
         :me="me"
         :channel="active"
         :title="activeTitle"
@@ -549,6 +550,13 @@ onUnmounted(() => socket && socket.close())
     z-index: 10;
     padding-left: 16px;
     background: var(--surface-page);
+  }
+  /* An overlaid panel takes the feed's right edge away without the feed knowing:
+     a bubble kept its full width and was sliced in half by the panel's edge, and
+     so was the composer. The feed ends where the panel starts instead — 340px of
+     panel and the 16px gap it stands on. */
+  .under-side {
+    padding-right: 356px;
   }
 }
 </style>
