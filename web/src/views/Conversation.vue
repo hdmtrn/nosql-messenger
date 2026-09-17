@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import PaneHeader from '../components/PaneHeader.vue'
 import MessageBubble from '../components/MessageBubble.vue'
 import MessageComposer from '../components/MessageComposer.vue'
@@ -30,12 +30,18 @@ const emit = defineEmits(['send', 'retry', 'discard', 'load-older', 'info', 'per
 const feed = ref(null)
 const composer = ref(null)
 
-// A reply or a forward waiting above the field means the next thing to do is
-// type, so the cursor goes there, as in Telegram.
+// Opening a chat puts the cursor in its field, as in Telegram, except on touch
+// screens, where focus would pull up the keyboard over the messages.
+function focusField() {
+  if (window.matchMedia('(hover: hover)').matches) composer.value?.focus()
+}
+onMounted(focusField)
+
 // The field stays mounted across chats; pictures picked in one must not be sent to another.
 watch(() => props.channel.id, () => {
   composer.value?.clearFiles()
   viewing.value = null
+  nextTick(focusField)
 })
 
 // Every loaded picture of the chat in feed order, so the viewer can flip past the
@@ -51,6 +57,8 @@ function openPicture(m, i) {
   if (at >= 0) viewing.value = at
 }
 
+// A reply or a forward waiting above the field means the next thing to do is
+// type, so the cursor goes there, as in Telegram.
 watch(() => props.pending, async (action) => {
   if (!action) return
   await nextTick()

@@ -4,6 +4,7 @@ import { api } from '../api'
 import ChannelGlyph from '../components/ChannelGlyph.vue'
 import SgAvatar from '../components/SgAvatar.vue'
 import SgButton from '../components/SgButton.vue'
+import MediaViewer from '../components/MediaViewer.vue'
 import { avatarUrl, initials } from '../naming'
 
 const props = defineProps({
@@ -17,6 +18,7 @@ const emit = defineEmits(['close', 'message', 'befriend', 'select'])
 const person = ref(null)
 const missing = ref(false)
 const common = ref([])
+const viewing = ref(false)
 
 // Same guard as the info panel: clicking two authors in a row leaves two loads
 // in flight, and only the newest one may write.
@@ -62,7 +64,12 @@ const row = { display: 'flex', alignItems: 'center', gap: '12px', padding: '0 24
     <div :style="panel" style="padding:24px;display:flex;flex-direction:column;
                                align-items:flex-start;gap:16px">
       <div style="display:flex;align-items:center;gap:16px;min-width:0;max-width:100%">
-        <SgAvatar :initials="initials(person ? person.display_name : username)" :src="avatarUrl(username)" :size="56" />
+        <button type="button" class="avatar" :disabled="!avatarUrl(username)"
+                :aria-label="avatarUrl(username) ? 'Open photo' : undefined" @click="viewing = true">
+          <SgAvatar :initials="initials(person ? person.display_name : username)" :src="avatarUrl(username)" :size="56" />
+        </button>
+        <MediaViewer v-if="viewing && avatarUrl(username)" :pictures="[{ key: username, url: avatarUrl(username) }]"
+                     @close="viewing = false" />
         <div style="min-width:0">
           <div style="font:600 20px/1.2 var(--font-ui);overflow:hidden;text-overflow:ellipsis;
                       white-space:nowrap">{{ person ? person.display_name : username }}</div>
@@ -101,3 +108,15 @@ const row = { display: 'flex', alignItems: 'center', gap: '12px', padding: '0 24
     </template>
   </aside>
 </template>
+
+<style scoped>
+.avatar {
+  flex: none;
+  padding: 0;
+  border: none;
+  background: none;
+  border-radius: var(--radius-pill);
+  cursor: zoom-in;
+}
+.avatar:disabled { cursor: default; }
+</style>

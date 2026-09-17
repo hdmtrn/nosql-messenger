@@ -453,7 +453,7 @@ onUnmounted(() => socket && socket.close())
       <!-- The side panels slide like the rail collapses. v-if alone would remove them
            in one frame; Transition keeps the node until the width has closed. -->
       <Transition name="side">
-        <div v-if="showInfo && active" class="side">
+        <div v-if="showInfo && active && !showProfile" class="side">
           <InfoPanel
             :me="me"
             :channel="active"
