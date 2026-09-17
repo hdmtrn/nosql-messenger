@@ -145,7 +145,7 @@ toggleSessions()
         <div class="portrait">
           <button type="button" class="avatar" :class="{ busy: uploading }" :disabled="!me.avatar_id"
                   :aria-label="me.avatar_id ? 'Open photo' : undefined" @click="viewing = true">
-            <SgAvatar :initials="initials(me.display_name)" :src="avatarUrl(me.username)" :size="96" />
+            <SgAvatar :initials="initials(me.display_name)" :src="avatarUrl(me.username)" :size="128" />
           </button>
           <SgButton variant="outline" size="sm" :disabled="uploading" @click="picker.click()">
             {{ uploading ? 'Uploading' : 'Edit' }}
@@ -231,8 +231,8 @@ toggleSessions()
   gap: 10px;
   flex: none;
 }
-/* the card column is 620px wide and centred; the portrait needs 120px beside it */
-@container profile (min-width: 880px) {
+/* the card column is 620px wide and centred; the portrait needs 160px beside it */
+@container profile (min-width: 940px) {
   .portrait {
     position: absolute;
     top: 0;
