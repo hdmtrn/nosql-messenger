@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { api } from '../api'
 import SgAvatar from '../components/SgAvatar.vue'
 import SgButton from '../components/SgButton.vue'
+import MediaViewer from '../components/MediaViewer.vue'
 import { avatarUrl, initials } from '../naming'
 import { toJpeg } from '../images'
 
@@ -13,9 +14,11 @@ const displayName = ref(props.me.display_name)
 const bio = ref(props.me.bio || '')
 const error = ref('')
 
-const AVATAR_SIDE = 256
+// Large enough to be looked at full screen, small enough for the 1 MB limit.
+const AVATAR_SIDE = 640
 const picker = ref(null)
 const uploading = ref(false)
+const viewing = ref(false)
 
 async function changeAvatar(event) {
   const file = event.target.files[0]
@@ -130,24 +133,29 @@ toggleSessions()
 </script>
 
 <template>
-  <section style="flex:1;min-width:0;display:flex;justify-content:center;overflow-y:auto;padding:8px 0">
+  <section class="profile" style="flex:1;min-width:0;display:flex;justify-content:center;overflow-y:auto;padding:8px 0">
     <div style="width:min(620px, 100%);display:flex;flex-direction:column;gap:20px">
 
       <header style="display:flex;align-items:center;gap:16px">
         <h1 style="margin:0;flex:1;font:600 24px/1.2 var(--font-ui);letter-spacing:-0.015em">Profile</h1>
       </header>
 
-      <div :style="panel" style="padding:24px 28px;display:flex;align-items:flex-start;gap:20px">
-        <div style="display:flex;flex-direction:column;align-items:center;gap:6px">
-          <button type="button" class="avatar" :disabled="uploading"
-                  :title="uploading ? 'Uploading…' : 'Change photo'" aria-label="Change photo"
-                  @click="picker.click()">
-            <SgAvatar :initials="initials(me.display_name)" :src="avatarUrl(me.username)" :size="44" />
+      <div :style="panel" class="card" style="padding:24px 28px;display:flex;align-items:flex-start;gap:20px">
+        <!-- outside the card on the left when there is room for it, inside otherwise -->
+        <div class="portrait">
+          <button type="button" class="avatar" :class="{ busy: uploading }" :disabled="!me.avatar_id"
+                  :aria-label="me.avatar_id ? 'Open photo' : undefined" @click="viewing = true">
+            <SgAvatar :initials="initials(me.display_name)" :src="avatarUrl(me.username)" :size="96" />
           </button>
+          <SgButton variant="outline" size="sm" :disabled="uploading" @click="picker.click()">
+            {{ uploading ? 'Uploading' : 'Edit' }}
+          </SgButton>
           <button v-if="me.avatar_id" type="button" class="remove" :style="mono"
                   @click="removeAvatar">Remove</button>
           <input ref="picker" type="file" accept="image/*" hidden @change="changeAvatar">
         </div>
+        <MediaViewer v-if="viewing && me.avatar_id" :pictures="[{ key: me.avatar_id, url: avatarUrl(me.username) }]"
+                     @close="viewing = false" />
 
         <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:10px">
           <input
@@ -214,15 +222,32 @@ toggleSessions()
 </template>
 
 <style scoped>
+.profile { container: profile / inline-size; }
+.card { position: relative; }
+.portrait {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+}
+/* the card column is 620px wide and centred; the portrait needs 120px beside it */
+@container profile (min-width: 880px) {
+  .portrait {
+    position: absolute;
+    top: 0;
+    right: calc(100% + 24px);
+  }
+}
 .avatar {
   padding: 0;
   border: none;
   background: none;
   border-radius: var(--radius-pill);
-  cursor: pointer;
+  cursor: zoom-in;
 }
-.avatar:hover { opacity: 0.8; }
-.avatar:disabled { opacity: 0.5; cursor: progress; }
+.avatar:disabled { cursor: default; }
+.avatar.busy { opacity: 0.5; }
 .remove {
   padding: 0;
   border: none;
