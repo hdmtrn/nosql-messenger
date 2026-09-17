@@ -5,7 +5,7 @@ import ChannelGlyph from '../components/ChannelGlyph.vue'
 import SgAvatar from '../components/SgAvatar.vue'
 import SgButton from '../components/SgButton.vue'
 import MediaViewer from '../components/MediaViewer.vue'
-import { avatarUrl, initials } from '../naming'
+import { avatarUrl, channelAvatarUrl, initials } from '../naming'
 
 const props = defineProps({
   username: { type: String, required: true },
@@ -101,7 +101,7 @@ const row = { display: 'flex', alignItems: 'center', gap: '12px', padding: '0 24
                 :style="{ ...row, width: '100%', border: 'none', background: 'none',
                           cursor: 'pointer', font: 'var(--text-body)' }"
                 @click="emit('select', c.id)">
-          <ChannelGlyph :size="22" tone="blue" />
+          <ChannelGlyph :src="channelAvatarUrl(c)" :size="22" tone="blue" />
           <span style="flex:1;text-align:left">{{ c.name }}</span>
         </button>
       </div>

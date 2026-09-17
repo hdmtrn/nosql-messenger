@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -39,6 +40,7 @@ type Channel struct {
 	CreatedBy bson.ObjectID   `bson:"created_by"    json:"created_by"`
 	CreatedAt time.Time       `bson:"created_at"    json:"created_at"`
 	Members   []ChannelMember `bson:"members"       json:"members,omitempty"`
+	AvatarID  *bson.ObjectID  `bson:"avatar_id,omitempty" json:"avatar_id,omitempty"`
 
 	// MemberCount survives the projection that drops the member list itself.
 	MemberCount int `bson:"member_count,omitempty" json:"member_count,omitempty"`
@@ -53,6 +55,7 @@ var (
 	errNotMember       = errors.New("not a member of this channel")
 	errAlreadyMember   = errors.New("already a member of this channel")
 	errNotJoinable     = errors.New("channel cannot be joined")
+	errNotOwner        = errors.New("only the owner can do this")
 )
 
 type channelStore struct {
@@ -252,10 +255,53 @@ func (s *channelStore) KindForMember(ctx context.Context, channelID, userID bson
 	return ch.Kind, nil
 }
 
+// SetAvatar is users.SetAvatar for a channel, with the owner check inside the
+// filter: $elemMatch requires the same array element to hold both the user and
+// the role, so "a member" and "an owner" cannot be satisfied by two different
+// people. A direct conversation has no owner, so it never matches.
+func (s *channelStore) SetAvatar(ctx context.Context, channelID, ownerID bson.ObjectID, avatar *bson.ObjectID) (*bson.ObjectID, error) {
+	update := bson.M{"$unset": bson.M{"avatar_id": ""}}
+	if avatar != nil {
+		update = bson.M{"$set": bson.M{"avatar_id": *avatar}}
+	}
+
+	var before Channel
+	err := s.col.FindOneAndUpdate(ctx,
+		bson.M{
+			"_id":     channelID,
+			"members": bson.M{"$elemMatch": bson.M{"user_id": ownerID, "role": roleOwner}},
+		},
+		update,
+		options.FindOneAndUpdate().
+			SetReturnDocument(options.Before).
+			SetProjection(bson.M{"avatar_id": 1}),
+	).Decode(&before)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, s.whyNotOwner(ctx, channelID, ownerID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("setting channel avatar: %w", err)
+	}
+	return before.AvatarID, nil
+}
+
+// whyNotOwner separates "not yours to change" from "not yours to see": an
+// outsider gets the same answer as for a channel that does not exist.
+func (s *channelStore) whyNotOwner(ctx context.Context, channelID, userID bson.ObjectID) error {
+	member, err := s.IsMember(ctx, channelID, userID)
+	if err != nil {
+		return err
+	}
+	if !member {
+		return errNotMember
+	}
+	return errNotOwner
+}
+
 // Leave pulls the member out and keeps the channel coherent afterwards: an
 // owner who leaves hands the role to the earliest remaining member, and a
 // channel nobody is left in goes away together with its messages.
-func (s *channelStore) Leave(ctx context.Context, messages *messageStore, invites *inviteStore, channelID, userID bson.ObjectID) error {
+func (s *channelStore) Leave(ctx context.Context, messages *messageStore, invites *inviteStore, media *mediaStore, channelID, userID bson.ObjectID) error {
 	var ch Channel
 	err := s.col.FindOneAndUpdate(ctx,
 		bson.M{"_id": channelID, "members.user_id": userID},
@@ -271,7 +317,7 @@ func (s *channelStore) Leave(ctx context.Context, messages *messageStore, invite
 	}
 
 	if len(ch.Members) == 0 {
-		return s.discard(ctx, messages, invites, channelID)
+		return s.discard(ctx, messages, invites, media, channelID)
 	}
 
 	for _, m := range ch.Members {
@@ -289,15 +335,24 @@ func (s *channelStore) Leave(ctx context.Context, messages *messageStore, invite
 	return nil
 }
 
-// discard drops a channel and its messages together. Two collections must go or
-// stay as one, which is what the replica set buys us besides change streams.
-func (s *channelStore) discard(ctx context.Context, messages *messageStore, invites *inviteStore, channelID bson.ObjectID) error {
+// discard drops a channel and everything that belongs to it together. The
+// collections must go or stay as one, which is what the replica set buys us
+// besides change streams.
+//
+// The picture files are the exception: they are deleted only after the commit,
+// and only those nothing else points at. A crash in between leaves an unused
+// file behind, which is harmless; the other order could leave a forwarded copy
+// pointing at deleted bytes.
+func (s *channelStore) discard(ctx context.Context, messages *messageStore, invites *inviteStore, media *mediaStore, channelID bson.ObjectID) error {
 	sess, err := s.col.Database().Client().StartSession()
 	if err != nil {
 		return fmt.Errorf("starting session: %w", err)
 	}
 	defer sess.EndSession(ctx)
 
+	// WithTransaction may run the function more than once, so the file list is
+	// whatever the last, committed attempt found.
+	var files []bson.ObjectID
 	_, err = sess.WithTransaction(ctx, func(ctx context.Context) (any, error) {
 		if _, err := s.col.DeleteOne(ctx, bson.M{"_id": channelID}); err != nil {
 			return nil, err
@@ -305,11 +360,20 @@ func (s *channelStore) discard(ctx context.Context, messages *messageStore, invi
 		if _, err := messages.col.DeleteMany(ctx, bson.M{"channel_id": channelID}); err != nil {
 			return nil, err
 		}
-		_, err := invites.col.DeleteMany(ctx, bson.M{"channel_id": channelID})
+		if _, err := invites.col.DeleteMany(ctx, bson.M{"channel_id": channelID}); err != nil {
+			return nil, err
+		}
+		var err error
+		files, err = media.deleteForChannel(ctx, channelID)
 		return nil, err
 	})
 	if err != nil {
 		return fmt.Errorf("discarding empty channel: %w", err)
+	}
+
+	if err := media.DeleteUnreferencedFiles(ctx, files); err != nil {
+		// The channel is gone either way; what is left is unused bytes.
+		log.Printf("discarding channel %s: %v", channelID.Hex(), err)
 	}
 	return nil
 }

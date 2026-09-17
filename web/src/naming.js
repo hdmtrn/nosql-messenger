@@ -9,6 +9,11 @@ export function channelTitle(channel, meId) {
   return other ? other.username : 'Direct message'
 }
 
+// Unlike a person's, a channel's picture id comes with the channel itself.
+export function channelAvatarUrl(channel) {
+  return channel && channel.avatar_id ? `/media/${channel.avatar_id}` : ''
+}
+
 // First letter of the first word and of the last one, so "Anna Maria Petrova" is AP.
 // Spreading the string walks code points: slice() would cut an emoji in half.
 export function initials(name) {

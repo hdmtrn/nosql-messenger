@@ -22,11 +22,11 @@ func extendDeadlines(w http.ResponseWriter) {
 	}
 }
 
-func (s *server) saveUpload(w http.ResponseWriter, r *http.Request, owner bson.ObjectID, kind string, limit int64) (Media, bool) {
+func (s *server) saveUpload(w http.ResponseWriter, r *http.Request, owner bson.ObjectID, kind string, channel *bson.ObjectID, limit int64) (Media, bool) {
 	extendDeadlines(w)
 	body := http.MaxBytesReader(w, r.Body, limit)
 
-	m, err := s.media.Save(r.Context(), owner, kind, body)
+	m, err := s.media.Save(r.Context(), owner, kind, channel, body)
 	var tooLarge *http.MaxBytesError
 	switch {
 	case errors.As(err, &tooLarge):
@@ -47,7 +47,7 @@ func (s *server) saveUpload(w http.ResponseWriter, r *http.Request, owner bson.O
 }
 
 func (s *server) handleUploadMedia(w http.ResponseWriter, r *http.Request, sess Session) {
-	m, ok := s.saveUpload(w, r, sess.UserID, mediaKindAttachment, mediaMaxBytes)
+	m, ok := s.saveUpload(w, r, sess.UserID, mediaKindAttachment, nil, mediaMaxBytes)
 	if !ok {
 		return
 	}
@@ -56,7 +56,7 @@ func (s *server) handleUploadMedia(w http.ResponseWriter, r *http.Request, sess 
 
 func (s *server) canReadMedia(r *http.Request, m Media, sess Session) (bool, error) {
 	switch {
-	case m.Kind == mediaKindAvatar:
+	case m.Kind == mediaKindAvatar && m.ChannelID == nil:
 		return true, nil
 	case m.ChannelID == nil:
 		return m.OwnerID == sess.UserID, nil

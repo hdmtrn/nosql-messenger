@@ -7,7 +7,7 @@ import MessageMenu from '../components/MessageMenu.vue'
 import SgAvatar from '../components/SgAvatar.vue'
 import ChannelGlyph from '../components/ChannelGlyph.vue'
 import MediaViewer from '../components/MediaViewer.vue'
-import { avatarUrl, displayName, initials, messagePreview } from '../naming'
+import { avatarUrl, channelAvatarUrl, displayName, initials, messagePreview } from '../naming'
 
 const props = defineProps({
   me: { type: Object, required: true },
@@ -202,7 +202,7 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
     >
       <template #mark>
         <SgAvatar v-if="direct()" :initials="initials(displayName(title))" :src="avatarUrl(title)" :size="44" />
-        <ChannelGlyph v-else :size="44" tone="blue" />
+        <ChannelGlyph v-else :src="channelAvatarUrl(channel)" :size="44" tone="blue" />
       </template>
     </PaneHeader>
 

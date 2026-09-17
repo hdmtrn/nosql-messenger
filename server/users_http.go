@@ -134,7 +134,7 @@ func (s *server) dropAvatar(ctx context.Context, id *bson.ObjectID) {
 }
 
 func (s *server) handleSetAvatar(w http.ResponseWriter, r *http.Request, sess Session) {
-	m, ok := s.saveUpload(w, r, sess.UserID, mediaKindAvatar, avatarMaxBytes)
+	m, ok := s.saveUpload(w, r, sess.UserID, mediaKindAvatar, nil, avatarMaxBytes)
 	if !ok {
 		return
 	}

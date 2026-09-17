@@ -60,7 +60,7 @@ const badge = computed(() => ({
   >
     <span style="flex:0 0 40px;display:flex;justify-content:center">
       <SgAvatar v-if="avatar" :initials="avatar" :src="avatarSrc" :size="MARK" :tone="active ? 'blue' : 'onBlue'" />
-      <ChannelGlyph v-else :size="MARK" :tone="active ? 'blue' : 'onBlue'" />
+      <ChannelGlyph v-else :src="avatarSrc" :size="MARK" :tone="active ? 'blue' : 'onBlue'" />
     </span>
     <span v-if="!compact"
           style="flex:1;min-width:0;font:var(--text-body);overflow:hidden;

@@ -97,7 +97,7 @@ onUnmounted(() => {
         <button v-for="t in targets" :key="t.id" type="button" role="menuitem" class="item"
                 @click="emit('forward', t.id)">
           <SgAvatar v-if="t.direct" :initials="t.initials" :src="t.avatar" :size="22" tone="onBlue" />
-          <ChannelGlyph v-else :size="22" />
+          <ChannelGlyph v-else :src="t.avatar" :size="22" />
           <span class="title">{{ t.title }}</span>
         </button>
       </div>
