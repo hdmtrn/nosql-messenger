@@ -78,10 +78,16 @@ func newMediaStore(db *mongo.Database) *mediaStore {
 }
 
 func (s *mediaStore) ensureIndexes(ctx context.Context) error {
-	_, err := s.col.Indexes().CreateOne(ctx, mongo.IndexModel{
-		Keys: bson.D{{Key: "expires_at", Value: 1}},
-		Options: options.Index().SetPartialFilterExpression(
-			bson.M{"expires_at": bson.M{"$exists": true}}),
+	_, err := s.col.Indexes().CreateMany(ctx, []mongo.IndexModel{
+		{
+			Keys: bson.D{{Key: "expires_at", Value: 1}},
+			Options: options.Index().SetPartialFilterExpression(
+				bson.M{"expires_at": bson.M{"$exists": true}}),
+		},
+		// Serves dropping a discarded channel's pictures.
+		{Keys: bson.D{{Key: "channel_id", Value: 1}}},
+		// Serves "does anything still point at these bytes" before a file is deleted.
+		{Keys: bson.D{{Key: "file_id", Value: 1}}},
 	})
 	return err
 }
@@ -238,6 +244,42 @@ func (s *mediaStore) deleteWhere(ctx context.Context, filter bson.M) error {
 	}
 	if err := s.files.Delete(ctx, m.FileID); err != nil {
 		return fmt.Errorf("deleting file: %w", err)
+	}
+	return nil
+}
+
+// deleteForChannel removes the channel's media records and returns the files
+// they pointed at. It does not touch the files: a forwarded picture is a second
+// record over the same bytes, so a file may still be in use elsewhere. Run
+// inside the transaction that removes the channel.
+func (s *mediaStore) deleteForChannel(ctx context.Context, channelID bson.ObjectID) ([]bson.ObjectID, error) {
+	filter := bson.M{"channel_id": channelID}
+	var fileIDs []bson.ObjectID
+	if err := s.col.Distinct(ctx, "file_id", filter).Decode(&fileIDs); err != nil {
+		return nil, fmt.Errorf("listing channel files: %w", err)
+	}
+	if _, err := s.col.DeleteMany(ctx, filter); err != nil {
+		return nil, fmt.Errorf("deleting channel media: %w", err)
+	}
+	return fileIDs, nil
+}
+
+// DeleteUnreferencedFiles deletes those of the files no media record points at
+// any more. A file whose last record is gone is garbage; one that a forwarded
+// copy still names is kept.
+func (s *mediaStore) DeleteUnreferencedFiles(ctx context.Context, fileIDs []bson.ObjectID) error {
+	for _, id := range fileIDs {
+		n, err := s.col.CountDocuments(ctx, bson.M{"file_id": id}, options.Count().SetLimit(1))
+		if err != nil {
+			return fmt.Errorf("counting references to file %s: %w", id.Hex(), err)
+		}
+		if n > 0 {
+			continue
+		}
+		err = s.files.Delete(ctx, id)
+		if err != nil && !errors.Is(err, mongo.ErrFileNotFound) {
+			return fmt.Errorf("deleting file %s: %w", id.Hex(), err)
+		}
 	}
 	return nil
 }

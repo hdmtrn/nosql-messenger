@@ -177,7 +177,7 @@ func (s *server) handleLeaveChannel(w http.ResponseWriter, r *http.Request, sess
 		return
 	}
 
-	err = s.channels.Leave(r.Context(), s.messages, s.invites, id, sess.UserID)
+	err = s.channels.Leave(r.Context(), s.messages, s.invites, s.media, id, sess.UserID)
 	if errors.Is(err, errNotMember) {
 		writeError(w, http.StatusNotFound, "channel not found")
 		return

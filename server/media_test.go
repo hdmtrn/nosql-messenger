@@ -618,3 +618,62 @@ func TestOnlyUnsentPicturesExpire(t *testing.T) {
 		t.Fatal("the bytes of the unsent picture are still stored")
 	}
 }
+
+func TestDiscardKeepsFilesThatForwardedCopiesStillUse(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	channels, messages := newMessageTestStores(t, db)
+	invites, media := newInviteStore(db), newMediaStore(db)
+	if err := media.ensureIndexes(ctx); err != nil {
+		t.Fatalf("media indexes: %v", err)
+	}
+
+	alice := person("alice")
+	doomed := createChannel(t, channels, "doomed", alice)
+	kept := createChannel(t, channels, "kept", alice)
+	save := func(kind string, channel *bson.ObjectID) Media {
+		t.Helper()
+		m, err := media.Save(ctx, alice.UserID, kind, channel, bytes.NewReader(testPNG(t, 2, 2)))
+		if err != nil {
+			t.Fatalf("saving %s: %v", kind, err)
+		}
+		return m
+	}
+
+	forwarded, alone := save(mediaKindAttachment, nil), save(mediaKindAttachment, nil)
+	if _, err := media.Attach(ctx, []bson.ObjectID{forwarded.ID, alone.ID}, alice.UserID, doomed.ID); err != nil {
+		t.Fatalf("attaching: %v", err)
+	}
+	copies, err := media.CopyTo(ctx, []Attachment{forwarded.Attachment()}, alice.UserID, kept.ID)
+	if err != nil {
+		t.Fatalf("forwarding: %v", err)
+	}
+	avatar := save(mediaKindAvatar, &doomed.ID)
+
+	if err := channels.Leave(ctx, messages, invites, media, doomed.ID, alice.UserID); err != nil {
+		t.Fatalf("leaving: %v", err)
+	}
+
+	fileExists := func(id bson.ObjectID) bool {
+		t.Helper()
+		n, err := db.Collection("fs.files").CountDocuments(ctx, bson.M{"_id": id})
+		if err != nil {
+			t.Fatalf("counting files: %v", err)
+		}
+		return n > 0
+	}
+	if n, _ := media.col.CountDocuments(ctx, bson.M{"channel_id": doomed.ID}); n != 0 {
+		t.Fatalf("%d media records outlived their channel", n)
+	}
+	if fileExists(alone.FileID) || fileExists(avatar.FileID) {
+		t.Fatalf("files used only by the discarded channel are still stored")
+	}
+	if !fileExists(forwarded.FileID) {
+		t.Fatalf("the file behind a forwarded copy was deleted with the original's channel")
+	}
+
+	s := &server{channels: channels, media: media}
+	if code, _ := getMedia(s, copies[0].ID.Hex(), alice); code != http.StatusOK {
+		t.Fatalf("reading the forwarded copy: got %d, want 200", code)
+	}
+}

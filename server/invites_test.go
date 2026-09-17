@@ -251,7 +251,7 @@ func TestDiscardTakesInvitesWithIt(t *testing.T) {
 
 	// The last member leaving takes the channel, and a code outliving the
 	// channel it points at would be an invite to nothing.
-	if err := channels.Leave(ctx, messages, invites, ch.ID, owner.UserID); err != nil {
+	if err := channels.Leave(ctx, messages, invites, newMediaStore(db), ch.ID, owner.UserID); err != nil {
 		t.Fatalf("leaving: %v", err)
 	}
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -300,7 +301,7 @@ func (s *channelStore) whyNotOwner(ctx context.Context, channelID, userID bson.O
 // Leave pulls the member out and keeps the channel coherent afterwards: an
 // owner who leaves hands the role to the earliest remaining member, and a
 // channel nobody is left in goes away together with its messages.
-func (s *channelStore) Leave(ctx context.Context, messages *messageStore, invites *inviteStore, channelID, userID bson.ObjectID) error {
+func (s *channelStore) Leave(ctx context.Context, messages *messageStore, invites *inviteStore, media *mediaStore, channelID, userID bson.ObjectID) error {
 	var ch Channel
 	err := s.col.FindOneAndUpdate(ctx,
 		bson.M{"_id": channelID, "members.user_id": userID},
@@ -316,7 +317,7 @@ func (s *channelStore) Leave(ctx context.Context, messages *messageStore, invite
 	}
 
 	if len(ch.Members) == 0 {
-		return s.discard(ctx, messages, invites, channelID)
+		return s.discard(ctx, messages, invites, media, channelID)
 	}
 
 	for _, m := range ch.Members {
@@ -334,15 +335,24 @@ func (s *channelStore) Leave(ctx context.Context, messages *messageStore, invite
 	return nil
 }
 
-// discard drops a channel and its messages together. Two collections must go or
-// stay as one, which is what the replica set buys us besides change streams.
-func (s *channelStore) discard(ctx context.Context, messages *messageStore, invites *inviteStore, channelID bson.ObjectID) error {
+// discard drops a channel and everything that belongs to it together. The
+// collections must go or stay as one, which is what the replica set buys us
+// besides change streams.
+//
+// The picture files are the exception: they are deleted only after the commit,
+// and only those nothing else points at. A crash in between leaves an unused
+// file behind, which is harmless; the other order could leave a forwarded copy
+// pointing at deleted bytes.
+func (s *channelStore) discard(ctx context.Context, messages *messageStore, invites *inviteStore, media *mediaStore, channelID bson.ObjectID) error {
 	sess, err := s.col.Database().Client().StartSession()
 	if err != nil {
 		return fmt.Errorf("starting session: %w", err)
 	}
 	defer sess.EndSession(ctx)
 
+	// WithTransaction may run the function more than once, so the file list is
+	// whatever the last, committed attempt found.
+	var files []bson.ObjectID
 	_, err = sess.WithTransaction(ctx, func(ctx context.Context) (any, error) {
 		if _, err := s.col.DeleteOne(ctx, bson.M{"_id": channelID}); err != nil {
 			return nil, err
@@ -350,11 +360,20 @@ func (s *channelStore) discard(ctx context.Context, messages *messageStore, invi
 		if _, err := messages.col.DeleteMany(ctx, bson.M{"channel_id": channelID}); err != nil {
 			return nil, err
 		}
-		_, err := invites.col.DeleteMany(ctx, bson.M{"channel_id": channelID})
+		if _, err := invites.col.DeleteMany(ctx, bson.M{"channel_id": channelID}); err != nil {
+			return nil, err
+		}
+		var err error
+		files, err = media.deleteForChannel(ctx, channelID)
 		return nil, err
 	})
 	if err != nil {
 		return fmt.Errorf("discarding empty channel: %w", err)
+	}
+
+	if err := media.DeleteUnreferencedFiles(ctx, files); err != nil {
+		// The channel is gone either way; what is left is unused bytes.
+		log.Printf("discarding channel %s: %v", channelID.Hex(), err)
 	}
 	return nil
 }
