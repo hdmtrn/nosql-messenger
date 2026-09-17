@@ -61,9 +61,9 @@ jobs:
       # mongod. Hence not a services: block but the same docker compose as on
       # the dev machine — one description of the database instead of two that
       # will inevitably drift apart.
-      - name: Start MongoDB as a replica set
+      - name: Start MongoDB as a replica set, and Redis
         run: |
-          docker compose up -d --wait mongo
+          docker compose up -d --wait mongo redis
           docker compose run --rm mongo-init
 
       # Runs the unit tests again as well; they take milliseconds, and keeping
@@ -76,6 +76,11 @@ jobs:
         env:
           CI: "true"
           MONGO_URI: mongodb://127.0.0.1:27017/?directConnection=true
+          # 127.0.0.1 rather than localhost for the same reason as above: compose
+          # publishes both ports on the IPv4 loopback only, and on the runner
+          # "localhost" resolves to ::1 first — which is exactly how this job
+          # failed the first time Redis was needed.
+          REDIS_ADDR: 127.0.0.1:6379
 
   image:
     runs-on: ubuntu-latest

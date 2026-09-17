@@ -145,7 +145,6 @@ func TestRevokingASessionClosesItOnTheOtherInstance(t *testing.T) {
 
 	_, busA := testInstance(t)
 	_, busB := testInstance(t)
-	waitForSubscribers(t, busA, sessionTopic, 2)
 
 	// Two stores over one database are two instances: separate caches, shared
 	// collection, as two processes would have.

@@ -53,6 +53,7 @@ type watchChange struct {
 
 type bus struct {
 	rdb     *redis.Client
+	sub     *redis.PubSub
 	hub     *Hub
 	changes chan watchChange
 
@@ -71,8 +72,20 @@ func newBus(ctx context.Context, hub *Hub) (*bus, error) {
 		return nil, fmt.Errorf("ping Redis: %w", err)
 	}
 
+	// The permanent topic is subscribed here rather than in Run, so that once
+	// this function returns the instance is certainly listening. In Run it
+	// would happen in another goroutine, and an event published right after
+	// startup could slip past.
+	sub := rdb.Subscribe(ctx)
+	if err := sub.Subscribe(ctx, sessionTopic); err != nil {
+		sub.Close()
+		rdb.Close()
+		return nil, fmt.Errorf("subscribing to %s: %w", sessionTopic, err)
+	}
+
 	return &bus{
 		rdb:     rdb,
+		sub:     sub,
 		hub:     hub,
 		changes: make(chan watchChange, watchQueue),
 	}, nil
@@ -120,9 +133,10 @@ func (b *bus) change(chID string, on bool) {
 // Run owns the subscription for the lifetime of the process: one connection to
 // Redis for the whole instance, not one per client as Revolt does.
 func (b *bus) Run(ctx context.Context) {
-	// Channel topics come and go with the local readers; this one is permanent,
-	// because a revocation concerns every node whatever it happens to be watching.
-	sub := b.rdb.Subscribe(ctx, sessionTopic)
+	// Channel topics come and go with the local readers; the permanent one was
+	// subscribed in newBus, because a revocation concerns every node whatever
+	// it happens to be watching.
+	sub := b.sub
 	defer sub.Close()
 
 	incoming := sub.Channel()
