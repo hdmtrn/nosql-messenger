@@ -48,9 +48,8 @@ function touchEnd(e) {
          @click.self="emit('close')"
          @touchstart.passive="touchStart" @touchend="touchEnd">
       <header class="bar">
-        <span class="count">{{ index + 1 }} / {{ pictures.length }}</span>
-        <a class="tool" :href="current.url" target="_blank" rel="noopener">Original</a>
-        <button type="button" class="tool round" aria-label="Close" @click="emit('close')">×</button>
+        <span class="count">{{ pictures.length > 1 ? `${index + 1} / ${pictures.length}` : '' }}</span>
+        <button type="button" class="round" aria-label="Close" @click="emit('close')">×</button>
       </header>
 
       <button v-if="hasPrev" type="button" class="nav left" aria-label="Previous picture" @click="prev">‹</button>
@@ -87,15 +86,6 @@ function touchEnd(e) {
   letter-spacing: var(--mono-tracking);
   opacity: 0.8;
 }
-.tool {
-  color: #fff;
-  font: var(--text-machine-11);
-  text-transform: uppercase;
-  letter-spacing: var(--mono-tracking);
-  text-decoration: none;
-  opacity: 0.8;
-}
-.tool:hover { opacity: 1; }
 .round {
   width: 40px;
   height: 40px;
@@ -103,9 +93,11 @@ function touchEnd(e) {
   border: none;
   border-radius: var(--radius-pill);
   background: rgba(255, 255, 255, 0.12);
+  color: #fff;
   font: 300 26px/40px var(--font-ui);
   cursor: pointer;
 }
+.round:hover { background: rgba(255, 255, 255, 0.24); }
 .picture {
   max-width: 100%;
   max-height: calc(100vh - 88px);
