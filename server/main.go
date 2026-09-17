@@ -6,6 +6,8 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
 const dbName = "messenger"
@@ -68,9 +70,36 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("initializing auth: %w", err)
 	}
 
+	hub := NewHub()
+
+	bus, err := newBus(ctx, hub)
+	if err != nil {
+		return err
+	}
+	// Method values: hub keeps the two functions, not the bus itself, so it
+	// stays unaware of what is on the other end.
+	hub.watch, hub.unwatch = bus.Watch, bus.Unwatch
+
+	// The two directions of a revocation: this node announces its own, and acts
+	// on the ones announced elsewhere. The announcing node has already dropped
+	// its copy, so hearing its own event back changes nothing.
+	sessions.onRevoked = func(id bson.ObjectID) { bus.PublishRevoked(id.Hex()) }
+	bus.onSessionRevoked = func(id string) {
+		oid, err := bson.ObjectIDFromHex(id)
+		if err != nil {
+			log.Printf("bus: revocation of an unreadable session id %q", id)
+			return
+		}
+		sessions.evictByID(oid)
+	}
+
+	go bus.Run(ctx)
+	log.Println("connected to Redis")
+
 	srv := &server{
 		mongo:    mongoClient,
-		hub:      NewHub(),
+		hub:      hub,
+		bus:      bus,
 		auth:     authSvc,
 		sessions: sessions,
 		users:    users,

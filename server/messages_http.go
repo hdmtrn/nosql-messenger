@@ -257,7 +257,7 @@ func (s *server) deliverMessage(w http.ResponseWriter, r *http.Request, msg Mess
 	if err != nil {
 		log.Printf("encoding message for broadcast: %v", err)
 	} else {
-		s.hub.Publish(stored.ChannelID.Hex(), payload)
+		s.bus.Publish(stored.ChannelID.Hex(), payload)
 	}
 
 	writeJSON(w, http.StatusCreated, stored)

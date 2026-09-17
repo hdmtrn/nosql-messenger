@@ -57,7 +57,8 @@ func TestForwardReachesOnlyMessagesYouCanSee(t *testing.T) {
 		t.Fatalf("inserting message: %v", err)
 	}
 
-	s := &server{channels: channels, messages: messages, hub: NewHub()}
+	h := NewHub()
+	s := &server{channels: channels, messages: messages, hub: h, bus: h}
 
 	// The allowed case first: without it a handler that always answers 404
 	// would pass everything below.
@@ -102,7 +103,8 @@ func TestRepeatedClientMsgIDIsNotBroadcastAgain(t *testing.T) {
 	owner := person("owner")
 	ch := createChannel(t, channels, "room", owner)
 
-	s := &server{channels: channels, messages: messages, hub: NewHub()}
+	h := NewHub()
+	s := &server{channels: channels, messages: messages, hub: h, bus: h}
 	// No writePump reads this subscriber, so every broadcast stays in its buffer
 	// and len(send) counts them.
 	watcher := newSubscriber("watcher")
@@ -149,7 +151,8 @@ func TestReplyStaysInItsChannel(t *testing.T) {
 		t.Fatalf("inserting message: %v", err)
 	}
 
-	s := &server{channels: channels, messages: messages, hub: NewHub()}
+	h := NewHub()
+	s := &server{channels: channels, messages: messages, hub: h, bus: h}
 	reply := func(sess Session, channelID bson.ObjectID, replyTo string) (int, []byte) {
 		return callMessageHandler(t, s.handleSendMessage, "", map[string]string{
 			"channel_id": channelID.Hex(),
@@ -209,7 +212,8 @@ func TestPlainMessageHasNoReplyTo(t *testing.T) {
 
 	owner := person("owner")
 	ch := createChannel(t, channels, "room", owner)
-	s := &server{channels: channels, messages: messages, hub: NewHub()}
+	h := NewHub()
+	s := &server{channels: channels, messages: messages, hub: h, bus: h}
 
 	code, body := callMessageHandler(t, s.handleSendMessage, "", map[string]string{
 		"channel_id": ch.ID.Hex(),
@@ -256,7 +260,8 @@ func TestMessagesByIDStayInTheAskedChannel(t *testing.T) {
 	insert(aliceRoom, alice, "not asked for")
 	inNotes := insert(aliceNotes, alice, "in the notes")
 
-	s := &server{channels: channels, messages: messages, hub: NewHub()}
+	h := NewHub()
+	s := &server{channels: channels, messages: messages, hub: h, bus: h}
 	lookup := func(sess Session, query string) (int, []Message) {
 		r := httptest.NewRequest(http.MethodGet, "/messages?"+query, nil)
 		w := httptest.NewRecorder()
