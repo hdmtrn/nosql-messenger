@@ -49,12 +49,19 @@ type sessionStore struct {
 
 	mu    sync.RWMutex
 	cache map[string]cachedSession
+
+	// Called after a session is gone from the database, so that the other
+	// instances drop it from their caches too. Without it a revoked session
+	// would keep working elsewhere for up to cacheTTL, which would take away
+	// the immediate revocation that server-side sessions were chosen for.
+	onRevoked func(sessionID bson.ObjectID)
 }
 
 func newSessionStore(db *mongo.Database) *sessionStore {
 	return &sessionStore{
-		col:   db.Collection("sessions"),
-		cache: make(map[string]cachedSession),
+		col:       db.Collection("sessions"),
+		cache:     make(map[string]cachedSession),
+		onRevoked: func(bson.ObjectID) {},
 	}
 }
 
@@ -92,6 +99,23 @@ func (s *sessionStore) evict(token string) {
 	s.mu.Lock()
 	delete(s.cache, token)
 	s.mu.Unlock()
+}
+
+// evictByID is what an instance does when it hears about a revocation elsewhere:
+// it has the session id but not the token the cache is keyed by. The scan is
+// over the sessions cached on this node and happens only on a revocation, which
+// is rare — a second index kept in step on every login would cost more than it
+// saves.
+func (s *sessionStore) evictByID(id bson.ObjectID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for token, entry := range s.cache {
+		if entry.sess.ID == id {
+			delete(s.cache, token)
+			return
+		}
+	}
 }
 
 func (s *sessionStore) Create(ctx context.Context, u *User, userAgent string) (Session, error) {
@@ -174,10 +198,24 @@ func (s *sessionStore) touch(ctx context.Context, sess Session) {
 	s.put(sess)
 }
 
+// Delete signs one device out. It deletes by token but reads the document back,
+// because the announcement to the other instances carries the id: they must drop
+// the session from their caches, and the token has no business travelling.
 func (s *sessionStore) Delete(ctx context.Context, token string) error {
-	_, err := s.col.DeleteOne(ctx, bson.M{"token": token})
+	var sess Session
+	err := s.col.FindOneAndDelete(ctx, bson.M{"token": token}).Decode(&sess)
 	s.evict(token)
-	return err
+
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		// Signing out with a token that is already gone is not a failure.
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	s.onRevoked(sess.ID)
+	return nil
 }
 
 // ForUser lists a user's live sessions. The token never leaves the server: it is
@@ -213,6 +251,7 @@ func (s *sessionStore) Revoke(ctx context.Context, userID, sessionID bson.Object
 		return fmt.Errorf("revoking session: %w", err)
 	}
 	s.evict(sess.Token)
+	s.onRevoked(sess.ID)
 	return nil
 }
 

@@ -18,6 +18,11 @@ import (
 // reconnect.
 const (
 	channelTopic = "ch:"
+	// One topic for all instances: revocations are rare, and every node has to
+	// hear about every one of them. What travels is the session id, never the
+	// token — the token is the credential itself, and there is no reason to put
+	// it on the wire. Rocket.Chat keeps a hash of the token for the same reason.
+	sessionTopic = "session-revoked"
 	// Subscription changes waiting for the bus goroutine. They arrive from the
 	// hub, which holds its mutex at the time, so enqueuing must never block.
 	watchQueue = 256
@@ -50,6 +55,10 @@ type bus struct {
 	rdb     *redis.Client
 	hub     *Hub
 	changes chan watchChange
+
+	// Set by main once the session store exists. Without it a revocation event
+	// is simply ignored, which is what a test that only checks messages wants.
+	onSessionRevoked func(sessionID string)
 }
 
 func newBus(ctx context.Context, hub *Hub) (*bus, error) {
@@ -81,6 +90,18 @@ func (b *bus) Publish(chID string, msg []byte) {
 	}
 }
 
+// PublishRevoked tells the other instances to forget a session they may have
+// cached. The revoking node has already dropped its own copy: if Redis is down,
+// revocation must still work where it was asked for.
+func (b *bus) PublishRevoked(sessionID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), publishTimeout)
+	defer cancel()
+
+	if err := b.rdb.Publish(ctx, sessionTopic, sessionID).Err(); err != nil {
+		log.Printf("bus: publishing the revocation of %s: %v", sessionID, err)
+	}
+}
+
 // Watch and Unwatch are called from the hub while it holds its mutex, so they
 // only leave a note for the bus goroutine. A full queue means Redis is slow or
 // gone; dropping the note is better than stalling every broadcast behind the
@@ -99,7 +120,9 @@ func (b *bus) change(chID string, on bool) {
 // Run owns the subscription for the lifetime of the process: one connection to
 // Redis for the whole instance, not one per client as Revolt does.
 func (b *bus) Run(ctx context.Context) {
-	sub := b.rdb.Subscribe(ctx)
+	// Channel topics come and go with the local readers; this one is permanent,
+	// because a revocation concerns every node whatever it happens to be watching.
+	sub := b.rdb.Subscribe(ctx, sessionTopic)
 	defer sub.Close()
 
 	incoming := sub.Channel()
@@ -124,8 +147,14 @@ func (b *bus) Run(ctx context.Context) {
 			if !ok {
 				return
 			}
-			chID := strings.TrimPrefix(m.Channel, channelTopic)
-			b.hub.Publish(chID, []byte(m.Payload))
+			switch {
+			case strings.HasPrefix(m.Channel, channelTopic):
+				b.hub.Publish(strings.TrimPrefix(m.Channel, channelTopic), []byte(m.Payload))
+			case m.Channel == sessionTopic:
+				if b.onSessionRevoked != nil {
+					b.onSessionRevoked(m.Payload)
+				}
+			}
 		}
 	}
 }
