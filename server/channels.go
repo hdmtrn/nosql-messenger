@@ -39,6 +39,7 @@ type Channel struct {
 	CreatedBy bson.ObjectID   `bson:"created_by"    json:"created_by"`
 	CreatedAt time.Time       `bson:"created_at"    json:"created_at"`
 	Members   []ChannelMember `bson:"members"       json:"members,omitempty"`
+	AvatarID  *bson.ObjectID  `bson:"avatar_id,omitempty" json:"avatar_id,omitempty"`
 
 	// MemberCount survives the projection that drops the member list itself.
 	MemberCount int `bson:"member_count,omitempty" json:"member_count,omitempty"`
@@ -53,6 +54,7 @@ var (
 	errNotMember       = errors.New("not a member of this channel")
 	errAlreadyMember   = errors.New("already a member of this channel")
 	errNotJoinable     = errors.New("channel cannot be joined")
+	errNotOwner        = errors.New("only the owner can do this")
 )
 
 type channelStore struct {
@@ -250,6 +252,49 @@ func (s *channelStore) KindForMember(ctx context.Context, channelID, userID bson
 		return "", fmt.Errorf("reading channel kind: %w", err)
 	}
 	return ch.Kind, nil
+}
+
+// SetAvatar is users.SetAvatar for a channel, with the owner check inside the
+// filter: $elemMatch requires the same array element to hold both the user and
+// the role, so "a member" and "an owner" cannot be satisfied by two different
+// people. A direct conversation has no owner, so it never matches.
+func (s *channelStore) SetAvatar(ctx context.Context, channelID, ownerID bson.ObjectID, avatar *bson.ObjectID) (*bson.ObjectID, error) {
+	update := bson.M{"$unset": bson.M{"avatar_id": ""}}
+	if avatar != nil {
+		update = bson.M{"$set": bson.M{"avatar_id": *avatar}}
+	}
+
+	var before Channel
+	err := s.col.FindOneAndUpdate(ctx,
+		bson.M{
+			"_id":     channelID,
+			"members": bson.M{"$elemMatch": bson.M{"user_id": ownerID, "role": roleOwner}},
+		},
+		update,
+		options.FindOneAndUpdate().
+			SetReturnDocument(options.Before).
+			SetProjection(bson.M{"avatar_id": 1}),
+	).Decode(&before)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, s.whyNotOwner(ctx, channelID, ownerID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("setting channel avatar: %w", err)
+	}
+	return before.AvatarID, nil
+}
+
+// whyNotOwner separates "not yours to change" from "not yours to see": an
+// outsider gets the same answer as for a channel that does not exist.
+func (s *channelStore) whyNotOwner(ctx context.Context, channelID, userID bson.ObjectID) error {
+	member, err := s.IsMember(ctx, channelID, userID)
+	if err != nil {
+		return err
+	}
+	if !member {
+		return errNotMember
+	}
+	return errNotOwner
 }
 
 // Leave pulls the member out and keeps the channel coherent afterwards: an

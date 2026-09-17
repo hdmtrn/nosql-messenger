@@ -1,10 +1,12 @@
 <script setup>
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { api } from '../api'
 import ChannelGlyph from '../components/ChannelGlyph.vue'
 import SgAvatar from '../components/SgAvatar.vue'
 import SgButton from '../components/SgButton.vue'
-import { avatarUrl, displayName, initials } from '../naming'
+import MediaViewer from '../components/MediaViewer.vue'
+import { avatarUrl, channelAvatarUrl, displayName, initials } from '../naming'
+import { toJpeg } from '../images'
 import { inviteLink } from '../pending'
 
 const props = defineProps({
@@ -12,7 +14,7 @@ const props = defineProps({
   channel: { type: Object, required: true },
   title: { type: String, required: true },
 })
-const emit = defineEmits(['close', 'leave', 'select', 'person'])
+const emit = defineEmits(['close', 'leave', 'select', 'person', 'changed'])
 
 const direct = () => props.channel.kind === 'direct'
 
@@ -86,6 +88,43 @@ async function revoke(code) {
 
 watch(() => props.channel.id, load, { immediate: true })
 
+// The server decides who may change the picture; the buttons only follow it.
+const isOwner = computed(() =>
+  members.value.some((m) => m.user_id === props.me.id && m.role === 'owner'))
+
+// Same size and square crop as a person's avatar, for the same 1 MB limit.
+const AVATAR_SIDE = 640
+const picker = ref(null)
+const uploading = ref(false)
+const viewing = ref(false)
+const avatarError = ref('')
+
+async function changeAvatar(event) {
+  const file = event.target.files[0]
+  event.target.value = ''
+  if (!file) return
+  avatarError.value = ''
+  uploading.value = true
+  try {
+    await api.setChannelAvatar(props.channel.id, await toJpeg(file, { side: AVATAR_SIDE, square: true }))
+    emit('changed')
+  } catch (e) {
+    avatarError.value = e.status ? `${e.message} (${e.status})` : 'This file is not an image'
+  } finally {
+    uploading.value = false
+  }
+}
+
+async function removeAvatar() {
+  avatarError.value = ''
+  try {
+    await api.removeChannelAvatar(props.channel.id)
+    emit('changed')
+  } catch (e) {
+    avatarError.value = `${e.message} (${e.status})`
+  }
+}
+
 const mono = {
   font: 'var(--text-machine)',
   textTransform: 'uppercase',
@@ -109,7 +148,24 @@ const row = { display: 'flex', alignItems: 'center', gap: '12px', padding: '0 24
     <div :style="panel" style="padding:24px;display:flex;flex-direction:column;
                                align-items:center;gap:12px;text-align:center">
       <SgAvatar v-if="direct()" :initials="initials(displayName(title))" :src="avatarUrl(title)" :size="64" />
-      <ChannelGlyph v-else :size="64" tone="blue" />
+      <template v-else>
+        <button type="button" class="avatar" :class="{ busy: uploading }" :disabled="!channel.avatar_id"
+                :aria-label="channel.avatar_id ? 'Open photo' : undefined" @click="viewing = true">
+          <ChannelGlyph :src="channelAvatarUrl(channel)" :size="64" tone="blue" />
+        </button>
+        <div v-if="isOwner" style="display:flex;align-items:center;gap:12px">
+          <SgButton variant="outline" size="sm" :disabled="uploading" @click="picker.click()">
+            {{ uploading ? 'Uploading' : 'Edit' }}
+          </SgButton>
+          <button v-if="channel.avatar_id" type="button" class="remove" :style="mono"
+                  @click="removeAvatar">Remove</button>
+          <input ref="picker" type="file" accept="image/*" hidden @change="changeAvatar">
+        </div>
+        <p v-if="avatarError" :style="mono" style="margin:0;color:var(--status-error)">{{ avatarError }}</p>
+        <MediaViewer v-if="viewing && channel.avatar_id"
+                     :pictures="[{ key: channel.avatar_id, url: channelAvatarUrl(channel) }]"
+                     @close="viewing = false" />
+      </template>
 
       <div>
         <!-- The title of a direct channel is the other person's handle; what is read is their name. -->
@@ -131,7 +187,7 @@ const row = { display: 'flex', alignItems: 'center', gap: '12px', padding: '0 24
                 :style="{ ...row, width: '100%', border: 'none', background: 'none',
                           cursor: 'pointer', font: 'var(--text-body)' }"
                 @click="emit('select', c.id)">
-          <ChannelGlyph :size="22" tone="blue" />
+          <ChannelGlyph :src="channelAvatarUrl(c)" :size="22" tone="blue" />
           <span style="flex:1;text-align:left">{{ c.name }}</span>
         </button>
       </div>
@@ -178,3 +234,22 @@ const row = { display: 'flex', alignItems: 'center', gap: '12px', padding: '0 24
     </template>
   </aside>
 </template>
+
+<style scoped>
+.avatar {
+  padding: 0;
+  border: none;
+  background: none;
+  border-radius: var(--radius-pill);
+  cursor: zoom-in;
+}
+.avatar:disabled { cursor: default; }
+.avatar.busy { opacity: 0.5; }
+.remove {
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+.remove:hover { color: var(--status-error) !important; }
+</style>

@@ -3,7 +3,7 @@ import { computed, onUnmounted, ref, watch } from 'vue'
 import ChannelRow from './ChannelRow.vue'
 import SgAvatar from './SgAvatar.vue'
 import SgButton from './SgButton.vue'
-import { avatarUrl, channelTitle, displayName, initials, rememberUser } from '../naming'
+import { avatarUrl, channelAvatarUrl, channelTitle, displayName, initials, rememberUser } from '../naming'
 import { api } from '../api'
 
 const props = defineProps({
@@ -303,6 +303,7 @@ const footerStyle = computed(() => ({
           v-for="c in named"
           :key="c.id"
           :name="c.name"
+          :avatar-src="channelAvatarUrl(c)"
           :compact="collapsed"
           :active="!profileOpen && c.id === activeId"
           :unread="unread[c.id] || 0"

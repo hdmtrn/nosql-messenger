@@ -191,3 +191,87 @@ func (s *server) handleLeaveChannel(w http.ResponseWriter, r *http.Request, sess
 	s.hub.Unsubscribe(sess.UserID.Hex(), id.Hex())
 	writeJSON(w, http.StatusOK, map[string]string{"status": "left"})
 }
+
+func writeOwnerError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, errNotMember):
+		writeError(w, http.StatusNotFound, "channel not found")
+	case errors.Is(err, errNotOwner):
+		writeError(w, http.StatusForbidden, err.Error())
+	default:
+		log.Printf("changing channel avatar: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+	}
+}
+
+func (s *server) handleSetChannelAvatar(w http.ResponseWriter, r *http.Request, sess Session) {
+	id, err := bson.ObjectIDFromHex(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "malformed channel id")
+		return
+	}
+
+	// Refused before the upload rather than after it, so a non-owner does not
+	// push a megabyte into storage only to have it deleted. The update below
+	// checks ownership again, and that check is the one that counts.
+	ch, err := s.channels.ByID(r.Context(), id)
+	if errors.Is(err, errChannelNotFound) {
+		writeError(w, http.StatusNotFound, "channel not found")
+		return
+	}
+	if err != nil {
+		writeOwnerError(w, err)
+		return
+	}
+	switch memberRole(ch, sess.UserID) {
+	case roleOwner:
+	case "":
+		writeOwnerError(w, errNotMember)
+		return
+	default:
+		writeOwnerError(w, errNotOwner)
+		return
+	}
+
+	m, ok := s.saveUpload(w, r, sess.UserID, mediaKindAvatar, &id, avatarMaxBytes)
+	if !ok {
+		return
+	}
+
+	prev, err := s.channels.SetAvatar(r.Context(), id, sess.UserID, &m.ID)
+	if err != nil {
+		s.dropAvatar(r.Context(), &m.ID)
+		writeOwnerError(w, err)
+		return
+	}
+	s.dropAvatar(r.Context(), prev)
+
+	writeJSON(w, http.StatusOK, map[string]string{"avatar_id": m.ID.Hex()})
+}
+
+func (s *server) handleDeleteChannelAvatar(w http.ResponseWriter, r *http.Request, sess Session) {
+	id, err := bson.ObjectIDFromHex(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "malformed channel id")
+		return
+	}
+
+	prev, err := s.channels.SetAvatar(r.Context(), id, sess.UserID, nil)
+	if err != nil {
+		writeOwnerError(w, err)
+		return
+	}
+	s.dropAvatar(r.Context(), prev)
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// memberRole is empty for someone who is not in the channel.
+func memberRole(ch Channel, userID bson.ObjectID) string {
+	for _, m := range ch.Members {
+		if m.UserID == userID {
+			return m.Role
+		}
+	}
+	return ""
+}

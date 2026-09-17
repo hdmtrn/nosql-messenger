@@ -1,10 +1,16 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 const props = defineProps({
   size: { type: Number, default: 22 },
   tone: { type: String, default: 'onBlue' },
+  // The channel's own picture. The dots stay as the fallback, as initials do
+  // for a person.
+  src: { type: String, default: '' },
 })
+
+const failed = ref(false)
+watch(() => props.src, () => { failed.value = false })
 
 const dots = computed(() => {
   const { size } = props
@@ -29,7 +35,11 @@ const color = computed(() => (props.tone === 'blue' ? 'var(--blue)' : '#fff'))
 </script>
 
 <template>
+  <img v-if="src && !failed" :src="src" alt="" @error="failed = true"
+       :style="{ display: 'block', flex: 'none', width: size + 'px', height: size + 'px',
+                 borderRadius: 'var(--radius-pill)', objectFit: 'cover' }">
   <span
+    v-else
     aria-hidden="true"
     :style="{ position: 'relative', display: 'block', flex: 'none',
               width: size + 'px', height: size + 'px' }"

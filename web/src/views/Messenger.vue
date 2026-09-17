@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api } from '../api'
 import { createSocket } from '../socket'
-import { avatarUrl, channelTitle, displayName, initials, rememberUser } from '../naming'
+import { avatarUrl, channelAvatarUrl, channelTitle, displayName, initials, rememberUser } from '../naming'
 import { takePendingInvite } from '../pending'
 import ChannelRail from '../components/ChannelRail.vue'
 import SgButton from '../components/SgButton.vue'
@@ -228,7 +228,8 @@ const forwardTargets = computed(() =>
       const direct = c.kind === 'direct'
       const username = direct ? channelTitle(c, props.me.id) : ''
       const title = direct ? displayName(username) : c.name
-      return { id: c.id, title, direct, initials: initials(title), avatar: avatarUrl(username) }
+      const avatar = direct ? avatarUrl(username) : channelAvatarUrl(c)
+      return { id: c.id, title, direct, initials: initials(title), avatar }
     })
 )
 
@@ -462,6 +463,7 @@ onUnmounted(() => socket && socket.close())
             @leave="showInfo = false; confirmLeave = true"
             @select="selectChannel"
             @person="openPerson"
+            @changed="loadChannels"
           />
         </div>
       </Transition>

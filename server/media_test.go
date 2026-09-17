@@ -111,7 +111,7 @@ func TestAvatarIsReadableByEveryone(t *testing.T) {
 	db := testDB(t)
 	s := &server{media: newMediaStore(db)}
 
-	m, err := s.media.Save(context.Background(), person("alice").UserID, mediaKindAvatar, bytes.NewReader(testPNG(t, 4, 4)))
+	m, err := s.media.Save(context.Background(), person("alice").UserID, mediaKindAvatar, nil, bytes.NewReader(testPNG(t, 4, 4)))
 	if err != nil {
 		t.Fatalf("saving avatar: %v", err)
 	}
@@ -218,11 +218,91 @@ func postJSON(t *testing.T, h func(http.ResponseWriter, *http.Request, Session),
 func uploaded(t *testing.T, s *server, sess Session) string {
 	t.Helper()
 
-	m, err := s.media.Save(context.Background(), sess.UserID, mediaKindAttachment, bytes.NewReader(testPNG(t, 5, 3)))
+	m, err := s.media.Save(context.Background(), sess.UserID, mediaKindAttachment, nil, bytes.NewReader(testPNG(t, 5, 3)))
 	if err != nil {
 		t.Fatalf("saving media: %v", err)
 	}
 	return m.ID.Hex()
+}
+
+func channelAvatarCall(s *server, method, channelID string, body []byte, sess Session) (int, []byte) {
+	r := httptest.NewRequest(method, "/channels/"+channelID+"/avatar", bytes.NewReader(body))
+	r.SetPathValue("id", channelID)
+	w := httptest.NewRecorder()
+	if method == http.MethodDelete {
+		s.handleDeleteChannelAvatar(w, r, sess)
+	} else {
+		s.handleSetChannelAvatar(w, r, sess)
+	}
+	return w.Code, w.Body.Bytes()
+}
+
+func TestOnlyTheOwnerChangesTheChannelAvatar(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	channels, _ := newMessageTestStores(t, db)
+	s := &server{channels: channels, media: newMediaStore(db)}
+
+	alice, bob, mallory := person("alice"), person("bob"), person("mallory")
+	room := createChannel(t, channels, "room", alice)
+	if err := channels.AddMember(ctx, room.ID, bob); err != nil {
+		t.Fatalf("adding bob: %v", err)
+	}
+	dm, err := channels.Direct(ctx, alice, &User{ID: bob.UserID, Username: bob.Username})
+	if err != nil {
+		t.Fatalf("opening direct channel: %v", err)
+	}
+	id := room.ID.Hex()
+
+	for name, try := range map[string]struct {
+		sess    Session
+		channel string
+		want    int
+	}{
+		"member":         {bob, id, http.StatusForbidden},
+		"outsider":       {mallory, id, http.StatusNotFound},
+		"direct channel": {alice, dm.ID.Hex(), http.StatusForbidden},
+	} {
+		for _, method := range []string{http.MethodPost, http.MethodDelete} {
+			if code, body := channelAvatarCall(s, method, try.channel, testPNG(t, 2, 2), try.sess); code != try.want {
+				t.Fatalf("%s by %s: got %d %s, want %d", method, name, code, body, try.want)
+			}
+		}
+	}
+	if n, _ := s.media.col.CountDocuments(ctx, bson.M{}); n != 0 {
+		t.Fatalf("%d media documents stored by refused uploads, want 0", n)
+	}
+
+	code, body := channelAvatarCall(s, http.MethodPost, id, testPNG(t, 8, 8), alice)
+	if code != http.StatusOK {
+		t.Fatalf("owner setting avatar: got %d %s, want 200", code, body)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("decoding answer: %v", err)
+	}
+	stored, err := channels.ByID(ctx, room.ID)
+	if err != nil || stored.AvatarID == nil || stored.AvatarID.Hex() != got["avatar_id"] {
+		t.Fatalf("channel avatar is %v (err %v), want %s", stored.AvatarID, err, got["avatar_id"])
+	}
+
+	// A private channel's picture stays inside it, unlike a person's.
+	if code, _ := getMedia(s, got["avatar_id"], bob); code != http.StatusOK {
+		t.Fatalf("member reading the channel avatar: got %d, want 200", code)
+	}
+	if code, _ := getMedia(s, got["avatar_id"], mallory); code != http.StatusNotFound {
+		t.Fatalf("outsider reading the channel avatar: got %d, want 404", code)
+	}
+
+	if code, body := channelAvatarCall(s, http.MethodDelete, id, nil, alice); code != http.StatusOK {
+		t.Fatalf("owner removing avatar: got %d %s, want 200", code, body)
+	}
+	if stored, _ := channels.ByID(ctx, room.ID); stored.AvatarID != nil {
+		t.Fatalf("channel avatar after removal is %s, want none", stored.AvatarID.Hex())
+	}
+	if n, _ := s.media.col.CountDocuments(ctx, bson.M{}); n != 0 {
+		t.Fatalf("%d media documents left after removal, want 0", n)
+	}
 }
 
 func TestPicturesGoOnlyWhereTheirOwnerSendsThem(t *testing.T) {
@@ -276,7 +356,7 @@ func TestPicturesGoOnlyWhereTheirOwnerSendsThem(t *testing.T) {
 		},
 		"that does not exist": func() (int, []byte) { return send(room, "", []string{bson.NewObjectID().Hex()}, "", alice) },
 		"that is someone's avatar": func() (int, []byte) {
-			m, err := s.media.Save(ctx, alice.UserID, mediaKindAvatar, bytes.NewReader(testPNG(t, 2, 2)))
+			m, err := s.media.Save(ctx, alice.UserID, mediaKindAvatar, nil, bytes.NewReader(testPNG(t, 2, 2)))
 			if err != nil {
 				t.Fatalf("saving avatar: %v", err)
 			}
@@ -399,7 +479,7 @@ func TestConcurrentUploadsKeepTheirBytes(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			saved[i], errs[i] = media.Save(ctx, person("alice").UserID, mediaKindAttachment, bytes.NewReader(p))
+			saved[i], errs[i] = media.Save(ctx, person("alice").UserID, mediaKindAttachment, nil, bytes.NewReader(p))
 		}()
 	}
 	wg.Wait()
@@ -495,7 +575,7 @@ func TestOnlyUnsentPicturesExpire(t *testing.T) {
 	room := createChannel(t, channels, "room", alice)
 	save := func(kind string) Media {
 		t.Helper()
-		m, err := media.Save(ctx, alice.UserID, kind, bytes.NewReader(testPNG(t, 2, 2)))
+		m, err := media.Save(ctx, alice.UserID, kind, nil, bytes.NewReader(testPNG(t, 2, 2)))
 		if err != nil {
 			t.Fatalf("saving %s: %v", kind, err)
 		}

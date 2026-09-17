@@ -86,7 +86,9 @@ func (s *mediaStore) ensureIndexes(ctx context.Context) error {
 	return err
 }
 
-func (s *mediaStore) Save(ctx context.Context, owner bson.ObjectID, kind string, body io.Reader) (Media, error) {
+// Save stores an image. channel is set only for a channel's avatar, which is
+// then shown to that channel's members alone.
+func (s *mediaStore) Save(ctx context.Context, owner bson.ObjectID, kind string, channel *bson.ObjectID, body io.Reader) (Media, error) {
 	var head bytes.Buffer
 	cfg, format, err := image.DecodeConfig(io.TeeReader(body, &head))
 	if err != nil {
@@ -110,6 +112,7 @@ func (s *mediaStore) Save(ctx context.Context, owner bson.ObjectID, kind string,
 		ContentType: "image/" + format,
 		Width:       cfg.Width,
 		Height:      cfg.Height,
+		ChannelID:   channel,
 		CreatedAt:   time.Now(),
 	}
 	if kind == mediaKindAttachment {
