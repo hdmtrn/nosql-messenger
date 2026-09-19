@@ -122,10 +122,25 @@ func (s *sessionStore) putIfCurrent(sess Session, seen uint64) {
 	s.cache[sess.Token] = cachedSession{sess: sess, cachedAt: time.Now()}
 }
 
+// invalidate is for a session we have just deleted: it may be on its way into
+// the cache in a lookup that read it a moment earlier, so the counter moves.
 func (s *sessionStore) invalidate(token string) {
 	s.mu.Lock()
 	delete(s.cache, token)
 	s.invalidations++
+	s.mu.Unlock()
+}
+
+// forget drops the cache entry of a token the database does not know, and
+// leaves the counter alone. There is no deletion of ours for a lookup in
+// flight to undo: whoever removed the document — Revoke, Delete, expiry going
+// through Delete — moved the counter when it did. Counting here would let
+// anyone move it at will: every request with a made-up cookie, on any route,
+// reaches this, and a counter that never stands still keeps the cache from
+// filling at all.
+func (s *sessionStore) forget(token string) {
+	s.mu.Lock()
+	delete(s.cache, token)
 	s.mu.Unlock()
 }
 
@@ -189,7 +204,7 @@ func (s *sessionStore) ByToken(ctx context.Context, token string) (Session, erro
 	if !hit || time.Since(entry.cachedAt) >= cacheTTL {
 		if err := s.col.FindOne(ctx, bson.M{"token": token}).Decode(&sess); err != nil {
 			if errors.Is(err, mongo.ErrNoDocuments) {
-				s.invalidate(token)
+				s.forget(token)
 				return Session{}, errSessionNotFound
 			}
 			return Session{}, fmt.Errorf("looking up session: %w", err)
@@ -236,12 +251,14 @@ func (s *sessionStore) touch(ctx context.Context, sess Session, seen uint64) {
 func (s *sessionStore) Delete(ctx context.Context, token string) error {
 	var sess Session
 	err := s.col.FindOneAndDelete(ctx, bson.M{"token": token}).Decode(&sess)
-	s.invalidate(token)
-
 	if errors.Is(err, mongo.ErrNoDocuments) {
-		// Signing out with a token that is already gone is not a failure.
+		// Signing out with a token that is already gone is not a failure, and
+		// not a deletion either: anyone can sign out with a made-up cookie.
+		s.forget(token)
 		return nil
 	}
+	// Deleted, or the database failed and we cannot tell: count it either way.
+	s.invalidate(token)
 	if err != nil {
 		return err
 	}

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -76,5 +77,54 @@ func TestRevokedMidLookupIsNotCachedAgain(t *testing.T) {
 				t.Fatalf("after the revocation the node still accepts the session (err = %v)", err)
 			}
 		})
+	}
+}
+
+// Any request with a made-up cookie, on any route, looks the token up and
+// finds nothing; signing out with one needs no session at all. If that moved
+// the counter, a stream of such requests would keep every real lookup from
+// caching what it read. Only a deletion of a real session may move it.
+func TestMadeUpTokensDoNotKeepTheCacheFromFilling(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	a, b := newSessionStore(db), newSessionStore(db)
+
+	user := &User{ID: bson.NewObjectID(), Username: "bob"}
+	sess, err := a.Create(ctx, user, "a browser")
+	if err != nil {
+		t.Fatalf("creating a session: %v", err)
+	}
+
+	// While Bob's lookup is at the database, someone sends made-up cookies.
+	b.beforeCache = func() {
+		b.beforeCache = nil
+		for i := range 20 {
+			token := fmt.Sprintf("made-up-%d", i)
+			if _, err := b.ByToken(ctx, token); !errors.Is(err, errSessionNotFound) {
+				t.Fatalf("a made-up token was not refused: %v", err)
+			}
+			if err := b.Delete(ctx, token); err != nil {
+				t.Fatalf("signing out with a made-up token: %v", err)
+			}
+		}
+	}
+	if _, err := b.ByToken(ctx, sess.Token); err != nil {
+		t.Fatalf("Bob's lookup: %v", err)
+	}
+	b.mu.RLock()
+	_, cached := b.cache[sess.Token]
+	b.mu.RUnlock()
+	if !cached {
+		t.Fatal("made-up tokens kept Bob's session out of the cache")
+	}
+
+	// A real deletion still counts: signing out, then a revocation elsewhere.
+	before := b.invalidations
+	if err := b.Delete(ctx, sess.Token); err != nil {
+		t.Fatalf("signing out: %v", err)
+	}
+	b.invalidateByID(bson.NewObjectID())
+	if got := b.invalidations - before; got != 2 {
+		t.Fatalf("a sign-out and a revocation moved the counter by %d, want 2", got)
 	}
 }
