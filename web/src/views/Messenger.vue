@@ -179,9 +179,7 @@ const PICTURES_PER_MESSAGE = 10
 // Each message waits for the one before it: sent in parallel, the server could
 // store them the other way round.
 async function send(text, attachments = []) {
-  // The listeners forget us when the message arrives, so the next keystroke
-  // has to announce again rather than wait out the interval.
-  typedAt = 0
+  rearmTyping()
   const action = pendingAction.value && pendingAction.value.channelId === activeId.value ? pendingAction.value : null
   if (action) pendingAction.value = null
   const forwarding = action && action.kind === 'forward'
@@ -350,6 +348,10 @@ function receive(msg) {
 // up to 6 s after the typing stopped, which is too long. Now it is at most 4 s.
 const TYPING_REPEAT_MS = 3000
 const TYPING_SHOWN_MS = 4000
+// The server lets one typing frame per chat through each second and drops the
+// rest (typingMinInterval). The margin covers the network: two frames sent a
+// second apart can arrive closer than that.
+const TYPING_SERVER_GAP_MS = 1100
 
 // { [channelId]: { [userId]: username } } of the people typing right now.
 const typing = ref({})
@@ -381,15 +383,27 @@ function forgetTyping(channelId, userId) {
 }
 
 // Called on every keystroke; the socket hears about it once per interval and
-// per chat. The server drops repeats faster than a second anyway.
-let typedAt = 0
+// per chat.
+let announcedAt = 0
+let nextAnnounceAt = 0
 let typedIn = null
 function announceTyping() {
   const now = Date.now()
-  if (typedIn === activeId.value && now - typedAt < TYPING_REPEAT_MS) return
+  if (typedIn === activeId.value && now < nextAnnounceAt) return
   typedIn = activeId.value
-  typedAt = now
+  announcedAt = now
+  nextAnnounceAt = now + TYPING_REPEAT_MS
   socket?.send({ type: 'typing', channel_id: activeId.value })
+}
+
+// The listeners forget us when our message arrives, so the next keystroke
+// should announce again without waiting out the whole interval — but not
+// before the server would let it through. Announcing at once was dropped as
+// too soon after the previous frame, and the listener then saw nothing until
+// the next repeat, ~3 s later. Taking the earlier of the two keeps it right
+// when several messages go in a row.
+function rearmTyping() {
+  nextAnnounceAt = Math.min(nextAnnounceAt, announcedAt + TYPING_SERVER_GAP_MS)
 }
 
 // A socket that was down missed messages; the REST history is what fills the gap.
