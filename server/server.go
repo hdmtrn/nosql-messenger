@@ -82,7 +82,9 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /media", s.requireAuth(s.handleUploadMedia))
 	mux.HandleFunc("GET /media/{id}", s.requireAuth(s.handleGetMedia))
 
-	mux.HandleFunc("GET /ws", s.requireAuth(s.handleWS))
+	// Not behind requireAuth: the socket checks its session after the upgrade,
+	// so that a refusal reaches the client as a close code (see handleWS).
+	mux.HandleFunc("GET /ws", s.handleWS)
 
 	mux.HandleFunc("GET /", serveWeb)
 

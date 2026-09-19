@@ -143,27 +143,30 @@ func TestRevokingASessionClosesItOnTheOtherInstance(t *testing.T) {
 	ctx := context.Background()
 	db := testDB(t)
 
-	_, busA := testInstance(t)
-	_, busB := testInstance(t)
+	hubA, busA := testInstance(t)
+	hubB, busB := testInstance(t)
 
 	// Two stores over one database are two instances: separate caches, shared
-	// collection, as two processes would have.
+	// collection, as two processes would have. Wired exactly as main does it.
 	storeA, storeB := newSessionStore(db), newSessionStore(db)
-	storeA.onRevoked = func(id bson.ObjectID) { busA.PublishRevoked(id.Hex()) }
-	busB.onSessionRevoked = func(id string) {
-		oid, err := bson.ObjectIDFromHex(id)
-		if err != nil {
-			t.Errorf("unreadable session id %q", id)
-			return
-		}
-		storeB.evictByID(oid)
-	}
+	wireRevocation(storeA, hubA, busA)
+	wireRevocation(storeB, hubB, busB)
 
 	user := &User{ID: bson.NewObjectID(), Username: "alice"}
 	sess, err := storeA.Create(ctx, user, "a browser")
 	if err != nil {
 		t.Fatalf("creating a session: %v", err)
 	}
+
+	// Sockets opened before the revocation authenticated once and would outlive
+	// the cache entry without being closed: one on B, which hears about it over
+	// the bus, and one on A, which revokes it and must not wait for its echo.
+	socket := newSubscriber(user.ID.Hex())
+	socket.sessionID = sess.ID.Hex()
+	hubB.Connect(socket, nil)
+	local := newSubscriber(user.ID.Hex())
+	local.sessionID = sess.ID.Hex()
+	hubA.Connect(local, nil)
 
 	// B must have it cached, otherwise the test would pass even with no event:
 	// a lookup in MongoDB alone already refuses a deleted session.
@@ -175,15 +178,34 @@ func TestRevokingASessionClosesItOnTheOtherInstance(t *testing.T) {
 		t.Fatalf("revoking: %v", err)
 	}
 
+	// Revoke returns only after onRevoked, so A's socket is already closed.
+	select {
+	case _, open := <-local.send:
+		if open {
+			t.Fatal("the revoking node's socket got a message instead of being closed")
+		}
+	default:
+		t.Fatal("the revoking node did not close its own socket")
+	}
+
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		if _, err := storeB.ByToken(ctx, sess.Token); err != nil {
-			return // the second instance no longer accepts the token
+			break // the second instance no longer accepts the token
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("the revoked session still works on the second instance")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+
+	select {
+	case _, open := <-socket.send:
+		if open {
+			t.Fatal("the socket got a message instead of being closed")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the revoked session's socket is still open on the second instance")
 	}
 }
 

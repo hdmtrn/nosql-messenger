@@ -101,3 +101,33 @@ func TestHubConcurrentAccess(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// Tabs of one browser share a session and so its revocation; another device of
+// the same user has a session of its own and must stay connected.
+func TestCloseSessionDropsOnlyThatSessionsSockets(t *testing.T) {
+	h := NewHub()
+	tab1, tab2, phone := newSubscriber("u1"), newSubscriber("u1"), newSubscriber("u1")
+	tab1.sessionID, tab2.sessionID, phone.sessionID = "laptop", "laptop", "phone"
+	for _, c := range []*Subscriber{tab1, tab2, phone} {
+		h.Connect(c, []string{"ch1"})
+	}
+
+	h.CloseSession("laptop")
+
+	// CloseSession is synchronous, so a closed send is already readable; an open
+	// one would block, and the default turns that into a failure, not a hang.
+	for name, c := range map[string]*Subscriber{"tab1": tab1, "tab2": tab2} {
+		select {
+		case _, open := <-c.send:
+			if open {
+				t.Fatalf("%s: got a message instead of being closed", name)
+			}
+		default:
+			t.Fatalf("%s: send is still open after its session was closed", name)
+		}
+	}
+	h.Publish("ch1", []byte("hi"))
+	if len(phone.send) != 1 {
+		t.Fatalf("the other session's socket got %d messages, want 1", len(phone.send))
+	}
+}

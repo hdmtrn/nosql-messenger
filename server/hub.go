@@ -7,7 +7,15 @@ import (
 
 type Subscriber struct {
 	userID string
-	send   chan []byte
+	// The session the socket was opened with. The socket outlives the request
+	// that authenticated it, so revoking the session has to close it too.
+	sessionID string
+	send      chan []byte
+	// Why the hub dropped the socket, as a WebSocket close code; zero is a plain
+	// drop, which the client answers by reconnecting. Written under the hub's
+	// mutex before send is closed, and read by the write pump only after it saw
+	// send closed — a channel close orders the two, so no lock is needed.
+	closeCode int
 
 	channels map[string]struct{}
 	dropped  bool
@@ -106,6 +114,25 @@ func (h *Hub) Reads(c *Subscriber, chID string) bool {
 	defer h.mu.Unlock()
 	_, ok := c.channels[chID]
 	return ok
+}
+
+// CloseSession drops every socket opened with a session, on this instance. A
+// session can hold several — each tab of a browser shares its cookie. Revocation
+// only knows the session id, so this scans the connected users rather than keep
+// a second index in step on every connect; revocations are rare. Dropping closes
+// send, so the write pump says goodbye and the socket's read pump ends.
+func (h *Hub) CloseSession(sessionID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	for _, subs := range h.byUser {
+		for c := range subs {
+			if c.sessionID == sessionID && !c.dropped {
+				c.closeCode = closeSessionEnded
+				h.drop(c)
+			}
+		}
+	}
 }
 
 func (h *Hub) Publish(chID string, msg []byte) {

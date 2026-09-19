@@ -14,7 +14,7 @@ import Profile from './Profile.vue'
 import UserPanel from './UserPanel.vue'
 
 const props = defineProps({ me: { type: Object, required: true } })
-const emit = defineEmits(['log-out', 'profile-changed'])
+const emit = defineEmits(['log-out', 'profile-changed', 'session-ended'])
 
 const channels = ref([])
 const activeId = ref(null)
@@ -487,6 +487,7 @@ onMounted(async () => {
   loadPeople()
   socket = createSocket({
     onMessage: receive,
+    onSessionEnded: () => emit('session-ended'),
     onStateChange: (state) => {
       const wasOffline = connection.value === 'offline'
       connection.value = state
