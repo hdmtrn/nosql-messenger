@@ -606,6 +606,9 @@ onUnmounted(() => {
   display: flex;
   gap: 16px;
   position: relative;
+  /* The side panel asks this box, not the window, how much room there is: the
+     room left of the stage depends on whether the rail is open. */
+  container: stage / inline-size;
 }
 /* The wrapper animates its width and clips; the panel inside stays 340px wide,
    so its text does not rewrap on every frame. It is pinned to the right edge,
@@ -628,12 +631,15 @@ onUnmounted(() => {
   margin-left: -16px;
   opacity: 0;
 }
-/* Below 1100px a 340px panel beside the feed would squeeze the feed under ~400px,
-   and laying it over part of the feed cut bubbles in half. So the panel covers the
-   whole stage instead, as Telegram's info page replaces the chat on a narrow
-   window. The feed underneath keeps its width, so nothing rewraps and its scroll
-   position is still there when the panel closes. */
-@media (max-width: 1100px) {
+/* The panel stands beside the feed while the feed keeps at least 380px, Telegram
+   Desktop's minimal chat column (columnMinimalWidthMain): 380 + the 16px gap + the
+   340px panel = 736px of stage. Below that the panel covers the whole stage, as
+   Telegram's info page replaces the chat on a narrow window; laying it over part
+   of the feed cut bubbles in half. The feed underneath keeps its width, so
+   nothing rewraps and its scroll position is still there when the panel closes.
+   The threshold used to be the window's 1100px, which ignored the rail: with the
+   rail folded, a 1000px window had room for both and still got the cover. */
+@container stage (max-width: 735px) {
   .side {
     position: absolute;
     inset: 0;
