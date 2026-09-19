@@ -92,6 +92,9 @@ func TestCloseCodeTellsARevocationFromADrop(t *testing.T) {
 			if ce.Code != tc.want {
 				t.Fatalf("close code %d, want %d", ce.Code, tc.want)
 			}
+			if ce.Text != closeReasons[tc.want] {
+				t.Fatalf("close reason %q, want %q", ce.Text, closeReasons[tc.want])
+			}
 		})
 	}
 }

@@ -27,12 +27,19 @@ const (
 // cannot tell a refusal from a network drop, so it would retry forever.
 const closeSessionRevoked = 4001
 
+// The reason travels with its code, so a code added later cannot go out with
+// another one's text. The client decides by the code; the reason is for people
+// reading logs and devtools.
+var closeReasons = map[int]string{
+	closeSessionRevoked: "session revoked",
+}
+
 // closeFrame is the payload of the close frame; nil for a plain drop.
 func closeFrame(code int) []byte {
 	if code == 0 {
 		return nil
 	}
-	return websocket.FormatCloseMessage(code, "session revoked")
+	return websocket.FormatCloseMessage(code, closeReasons[code])
 }
 
 // extraOrigins are origins accepted in addition to our own host. Needed for
