@@ -1,6 +1,9 @@
 package main
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 type Subscriber struct {
 	userID string
@@ -8,6 +11,12 @@ type Subscriber struct {
 
 	channels map[string]struct{}
 	dropped  bool
+
+	// When this connection last sent a typing frame, and last announced typing
+	// per channel. Touched only by the connection's read goroutine, so they
+	// need no lock.
+	lastTyping time.Time
+	typedAt    map[string]time.Time
 }
 
 func newSubscriber(userID string) *Subscriber {
@@ -15,6 +24,7 @@ func newSubscriber(userID string) *Subscriber {
 		userID:   userID,
 		send:     make(chan []byte, sendBuffer),
 		channels: make(map[string]struct{}),
+		typedAt:  make(map[string]time.Time),
 	}
 }
 
@@ -84,6 +94,18 @@ func (h *Hub) Unsubscribe(userID, chID string) {
 		delete(h.byChannel, chID)
 		h.unwatch(chID)
 	}
+}
+
+// Reads reports whether this connection is routed to a channel. It is the
+// in-memory view of membership: a socket gets a channel on connect and on join,
+// and loses it on leave, so asking here costs a map lookup instead of a query.
+// It trails MongoDB by the time a subscription change takes over the bus, which
+// is fine for "typing" and would not be for anything stored.
+func (h *Hub) Reads(c *Subscriber, chID string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	_, ok := c.channels[chID]
+	return ok
 }
 
 func (h *Hub) Publish(chID string, msg []byte) {
