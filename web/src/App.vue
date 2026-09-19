@@ -7,9 +7,6 @@ import Messenger from './views/Messenger.vue'
 const me = ref(null)
 const ready = ref(false)
 
-// Also what a revoked session ends in: the cookie may already hold a newer
-// session (a sign-in in another tab), so this asks who we are rather than
-// assume nobody — nobody means the sign-in screen, somebody their messenger.
 async function refreshSession() {
   const who = await api.me().catch(() => null)
   if (who && me.value && who.id === me.value.id) return
@@ -40,6 +37,20 @@ onUnmounted(() => {
   document.removeEventListener('visibilitychange', onFocus)
 })
 
+// The server closed the socket because its session ended, and that socket will
+// not reconnect. Messenger goes first, unconditionally, as Rocket.Chat's client
+// wipes its login on force_logout: whatever the cookie holds now — nobody, or a
+// newer session of the same user from another tab — then gets a fresh Messenger
+// with a fresh socket. Asking first and swapping only on a different user left
+// the same user with a dead socket. ready hides the gap, so the sign-in screen
+// does not flash when the answer is the same person.
+async function sessionEnded() {
+  ready.value = false
+  me.value = null
+  me.value = await api.me().catch(() => null)
+  ready.value = true
+}
+
 async function signOut() {
   await api.logout()
   me.value = null
@@ -50,5 +61,5 @@ async function signOut() {
   <div v-if="!ready" />
   <SignIn v-else-if="!me" @signed-in="me = $event" />
   <Messenger v-else :key="me.id" :me="me" @log-out="signOut" @profile-changed="reloadProfile"
-             @session-ended="refreshSession" />
+             @session-ended="sessionEnded" />
 </template>
