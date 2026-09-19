@@ -122,7 +122,7 @@ func (s *server) handleWS(w http.ResponseWriter, r *http.Request) {
 	s.hub.Connect(c, ids)
 
 	// A revocation that landed after the first check but before Connect found
-	// no socket to close. Revocation evicts the cache before it closes sockets,
+	// no socket to close. Revocation invalidates the cache before it closes sockets,
 	// and this asks again only after the socket is in the hub, so one of the two
 	// always sees the other. The answer is nearly always a cache hit.
 	if _, err := s.sessions.ByToken(r.Context(), sess.Token); err != nil {
