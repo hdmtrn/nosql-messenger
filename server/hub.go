@@ -3,6 +3,8 @@ package main
 import (
 	"sync"
 	"time"
+
+	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
 type Subscriber struct {
@@ -10,7 +12,10 @@ type Subscriber struct {
 	// The session the socket was opened with. The socket outlives the request
 	// that authenticated it, so revoking the session has to close it too.
 	sessionID string
-	send      chan []byte
+	// Identifies this socket in Redis, where presence counts the user's open
+	// sockets across all nodes.
+	socketID string
+	send     chan []byte
 	// Why the hub dropped the socket, as a WebSocket close code; zero is a plain
 	// drop, which the client answers by reconnecting. Written under the hub's
 	// mutex before send is closed, and read by the write pump only after it saw
@@ -30,6 +35,7 @@ type Subscriber struct {
 func newSubscriber(userID string) *Subscriber {
 	return &Subscriber{
 		userID:   userID,
+		socketID: bson.NewObjectID().Hex(),
 		send:     make(chan []byte, sendBuffer),
 		channels: make(map[string]struct{}),
 		typedAt:  make(map[string]time.Time),
@@ -71,6 +77,34 @@ func (h *Hub) Connect(c *Subscriber, channelIDs []string) {
 	for _, chID := range channelIDs {
 		h.attach(c, chID)
 	}
+}
+
+// Subscribers copies every socket of this node, which presence needs when it
+// has to register them in Redis again.
+func (h *Hub) Subscribers() []*Subscriber {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	var all []*Subscriber
+	for _, subs := range h.byUser {
+		for c := range subs {
+			all = append(all, c)
+		}
+	}
+	return all
+}
+
+// ChannelsOf copies the socket's channels, which is who has to hear that its
+// user came or went. The set changes under the mutex as membership does.
+func (h *Hub) ChannelsOf(c *Subscriber) []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	ids := make([]string, 0, len(c.channels))
+	for chID := range c.channels {
+		ids = append(ids, chID)
+	}
+	return ids
 }
 
 func (h *Hub) Disconnect(c *Subscriber) {

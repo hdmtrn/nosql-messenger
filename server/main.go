@@ -89,6 +89,7 @@ func run(ctx context.Context) error {
 		mongo:    mongoClient,
 		hub:      hub,
 		bus:      bus,
+		presence: newPresence(bus.rdb),
 		auth:     authSvc,
 		sessions: sessions,
 		users:    users,
@@ -98,6 +99,8 @@ func run(ctx context.Context) error {
 		invites:  invites,
 		media:    media,
 	}
+
+	go srv.runPresence(ctx)
 
 	httpSrv := &http.Server{
 		Addr:              ":8080",

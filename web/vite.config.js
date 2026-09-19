@@ -14,6 +14,7 @@ export default defineConfig({
       '/invites': api,
       '/messages': api,
       '/users': api,
+      '/presence': api,
       '/friends': api,
       '/media': api,
       '/health': api,
