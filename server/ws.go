@@ -30,7 +30,9 @@ var extraOrigins = strings.FieldsFunc(os.Getenv("WS_ALLOWED_ORIGINS"),
 // checkOrigin refuses cross-site WebSocket hijacking. The browser attaches the
 // session cookie to a socket opened from ANY page, and SameSite does not cover
 // websockets, so without this check a foreign site could read a user's incoming
-// messages. Writing is out of reach either way: the socket only ever sends.
+// messages. What a socket accepts stays harmless even if this check failed:
+// only ephemeral frames such as "typing", which store nothing and answer
+// nothing. Anything stored or needing a status code goes through REST.
 //
 // A request with no Origin is allowed. Only browsers set the header, and only
 // browsers attach cookies unprompted; a client that forges it is not a browser
@@ -83,13 +85,15 @@ func (s *server) handleWS(w http.ResponseWriter, r *http.Request, sess Session) 
 	log.Printf("+ %s connected (channels: %d)", sess.Username, len(ids))
 
 	go c.writePump(conn)
-	c.readLoop(conn)
+	c.readLoop(conn, func(frame []byte) { s.handleFrame(c, sess, frame) })
 
 	s.hub.Disconnect(c)
 	log.Printf("- %s disconnected", sess.Username)
 }
 
-func (c *Subscriber) readLoop(conn *websocket.Conn) {
+// readLoop hands every frame to handle on this goroutine, so the frames of one
+// connection are handled one at a time and in order, with no lock of their own.
+func (c *Subscriber) readLoop(conn *websocket.Conn, handle func(frame []byte)) {
 	defer conn.Close()
 
 	conn.SetReadLimit(readLimit)
@@ -99,9 +103,11 @@ func (c *Subscriber) readLoop(conn *websocket.Conn) {
 	})
 
 	for {
-		if _, _, err := conn.ReadMessage(); err != nil {
+		_, frame, err := conn.ReadMessage()
+		if err != nil {
 			return
 		}
+		handle(frame)
 	}
 }
 
