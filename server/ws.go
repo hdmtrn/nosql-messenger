@@ -85,15 +85,15 @@ func (s *server) handleWS(w http.ResponseWriter, r *http.Request, sess Session) 
 	log.Printf("+ %s connected (channels: %d)", sess.Username, len(ids))
 
 	go c.writePump(conn)
-	c.readLoop(conn, func(frame []byte) { s.handleFrame(c, sess, frame) })
+	c.readPump(conn, func(frame []byte) { s.handleFrame(c, sess, frame) })
 
 	s.hub.Disconnect(c)
 	log.Printf("- %s disconnected", sess.Username)
 }
 
-// readLoop hands every frame to handle on this goroutine, so the frames of one
+// readPump hands every frame to handle on this goroutine, so the frames of one
 // connection are handled one at a time and in order, with no lock of their own.
-func (c *Subscriber) readLoop(conn *websocket.Conn, handle func(frame []byte)) {
+func (c *Subscriber) readPump(conn *websocket.Conn, handle func(frame []byte)) {
 	defer conn.Close()
 
 	conn.SetReadLimit(readLimit)
