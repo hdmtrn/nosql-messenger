@@ -143,22 +143,14 @@ func TestRevokingASessionClosesItOnTheOtherInstance(t *testing.T) {
 	ctx := context.Background()
 	db := testDB(t)
 
-	_, busA := testInstance(t)
+	hubA, busA := testInstance(t)
 	hubB, busB := testInstance(t)
 
 	// Two stores over one database are two instances: separate caches, shared
-	// collection, as two processes would have.
+	// collection, as two processes would have. Wired exactly as main does it.
 	storeA, storeB := newSessionStore(db), newSessionStore(db)
-	storeA.onRevoked = func(id bson.ObjectID) { busA.PublishRevoked(id.Hex()) }
-	busB.onSessionRevoked = func(id string) {
-		oid, err := bson.ObjectIDFromHex(id)
-		if err != nil {
-			t.Errorf("unreadable session id %q", id)
-			return
-		}
-		storeB.evictByID(oid)
-		hubB.CloseSession(id)
-	}
+	wireRevocation(storeA, hubA, busA)
+	wireRevocation(storeB, hubB, busB)
 
 	user := &User{ID: bson.NewObjectID(), Username: "alice"}
 	sess, err := storeA.Create(ctx, user, "a browser")
@@ -166,11 +158,15 @@ func TestRevokingASessionClosesItOnTheOtherInstance(t *testing.T) {
 		t.Fatalf("creating a session: %v", err)
 	}
 
-	// A socket opened on B before the revocation authenticated once and would
-	// outlive the cache entry without being closed.
+	// Sockets opened before the revocation authenticated once and would outlive
+	// the cache entry without being closed: one on B, which hears about it over
+	// the bus, and one on A, which revokes it and must not wait for its echo.
 	socket := newSubscriber(user.ID.Hex())
 	socket.sessionID = sess.ID.Hex()
 	hubB.Connect(socket, nil)
+	local := newSubscriber(user.ID.Hex())
+	local.sessionID = sess.ID.Hex()
+	hubA.Connect(local, nil)
 
 	// B must have it cached, otherwise the test would pass even with no event:
 	// a lookup in MongoDB alone already refuses a deleted session.
@@ -180,6 +176,16 @@ func TestRevokingASessionClosesItOnTheOtherInstance(t *testing.T) {
 
 	if err := storeA.Revoke(ctx, user.ID, sess.ID); err != nil {
 		t.Fatalf("revoking: %v", err)
+	}
+
+	// Revoke returns only after onRevoked, so A's socket is already closed.
+	select {
+	case _, open := <-local.send:
+		if open {
+			t.Fatal("the revoking node's socket got a message instead of being closed")
+		}
+	default:
+		t.Fatal("the revoking node did not close its own socket")
 	}
 
 	deadline := time.Now().Add(2 * time.Second)

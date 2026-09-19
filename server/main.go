@@ -80,25 +80,7 @@ func run(ctx context.Context) error {
 	// stays unaware of what is on the other end.
 	hub.watch, hub.unwatch = bus.Watch, bus.Unwatch
 
-	// The two directions of a revocation: this node announces its own, and acts
-	// on the ones announced elsewhere. The announcing node has already dropped
-	// its copy and closed its sockets, so hearing its own event back changes
-	// nothing — and with Redis down, revocation still works where it was asked.
-	// Evicting the cache stops new requests; closing the sockets stops the ones
-	// already open, which authenticated once and would otherwise live on.
-	sessions.onRevoked = func(id bson.ObjectID) {
-		hub.CloseSession(id.Hex())
-		bus.PublishRevoked(id.Hex())
-	}
-	bus.onSessionRevoked = func(id string) {
-		oid, err := bson.ObjectIDFromHex(id)
-		if err != nil {
-			log.Printf("bus: revocation of an unreadable session id %q", id)
-			return
-		}
-		sessions.evictByID(oid)
-		hub.CloseSession(id)
-	}
+	wireRevocation(sessions, hub, bus)
 
 	go bus.Run(ctx)
 	log.Println("connected to Redis")
@@ -128,4 +110,28 @@ func run(ctx context.Context) error {
 	log.Printf("cookies: Secure=%v (set COOKIE_SECURE=false for plain http)", secureCookies)
 	log.Println("listening on", httpSrv.Addr)
 	return httpSrv.ListenAndServe()
+}
+
+// wireRevocation connects the two directions of a revocation: this node
+// announces its own, and acts on the ones announced elsewhere. The announcing
+// node has already dropped its copy and closed its sockets, so hearing its own
+// event back changes nothing — and with Redis down, revocation still works
+// where it was asked. Evicting the cache stops new requests; closing the
+// sockets stops the ones already open, which authenticated once and would
+// otherwise live on. A function of its own so that the test runs this very
+// wiring instead of a copy of it.
+func wireRevocation(sessions *sessionStore, hub *Hub, b *bus) {
+	sessions.onRevoked = func(id bson.ObjectID) {
+		hub.CloseSession(id.Hex())
+		b.PublishRevoked(id.Hex())
+	}
+	b.onSessionRevoked = func(id string) {
+		oid, err := bson.ObjectIDFromHex(id)
+		if err != nil {
+			log.Printf("bus: revocation of an unreadable session id %q", id)
+			return
+		}
+		sessions.evictByID(oid)
+		hub.CloseSession(id)
+	}
 }
