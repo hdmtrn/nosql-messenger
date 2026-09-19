@@ -68,25 +68,12 @@ func TestCloseCodeTellsARevocationFromADrop(t *testing.T) {
 			c.sessionID = "s1"
 			h.Connect(c, nil)
 
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				conn, err := websocket.Upgrade(w, r, nil, 0, 0)
-				if err != nil {
-					return
-				}
-				c.writePump(conn)
-			}))
-			defer srv.Close()
-
-			conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
-			if err != nil {
-				t.Fatalf("dialing: %v", err)
-			}
-			defer conn.Close()
+			conn := pumpedSocket(t, c, time.Now().Add(time.Hour), nil)
 
 			tc.close(h, c)
 
 			conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-			_, _, err = conn.ReadMessage()
+			_, _, err := conn.ReadMessage()
 			var ce *websocket.CloseError
 			if !errors.As(err, &ce) {
 				t.Fatalf("read gave %v, want a close frame", err)
@@ -169,4 +156,69 @@ func TestSocketWithoutASessionIsClosedWith4001(t *testing.T) {
 			t.Fatalf("a live session was closed with %d", ce.Code)
 		}
 	})
+}
+
+// pumpedSocket runs c's write pump behind a real WebSocket and returns the
+// client end, so a test reads exactly what a browser would.
+func pumpedSocket(t *testing.T, c *Subscriber, expiresAt time.Time, recheck func() (time.Time, error)) *websocket.Conn {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Upgrade(w, r, nil, 0, 0)
+		if err != nil {
+			return
+		}
+		c.writePump(conn, expiresAt, recheck)
+	}))
+	t.Cleanup(srv.Close)
+
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dialing: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	return conn
+}
+
+// A socket authenticates once, so an expiry that nobody looks up would leave
+// it open for good. When the session is due the pump asks again: gone means
+// 4001, extended means carry on, and a database that did not answer is no
+// reason to sign anyone out.
+func TestSocketClosesWhenItsSessionRunsOut(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		recheck func() (time.Time, error)
+		closed  bool
+	}{
+		{"gone", func() (time.Time, error) { return time.Time{}, errSessionNotFound }, true},
+		{"extended", func() (time.Time, error) { return time.Now().Add(time.Hour), nil }, false},
+		{"database down", func() (time.Time, error) { return time.Time{}, errors.New("no reply") }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			asked := make(chan struct{}, 1)
+			recheck := func() (time.Time, error) {
+				select {
+				case asked <- struct{}{}:
+				default:
+				}
+				return tc.recheck()
+			}
+			conn := pumpedSocket(t, newSubscriber("u1"), time.Now().Add(-time.Second), recheck)
+
+			conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+			_, _, err := conn.ReadMessage()
+			var ce *websocket.CloseError
+			isClosed := errors.As(err, &ce)
+			if isClosed != tc.closed {
+				t.Fatalf("read gave %v; closed = %v, want %v", err, isClosed, tc.closed)
+			}
+			if isClosed && ce.Code != closeSessionEnded {
+				t.Fatalf("close code %d, want %d", ce.Code, closeSessionEnded)
+			}
+			select {
+			case <-asked:
+			default:
+				t.Fatal("the pump never asked about the expired session")
+			}
+		})
+	}
 }

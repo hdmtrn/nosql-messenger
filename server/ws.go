@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"log"
 	"net/http"
@@ -131,7 +132,17 @@ func (s *server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("+ %s connected (channels: %d)", sess.Username, len(ids))
 
-	go c.writePump(conn)
+	// The socket authenticated once, above; the session can expire while it
+	// stays open, and nothing else would notice — expiry is seen only by a
+	// request that looks the session up, and the TTL index deletes the document
+	// without a word. The write pump asks again when the session is due.
+	recheck := func() (time.Time, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), writeWait)
+		defer cancel()
+		fresh, err := s.sessions.ByToken(ctx, sess.Token)
+		return fresh.ExpiresAt, err
+	}
+	go c.writePump(conn, sess.ExpiresAt, recheck)
 	c.readPump(conn, func(frame []byte) { s.handleFrame(c, sess, frame) })
 
 	s.hub.Disconnect(c)
@@ -178,10 +189,17 @@ func (c *Subscriber) readPump(conn *websocket.Conn, handle func(frame []byte)) {
 	}
 }
 
-func (c *Subscriber) writePump(conn *websocket.Conn) {
+// writePump is the only goroutine that writes to the socket. Besides the
+// messages and pings, it closes the socket when its session runs out: a timer
+// set to the session's expiry asks recheck again, since activity elsewhere may
+// have extended it. Mattermost keeps the expiry on the connection the same way
+// and re-reads the session once it has passed; it stops sending, we close.
+func (c *Subscriber) writePump(conn *websocket.Conn, expiresAt time.Time, recheck func() (time.Time, error)) {
 	ticker := time.NewTicker(pingPeriod)
+	expiry := time.NewTimer(time.Until(expiresAt))
 	defer func() {
 		ticker.Stop()
+		expiry.Stop()
 		conn.Close()
 	}()
 
@@ -202,6 +220,21 @@ func (c *Subscriber) writePump(conn *websocket.Conn) {
 			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}
+
+		case <-expiry.C:
+			next, err := recheck()
+			if errors.Is(err, errSessionNotFound) {
+				conn.SetWriteDeadline(time.Now().Add(writeWait))
+				conn.WriteMessage(websocket.CloseMessage, closeFrame(closeSessionEnded))
+				return
+			}
+			if err != nil {
+				// The database did not answer; that is no reason to sign
+				// anyone out. Ask again on the next ping's schedule.
+				log.Printf("rechecking the session of a websocket: %v", err)
+				next = time.Now().Add(pingPeriod)
+			}
+			expiry.Reset(time.Until(next))
 		}
 	}
 }
