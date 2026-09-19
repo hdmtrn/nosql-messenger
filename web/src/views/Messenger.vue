@@ -348,6 +348,12 @@ function receive(msg) {
     if (msg.user_id !== props.me.id) notePresence(msg)
     return
   }
+  // A changed name or picture: messages carry the username only, so without
+  // this the new one would appear on the next reload.
+  if (msg.type === 'profile') {
+    rememberUser(msg.user)
+    return
+  }
   // The message is what the typing was for.
   forgetTyping(msg.channel_id, msg.author.id)
   if (!channels.value.some((c) => c.id === msg.channel_id)) catchUpChannels()

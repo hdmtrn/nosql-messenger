@@ -19,6 +19,54 @@ const (
 	bioMaxLen         = 200
 )
 
+// profileEvent travels the same channel topic as messages: documents embed the
+// username only, so a new display name or picture would otherwise be seen after
+// a reload and not before.
+type profileEvent struct {
+	Type string      `json:"type"`
+	User profileView `json:"user"`
+}
+
+type profileView struct {
+	ID          string         `json:"id"`
+	Username    string         `json:"username"`
+	DisplayName string         `json:"display_name"`
+	AvatarID    *bson.ObjectID `json:"avatar_id,omitempty"`
+}
+
+// announceProfile reads the user back rather than assembling the event from
+// what the handler changed: one read, on a path taken once in a while, and the
+// event is then whole whichever handler sent it.
+func (s *server) announceProfile(ctx context.Context, sess Session) {
+	if s.bus == nil || s.channels == nil {
+		return
+	}
+
+	u, err := s.users.GetByUsername(ctx, sess.Username)
+	if err != nil {
+		log.Printf("profile: reading %s back: %v", sess.Username, err)
+		return
+	}
+
+	payload, err := json.Marshal(profileEvent{
+		Type: "profile",
+		User: profileView{
+			ID:          u.ID.Hex(),
+			Username:    u.Username,
+			DisplayName: u.DisplayName,
+			AvatarID:    u.AvatarID,
+		},
+	})
+	if err != nil {
+		log.Printf("profile: encoding the event for %s: %v", sess.Username, err)
+		return
+	}
+
+	for _, chID := range s.channelsOf(ctx, sess.UserID.Hex()) {
+		s.bus.Publish(chID, payload)
+	}
+}
+
 func (s *server) handleSearchUsers(w http.ResponseWriter, r *http.Request, _ Session) {
 	users, err := s.users.Search(r.Context(), r.URL.Query().Get("q"))
 	if err != nil {
@@ -72,6 +120,7 @@ func (s *server) handleUpdateProfile(w http.ResponseWriter, r *http.Request, ses
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	s.announceProfile(r.Context(), sess)
 	writeJSON(w, http.StatusOK, map[string]string{"display_name": name, "bio": bio})
 }
 
@@ -147,6 +196,7 @@ func (s *server) handleSetAvatar(w http.ResponseWriter, r *http.Request, sess Se
 		return
 	}
 	s.dropAvatar(r.Context(), prev)
+	s.announceProfile(r.Context(), sess)
 
 	writeJSON(w, http.StatusOK, map[string]string{"avatar_id": m.ID.Hex()})
 }
@@ -159,6 +209,7 @@ func (s *server) handleDeleteAvatar(w http.ResponseWriter, r *http.Request, sess
 		return
 	}
 	s.dropAvatar(r.Context(), prev)
+	s.announceProfile(r.Context(), sess)
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
