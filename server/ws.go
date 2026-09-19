@@ -21,6 +21,20 @@ const (
 	readLimit  = 512
 )
 
+// Sent when the socket's session was revoked or signed out. It is in the range
+// RFC 6455 leaves to applications, and it tells the client not to reconnect:
+// the next attempt would be refused anyway, and without a code the client
+// cannot tell a refusal from a network drop, so it would retry forever.
+const closeSessionRevoked = 4001
+
+// closeFrame is the payload of the close frame; nil for a plain drop.
+func closeFrame(code int) []byte {
+	if code == 0 {
+		return nil
+	}
+	return websocket.FormatCloseMessage(code, "session revoked")
+}
+
 // extraOrigins are origins accepted in addition to our own host. Needed for
 // one case only: `npm run dev` serves the page from port 5173, while the Vite
 // proxy rewrites Host to 8080, so the two never match.
@@ -90,6 +104,9 @@ func (s *server) handleWS(w http.ResponseWriter, r *http.Request, sess Session) 
 	// always sees the other. The answer is nearly always a cache hit.
 	if _, err := s.sessions.ByToken(r.Context(), sess.Token); err != nil {
 		s.hub.Disconnect(c)
+		// The write pump has not started, so this goroutine may write.
+		conn.SetWriteDeadline(time.Now().Add(writeWait))
+		conn.WriteMessage(websocket.CloseMessage, closeFrame(closeSessionRevoked))
 		conn.Close()
 		return
 	}
@@ -134,7 +151,7 @@ func (c *Subscriber) writePump(conn *websocket.Conn) {
 		case msg, ok := <-c.send:
 			conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
-				conn.WriteMessage(websocket.CloseMessage, nil)
+				conn.WriteMessage(websocket.CloseMessage, closeFrame(c.closeCode))
 				return
 			}
 			if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {

@@ -1,8 +1,14 @@
 package main
 
 import (
+	"errors"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 func TestCheckOrigin(t *testing.T) {
@@ -37,6 +43,54 @@ func TestCheckOrigin(t *testing.T) {
 			if got := checkOrigin(r); got != c.want {
 				t.Errorf("checkOrigin(Host=%q, Origin=%q) = %v, want %v",
 					c.host, c.origin, got, c.want)
+			}
+		})
+	}
+}
+
+// The close code is the only thing that tells the client a refusal from a
+// network drop; without it a revoked tab reconnects forever. A drop for a slow
+// reader must stay a plain close, which the client answers by reconnecting.
+func TestCloseCodeTellsARevocationFromADrop(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		close func(h *Hub, c *Subscriber)
+		want  int
+	}{
+		{"revoked", func(h *Hub, c *Subscriber) { h.CloseSession("s1") }, closeSessionRevoked},
+		{"dropped", func(h *Hub, c *Subscriber) { h.Disconnect(c) }, websocket.CloseNoStatusReceived},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewHub()
+			c := newSubscriber("u1")
+			c.sessionID = "s1"
+			h.Connect(c, nil)
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := websocket.Upgrade(w, r, nil, 0, 0)
+				if err != nil {
+					return
+				}
+				c.writePump(conn)
+			}))
+			defer srv.Close()
+
+			conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+			if err != nil {
+				t.Fatalf("dialing: %v", err)
+			}
+			defer conn.Close()
+
+			tc.close(h, c)
+
+			conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+			_, _, err = conn.ReadMessage()
+			var ce *websocket.CloseError
+			if !errors.As(err, &ce) {
+				t.Fatalf("read gave %v, want a close frame", err)
+			}
+			if ce.Code != tc.want {
+				t.Fatalf("close code %d, want %d", ce.Code, tc.want)
 			}
 		})
 	}

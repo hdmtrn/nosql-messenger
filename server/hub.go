@@ -11,6 +11,11 @@ type Subscriber struct {
 	// that authenticated it, so revoking the session has to close it too.
 	sessionID string
 	send      chan []byte
+	// Why the hub dropped the socket, as a WebSocket close code; zero is a plain
+	// drop, which the client answers by reconnecting. Written under the hub's
+	// mutex before send is closed, and read by the write pump only after it saw
+	// send closed — a channel close orders the two, so no lock is needed.
+	closeCode int
 
 	channels map[string]struct{}
 	dropped  bool
@@ -122,7 +127,8 @@ func (h *Hub) CloseSession(sessionID string) {
 
 	for _, subs := range h.byUser {
 		for c := range subs {
-			if c.sessionID == sessionID {
+			if c.sessionID == sessionID && !c.dropped {
+				c.closeCode = closeSessionRevoked
 				h.drop(c)
 			}
 		}

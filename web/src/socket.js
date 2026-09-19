@@ -1,7 +1,11 @@
 const RETRY_MIN = 1000
 const RETRY_MAX = 15000
+// The server closes with this when the socket's session was revoked or signed
+// out. Reconnecting would only be refused, and a refused handshake looks like a
+// network drop from here, so without the code the tab would retry forever.
+const SESSION_REVOKED = 4001
 
-export function createSocket({ onMessage, onStateChange }) {
+export function createSocket({ onMessage, onStateChange, onSessionEnded }) {
   let ws = null
   let retry = RETRY_MIN
   let timer = null
@@ -25,9 +29,14 @@ export function createSocket({ onMessage, onStateChange }) {
       }
     }
 
-    ws.onclose = () => {
+    ws.onclose = (e) => {
       onStateChange('offline')
       if (closed) return
+      if (e.code === SESSION_REVOKED) {
+        closed = true
+        onSessionEnded()
+        return
+      }
       timer = setTimeout(connect, retry)
       retry = Math.min(retry * 2, RETRY_MAX)
     }

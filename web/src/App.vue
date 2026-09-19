@@ -7,6 +7,9 @@ import Messenger from './views/Messenger.vue'
 const me = ref(null)
 const ready = ref(false)
 
+// Also what a revoked session ends in: the cookie may already hold a newer
+// session (a sign-in in another tab), so this asks who we are rather than
+// assume nobody — nobody means the sign-in screen, somebody their messenger.
 async function refreshSession() {
   const who = await api.me().catch(() => null)
   if (who && me.value && who.id === me.value.id) return
@@ -46,5 +49,6 @@ async function signOut() {
 <template>
   <div v-if="!ready" />
   <SignIn v-else-if="!me" @signed-in="me = $event" />
-  <Messenger v-else :key="me.id" :me="me" @log-out="signOut" @profile-changed="reloadProfile" />
+  <Messenger v-else :key="me.id" :me="me" @log-out="signOut" @profile-changed="reloadProfile"
+             @session-ended="refreshSession" />
 </template>
