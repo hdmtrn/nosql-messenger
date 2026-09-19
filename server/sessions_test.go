@@ -11,9 +11,9 @@ import (
 
 // A lookup reads the session from MongoDB and then writes it to the node's
 // cache. A revocation that lands between the two used to lose: the write came
-// after the eviction and brought the revoked session back for cacheTTL, so the
-// node kept accepting it — new sockets included. Each case revokes at exactly
-// that point and then asks again.
+// after the invalidation and brought the revoked session back for cacheTTL, so
+// the node kept accepting it — new sockets included. Each case revokes at
+// exactly that point and then asks again.
 func TestRevokedMidLookupIsNotCachedAgain(t *testing.T) {
 	ctx := context.Background()
 	db := testDB(t)
@@ -35,7 +35,7 @@ func TestRevokedMidLookupIsNotCachedAgain(t *testing.T) {
 			if err := a.Revoke(ctx, sess.UserID, sess.ID); err != nil {
 				t.Fatalf("revoking: %v", err)
 			}
-			b.evictByID(sess.ID)
+			b.invalidateByID(sess.ID)
 		}},
 		{"revoked while touch extends it", true, func(a, b *sessionStore, sess Session) {
 			if err := b.Revoke(ctx, sess.UserID, sess.ID); err != nil {

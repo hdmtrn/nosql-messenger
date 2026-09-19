@@ -49,14 +49,14 @@ type sessionStore struct {
 
 	mu    sync.RWMutex
 	cache map[string]cachedSession
-	// Counts evictions. A lookup notes it before asking the database and writes
-	// the answer to the cache only if it has not moved: an eviction in between
+	// Counts invalidations. A lookup notes it before asking the database and writes
+	// the answer to the cache only if it has not moved: an invalidation in between
 	// means the session may have been deleted while the answer was on its way,
 	// and caching it then would bring a revoked session back for cacheTTL. One
 	// counter for the whole store rather than one per token, which would have
-	// to be cleaned up: an unrelated eviction costs only a skipped write, i.e.
+	// to be cleaned up: an unrelated invalidation costs only a skipped write, i.e.
 	// one more database lookup next time.
-	evictions uint64
+	invalidations uint64
 	// Runs just before a lookup writes to the cache, for tests that need a
 	// revocation to land exactly there. Nil outside tests.
 	beforeCache func()
@@ -106,39 +106,39 @@ func (s *sessionStore) put(sess Session) {
 	s.mu.Unlock()
 }
 
-// putIfCurrent caches what a lookup read, unless something was evicted since
-// the lookup noted the counter (seen). The check and the write share the lock
-// with evict, so a revocation either comes first and the write is skipped, or
-// comes after and removes what was written.
+// putIfCurrent caches what a lookup read, unless something was invalidated
+// since the lookup noted the counter (seen). The check and the write share the
+// lock with invalidate, so a revocation either comes first and the write is
+// skipped, or comes after and removes what was written.
 func (s *sessionStore) putIfCurrent(sess Session, seen uint64) {
 	if s.beforeCache != nil {
 		s.beforeCache()
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.evictions != seen {
+	if s.invalidations != seen {
 		return
 	}
 	s.cache[sess.Token] = cachedSession{sess: sess, cachedAt: time.Now()}
 }
 
-func (s *sessionStore) evict(token string) {
+func (s *sessionStore) invalidate(token string) {
 	s.mu.Lock()
 	delete(s.cache, token)
-	s.evictions++
+	s.invalidations++
 	s.mu.Unlock()
 }
 
-// evictByID is what an instance does when it hears about a revocation elsewhere:
-// it has the session id but not the token the cache is keyed by. The scan is
-// over the sessions cached on this node and happens only on a revocation, which
-// is rare — a second index kept in step on every login would cost more than it
-// saves.
-func (s *sessionStore) evictByID(id bson.ObjectID) {
+// invalidateByID is what an instance does when it hears about a revocation
+// elsewhere: it has the session id but not the token the cache is keyed by. The
+// scan is over the sessions cached on this node and happens only on a
+// revocation, which is rare — a second index kept in step on every login would
+// cost more than it saves.
+func (s *sessionStore) invalidateByID(id bson.ObjectID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.evictions++
+	s.invalidations++
 	for token, entry := range s.cache {
 		if entry.sess.ID == id {
 			delete(s.cache, token)
@@ -182,14 +182,14 @@ func (s *sessionStore) ByToken(ctx context.Context, token string) (Session, erro
 
 	s.mu.RLock()
 	entry, hit := s.cache[token]
-	seen := s.evictions
+	seen := s.invalidations
 	s.mu.RUnlock()
 
 	sess := entry.sess
 	if !hit || time.Since(entry.cachedAt) >= cacheTTL {
 		if err := s.col.FindOne(ctx, bson.M{"token": token}).Decode(&sess); err != nil {
 			if errors.Is(err, mongo.ErrNoDocuments) {
-				s.evict(token)
+				s.invalidate(token)
 				return Session{}, errSessionNotFound
 			}
 			return Session{}, fmt.Errorf("looking up session: %w", err)
@@ -236,7 +236,7 @@ func (s *sessionStore) touch(ctx context.Context, sess Session, seen uint64) {
 func (s *sessionStore) Delete(ctx context.Context, token string) error {
 	var sess Session
 	err := s.col.FindOneAndDelete(ctx, bson.M{"token": token}).Decode(&sess)
-	s.evict(token)
+	s.invalidate(token)
 
 	if errors.Is(err, mongo.ErrNoDocuments) {
 		// Signing out with a token that is already gone is not a failure.
@@ -282,7 +282,7 @@ func (s *sessionStore) Revoke(ctx context.Context, userID, sessionID bson.Object
 	if err != nil {
 		return fmt.Errorf("revoking session: %w", err)
 	}
-	s.evict(sess.Token)
+	s.invalidate(sess.Token)
 	s.onRevoked(sess.ID)
 	return nil
 }
