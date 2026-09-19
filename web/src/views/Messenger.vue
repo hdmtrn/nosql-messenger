@@ -307,7 +307,18 @@ watch(messages, resolveReplies)
 
 let socket = null
 
+// The server can route this socket to a channel the list has never shown: a
+// direct conversation somebody else opened, or a join made in another tab.
+// Its messages already arrive, so the list catches up now rather than on
+// reload. One request at a time — a burst in a new channel would otherwise
+// fetch the same list once per message.
+let catchingUp = null
+function catchUpChannels() {
+  catchingUp ??= loadChannels().finally(() => { catchingUp = null })
+}
+
 function receive(msg) {
+  if (!channels.value.some((c) => c.id === msg.channel_id)) catchUpChannels()
   if (msg.channel_id !== activeId.value) {
     unread.value = { ...unread.value, [msg.channel_id]: (unread.value[msg.channel_id] || 0) + 1 }
     return

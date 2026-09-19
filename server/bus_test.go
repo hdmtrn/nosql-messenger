@@ -186,3 +186,34 @@ func TestRevokingASessionClosesItOnTheOtherInstance(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+// A join is handled by whichever node got the request, while the joining user's
+// socket may sit on another. Without the announcement only the handling node
+// would route the socket to the channel, and the user would see nothing from it
+// until a reload.
+func TestSubscribingReachesASocketOnTheOtherInstance(t *testing.T) {
+	_, busA := testInstance(t)
+	hubB, busB := testInstance(t)
+
+	bob := newSubscriber("bob")
+	hubB.Connect(bob, nil)
+
+	// The request lands on A, which holds none of Bob's sockets. B listening on
+	// the channel's topic is proof that the change reached it; counting on Redis
+	// is enough, since A has no reader of its own to subscribe for.
+	busA.Subscribe("bob", "c-join")
+	waitForSubscribers(t, busB, channelTopic+"c-join", 1)
+
+	busA.Publish("c-join", []byte("welcome"))
+	select {
+	case got := <-bob.send:
+		if string(got) != "welcome" {
+			t.Fatalf("received %q", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the socket on the other instance never received the channel")
+	}
+
+	busA.Unsubscribe("bob", "c-join")
+	waitForSubscribers(t, busB, channelTopic+"c-join", 0)
+}

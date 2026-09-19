@@ -25,7 +25,7 @@ func serveWeb(w http.ResponseWriter, r *http.Request) {
 type server struct {
 	mongo *mongo.Client
 	// hub delivers to the sockets of this process, bus to every instance.
-	// Handlers broadcast through bus and never through hub.
+	// Handlers broadcast and route sockets through bus, never through hub.
 	hub      *Hub
 	bus      publisher
 	auth     *auth

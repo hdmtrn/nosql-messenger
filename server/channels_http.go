@@ -47,7 +47,7 @@ func (s *server) handleCreateChannel(w http.ResponseWriter, r *http.Request, ses
 		log.Printf("creating first invite: %v", err)
 	}
 
-	s.hub.Subscribe(sess.UserID.Hex(), ch.ID.Hex())
+	s.bus.Subscribe(sess.UserID.Hex(), ch.ID.Hex())
 	writeJSON(w, http.StatusCreated, ch)
 }
 
@@ -164,8 +164,8 @@ func (s *server) handleOpenDirect(w http.ResponseWriter, r *http.Request, sess S
 	}
 
 	// Both sides may already hold a socket, and neither reconnects for this.
-	s.hub.Subscribe(sess.UserID.Hex(), ch.ID.Hex())
-	s.hub.Subscribe(other.ID.Hex(), ch.ID.Hex())
+	s.bus.Subscribe(sess.UserID.Hex(), ch.ID.Hex())
+	s.bus.Subscribe(other.ID.Hex(), ch.ID.Hex())
 
 	writeJSON(w, http.StatusOK, ch)
 }
@@ -188,7 +188,7 @@ func (s *server) handleLeaveChannel(w http.ResponseWriter, r *http.Request, sess
 		return
 	}
 
-	s.hub.Unsubscribe(sess.UserID.Hex(), id.Hex())
+	s.bus.Unsubscribe(sess.UserID.Hex(), id.Hex())
 	writeJSON(w, http.StatusOK, map[string]string{"status": "left"})
 }
 
