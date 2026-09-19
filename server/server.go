@@ -28,6 +28,7 @@ type server struct {
 	// Handlers broadcast and route sockets through bus, never through hub.
 	hub      *Hub
 	bus      publisher
+	presence *presence
 	auth     *auth
 	sessions *sessionStore
 	users    *userStore
@@ -56,6 +57,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /users", s.requireAuth(s.handleSearchUsers))
 	mux.HandleFunc("GET /users/{username}", s.requireAuth(s.handleGetUser))
 	mux.HandleFunc("GET /users/{username}/channels", s.requireAuth(s.handleChannelsInCommon))
+	mux.HandleFunc("GET /presence", s.requireAuth(s.handlePresence))
 
 	mux.HandleFunc("POST /channels", s.requireAuth(s.handleCreateChannel))
 	mux.HandleFunc("GET /channels", s.requireAuth(s.handleListChannels))

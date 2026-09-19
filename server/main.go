@@ -89,6 +89,7 @@ func run(ctx context.Context) error {
 		mongo:    mongoClient,
 		hub:      hub,
 		bus:      bus,
+		presence: newPresence(bus.rdb),
 		auth:     authSvc,
 		sessions: sessions,
 		users:    users,
@@ -98,6 +99,8 @@ func run(ctx context.Context) error {
 		invites:  invites,
 		media:    media,
 	}
+
+	go srv.runPresence(ctx)
 
 	httpSrv := &http.Server{
 		Addr:              ":8080",
@@ -116,7 +119,7 @@ func run(ctx context.Context) error {
 // announces its own, and acts on the ones announced elsewhere. The announcing
 // node has already dropped its copy and closed its sockets, so hearing its own
 // event back changes nothing — and with Redis down, revocation still works
-// where it was asked. Evicting the cache stops new requests; closing the
+// where it was asked. Invalidating the cache stops new requests; closing the
 // sockets stops the ones already open, which authenticated once and would
 // otherwise live on. A function of its own so that the test runs this very
 // wiring instead of a copy of it.
@@ -131,7 +134,7 @@ func wireRevocation(sessions *sessionStore, hub *Hub, b *bus) {
 			log.Printf("bus: revocation of an unreadable session id %q", id)
 			return
 		}
-		sessions.evictByID(oid)
+		sessions.invalidateByID(oid)
 		hub.CloseSession(id)
 	}
 }

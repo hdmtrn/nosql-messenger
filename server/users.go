@@ -24,6 +24,9 @@ type User struct {
 	PasswordHash string         `bson:"password_hash"       json:"-"`
 	AvatarID     *bson.ObjectID `bson:"avatar_id,omitempty" json:"avatar_id,omitempty"`
 	CreatedAt    time.Time      `bson:"created_at"          json:"created_at"`
+	// When the user's last socket closed. Written only on that edge, so a
+	// second tab closing costs nothing; a user who is online has no use for it.
+	LastSeenAt *time.Time `bson:"last_seen_at,omitempty" json:"last_seen_at,omitempty"`
 }
 
 // normaliseUsername folds the handle so that Mara and mara cannot be two people,
@@ -117,6 +120,40 @@ func (s *userStore) UpdateProfile(ctx context.Context, id bson.ObjectID, display
 		bson.M{"$set": bson.M{"display_name": displayName, "bio": bio}},
 	)
 	return err
+}
+
+func (s *userStore) SetLastSeen(ctx context.Context, id bson.ObjectID, at time.Time) error {
+	_, err := s.col.UpdateOne(ctx,
+		bson.M{"_id": id},
+		bson.M{"$set": bson.M{"last_seen_at": at}},
+	)
+	return err
+}
+
+// LastSeenByIDs answers for the users that are offline right now. Those still
+// online are not asked about: they are seen at this very moment.
+func (s *userStore) LastSeenByIDs(ctx context.Context, ids []bson.ObjectID) (map[string]time.Time, error) {
+	cur, err := s.col.Find(ctx,
+		bson.M{"_id": bson.M{"$in": ids}, "last_seen_at": bson.M{"$exists": true}},
+		options.Find().SetProjection(bson.M{"last_seen_at": 1}),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	var rows []struct {
+		ID         bson.ObjectID `bson:"_id"`
+		LastSeenAt time.Time     `bson:"last_seen_at"`
+	}
+	if err := cur.All(ctx, &rows); err != nil {
+		return nil, err
+	}
+
+	out := make(map[string]time.Time, len(rows))
+	for _, row := range rows {
+		out[row.ID.Hex()] = row.LastSeenAt
+	}
+	return out, nil
 }
 
 // SetAvatar swaps the avatar in one step and hands back the one it replaced, so

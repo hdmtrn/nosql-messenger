@@ -50,6 +50,8 @@ export const api = {
   setChannelAvatar: (id, blob) => upload(`/channels/${id}/avatar`, blob),
   removeChannelAvatar: (id) => request('DELETE', `/channels/${id}/avatar`),
 
+  presence: (ids) => request('GET', '/presence' + qs({ ids: ids.join(',') })),
+
   searchUsers: (q) => request('GET', '/users' + qs({ q })),
   user: (username) => request('GET', `/users/${encodeURIComponent(username)}`),
   updateProfile: (display_name, bio) => request('POST', '/auth/me/profile', { display_name, bio }),
