@@ -413,3 +413,27 @@ func (s *channelStore) Direct(ctx context.Context, me Session, other *User) (Cha
 	}
 	return ch, nil
 }
+
+// channelsOf is where to announce something about a user: their channels are
+// who displays them. A socket of our own carries its channels in the hub, so
+// this is for the paths that have no socket at hand — the presence sweep and a
+// changed profile.
+func (s *server) channelsOf(ctx context.Context, userID string) []string {
+	id, err := bson.ObjectIDFromHex(userID)
+	if err != nil {
+		log.Printf("presence: unreadable user id %q", userID)
+		return nil
+	}
+
+	chans, err := s.channels.ForUser(ctx, id, bson.ObjectID{}, channelsMaxLimit)
+	if err != nil {
+		log.Printf("presence: listing the channels of %s: %v", userID, err)
+		return nil
+	}
+
+	ids := make([]string, 0, len(chans))
+	for _, ch := range chans {
+		ids = append(ids, ch.ID.Hex())
+	}
+	return ids
+}

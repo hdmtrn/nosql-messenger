@@ -100,6 +100,8 @@ func run(ctx context.Context) error {
 		media:    media,
 	}
 
+	go srv.runPresence(ctx)
+
 	httpSrv := &http.Server{
 		Addr:              ":8080",
 		Handler:           srv.routes(),
