@@ -172,6 +172,9 @@ function send() {
     <div style="display:flex;align-items:center;gap:16px">
       <div
         :style="{ flex: 1, display: 'flex', alignItems: 'center', gap: '12px', height: '48px',
+                  /* Without this the field keeps the text input's intrinsic width as its
+                     floor and pushes Send out of the row on a narrow pane. */
+                  minWidth: 0,
                   padding: '0 24px 0 12px',
                   background: 'var(--surface-sunken)', borderRadius: 'var(--radius-pill)',
                   boxShadow: focused ? 'inset 0 0 0 2px var(--border-active)' : 'none' }"

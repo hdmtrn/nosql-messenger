@@ -427,6 +427,9 @@ onUnmounted(() => socket && socket.close())
         @person="openPerson"
       />
 
+      <!-- Everything right of the rail. On a narrow window a side panel covers this
+           box exactly, so the feed under it keeps its width and scroll position. -->
+      <div class="stage">
       <Profile
         v-if="showProfile"
         :me="me"
@@ -491,6 +494,7 @@ onUnmounted(() => socket && socket.close())
           />
         </div>
       </Transition>
+      </div>
 
     </div>
 
@@ -516,6 +520,13 @@ onUnmounted(() => socket && socket.close())
 </template>
 
 <style scoped>
+.stage {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 16px;
+  position: relative;
+}
 /* The wrapper animates its width and clips; the panel inside stays 340px wide,
    so its text does not rewrap on every frame. It is pinned to the right edge,
    so it slides in from there. */
@@ -538,17 +549,27 @@ onUnmounted(() => socket && socket.close())
   opacity: 0;
 }
 /* Below 1100px a 340px panel beside the feed would squeeze the feed under ~400px,
-   so the panel lies over the feed instead. The paper strip on its left stands in
-   for the 16px gap it has in the wide layout; there it only fades. */
+   and laying it over part of the feed cut bubbles in half. So the panel covers the
+   whole stage instead, as Telegram's info page replaces the chat on a narrow
+   window. The feed underneath keeps its width, so nothing rewraps and its scroll
+   position is still there when the panel closes. */
 @media (max-width: 1100px) {
   .side {
     position: absolute;
-    top: 16px;
-    right: 16px;
-    bottom: 16px;
+    inset: 0;
     z-index: 10;
-    padding-left: 16px;
     background: var(--surface-page);
+  }
+  /* The panel sets its 340px inline; here it takes the stage's width instead,
+     and may shrink below 340px on a very narrow window rather than be clipped. */
+  .side > :deep(aside) {
+    flex: 1 1 0 !important;
+    min-width: 0;
+  }
+  /* covering, not sliding into a row: there is no gap to cancel */
+  .side-enter-from,
+  .side-leave-to {
+    margin-left: 0;
   }
 }
 </style>
