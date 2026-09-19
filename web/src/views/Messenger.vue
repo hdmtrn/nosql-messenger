@@ -48,19 +48,38 @@ watch(() => [props.me.display_name, props.me.avatar_id], () => rememberUser(prop
 
 /* ---------- address bar ---------- */
 
-// The open pane lives in the address bar, so a reload lands back on it. The
+// The open pane lives in the address bar, so a reload lands back on it: the chat
+// as /c/{id}, and a side panel after it — /info for the chat's own panel,
+// /u/{username} for a person's page, which can also stand without a chat. The
 // prefix is /c/ and not /channels/ because GET /channels/{id} is an API route:
-// the dev proxy would answer a reload with JSON instead of the page.
+// the dev proxy would answer a reload with JSON instead of the page. /u/ does
+// not clash with /users, since the proxy matches whole prefixes.
 function paneFromUrl() {
-  if (location.pathname === '/profile') showProfile.value = true
-  const match = location.pathname.match(/^\/c\/([^/]+)$/)
-  if (match) activeId.value = match[1]
+  if (location.pathname === '/profile') {
+    showProfile.value = true
+    return
+  }
+  const match = location.pathname.match(/^(?:\/c\/([^/]+))?(?:\/(info)|\/u\/([^/]+))?$/)
+  if (!match) return
+  const [, chat, info, username] = match
+  if (chat) activeId.value = chat
+  if (info) showInfo.value = true
+  if (username) person.value = decodeURIComponent(username)
+}
+
+function paneToUrl() {
+  if (showProfile.value) return '/profile'
+  const chat = activeId.value ? `/c/${activeId.value}` : ''
+  // The info panel shows only with its chat; a person's page shows either way.
+  if (person.value) return `${chat}/u/${encodeURIComponent(person.value)}`
+  if (showInfo.value && chat) return `${chat}/info`
+  return chat || '/'
 }
 
 // replaceState rather than pushState: switching chats should not pile up
 // entries that the back button would then have to walk through.
-watch([activeId, showProfile], () => {
-  const path = showProfile.value ? '/profile' : activeId.value ? `/c/${activeId.value}` : '/'
+watch([activeId, showProfile, showInfo, person], () => {
+  const path = paneToUrl()
   if (location.pathname !== path) history.replaceState(null, '', path)
 })
 
