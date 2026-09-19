@@ -124,7 +124,7 @@ func (s *server) handleFollowInvite(w http.ResponseWriter, r *http.Request, sess
 		return
 	}
 
-	s.hub.Subscribe(sess.UserID.Hex(), inv.ChannelID.Hex())
+	s.bus.Subscribe(sess.UserID.Hex(), inv.ChannelID.Hex())
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":     status,
 		"channel_id": inv.ChannelID.Hex(),

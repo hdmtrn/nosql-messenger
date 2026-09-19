@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -23,7 +24,10 @@ const (
 	// token — the token is the credential itself, and there is no reason to put
 	// it on the wire. Rocket.Chat keeps a hash of the token for the same reason.
 	sessionTopic = "session-revoked"
-	// Subscription changes waiting for the bus goroutine. They arrive from the
+	// Also one topic for all: a subscription change concerns one user, and
+	// nobody knows which nodes hold that user's sockets.
+	subscriptionTopic = "subscription"
+	// Watch changes waiting for the bus goroutine. They arrive from the
 	// hub, which holds its mutex at the time, so enqueuing must never block.
 	watchQueue = 256
 	// A publish outlives the request that caused it, so it cannot borrow the
@@ -42,8 +46,21 @@ func redisAddr() string {
 // same interface and reaches this process only, which is what tests use — they
 // then need neither Redis nor a second instance to check that a handler
 // broadcasts what it should.
+//
+// Subscribe and Unsubscribe route a user's open sockets to a channel. This is
+// not membership — that lives in MongoDB — but the in-memory view of it that
+// the hub delivers by, and every node holding the user's sockets has to update
+// its own.
 type publisher interface {
 	Publish(chID string, msg []byte)
+	Subscribe(userID, chID string)
+	Unsubscribe(userID, chID string)
+}
+
+type subscriptionChange struct {
+	UserID     string `json:"user_id"`
+	ChID       string `json:"channel_id"`
+	Subscribed bool   `json:"subscribed"`
 }
 
 type watchChange struct {
@@ -72,15 +89,24 @@ func newBus(ctx context.Context, hub *Hub) (*bus, error) {
 		return nil, fmt.Errorf("ping Redis: %w", err)
 	}
 
-	// The permanent topic is subscribed here rather than in Run, so that once
+	// The permanent topics are subscribed here rather than in Run, so that once
 	// this function returns the instance is certainly listening. In Run it
 	// would happen in another goroutine, and an event published right after
 	// startup could slip past.
+	permanent := []string{sessionTopic, subscriptionTopic}
 	sub := rdb.Subscribe(ctx)
-	if err := sub.Subscribe(ctx, sessionTopic); err != nil {
+	err := sub.Subscribe(ctx, permanent...)
+	// Subscribe only writes the command; Redis may not have run it yet. Each
+	// topic is confirmed by a reply of its own, and only after reading them
+	// all is the instance really listening — a test caught an event published
+	// in the gap between the two.
+	for i := 0; err == nil && i < len(permanent); i++ {
+		_, err = sub.Receive(pingCtx)
+	}
+	if err != nil {
 		sub.Close()
 		rdb.Close()
-		return nil, fmt.Errorf("subscribing to %s: %w", sessionTopic, err)
+		return nil, fmt.Errorf("subscribing to the permanent topics: %w", err)
 	}
 
 	return &bus{
@@ -115,6 +141,36 @@ func (b *bus) PublishRevoked(sessionID string) {
 	}
 }
 
+// Subscribe and Unsubscribe apply the change here first and then announce it,
+// as a revocation does: with Redis down, a join still works for the sockets on
+// this node. Our own event comes back from Redis and is applied a second time,
+// which is harmless — both hub methods are idempotent, so there is no need to
+// tell our echo apart from somebody else's event.
+func (b *bus) Subscribe(userID, chID string) {
+	b.hub.Subscribe(userID, chID)
+	b.publishSubscription(subscriptionChange{UserID: userID, ChID: chID, Subscribed: true})
+}
+
+func (b *bus) Unsubscribe(userID, chID string) {
+	b.hub.Unsubscribe(userID, chID)
+	b.publishSubscription(subscriptionChange{UserID: userID, ChID: chID, Subscribed: false})
+}
+
+func (b *bus) publishSubscription(c subscriptionChange) {
+	payload, err := json.Marshal(c)
+	if err != nil {
+		log.Printf("bus: encoding a subscription change: %v", err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), publishTimeout)
+	defer cancel()
+
+	if err := b.rdb.Publish(ctx, subscriptionTopic, payload).Err(); err != nil {
+		log.Printf("bus: publishing a subscription change for %s: %v", c.ChID, err)
+	}
+}
+
 // Watch and Unwatch are called from the hub while it holds its mutex, so they
 // only leave a note for the bus goroutine. A full queue means Redis is slow or
 // gone; dropping the note is better than stalling every broadcast behind the
@@ -126,16 +182,16 @@ func (b *bus) change(chID string, on bool) {
 	select {
 	case b.changes <- watchChange{chID: chID, on: on}:
 	default:
-		log.Printf("bus: dropped a subscription change for %s", chID)
+		log.Printf("bus: dropped a watch change for %s", chID)
 	}
 }
 
 // Run owns the subscription for the lifetime of the process: one connection to
 // Redis for the whole instance, not one per client as Revolt does.
 func (b *bus) Run(ctx context.Context) {
-	// Channel topics come and go with the local readers; the permanent one was
-	// subscribed in newBus, because a revocation concerns every node whatever
-	// it happens to be watching.
+	// Channel topics come and go with the local readers; the permanent ones were
+	// subscribed in newBus, because a revocation or a subscription change
+	// concerns every node whatever it happens to be watching.
 	sub := b.sub
 	defer sub.Close()
 
@@ -154,7 +210,7 @@ func (b *bus) Run(ctx context.Context) {
 				err = sub.Unsubscribe(ctx, channelTopic+c.chID)
 			}
 			if err != nil {
-				log.Printf("bus: subscription change for %s: %v", c.chID, err)
+				log.Printf("bus: watch change for %s: %v", c.chID, err)
 			}
 
 		case m, ok := <-incoming:
@@ -167,6 +223,17 @@ func (b *bus) Run(ctx context.Context) {
 			case m.Channel == sessionTopic:
 				if b.onSessionRevoked != nil {
 					b.onSessionRevoked(m.Payload)
+				}
+			case m.Channel == subscriptionTopic:
+				var c subscriptionChange
+				if err := json.Unmarshal([]byte(m.Payload), &c); err != nil {
+					log.Printf("bus: unreadable subscription change %q: %v", m.Payload, err)
+					continue
+				}
+				if c.Subscribed {
+					b.hub.Subscribe(c.UserID, c.ChID)
+				} else {
+					b.hub.Unsubscribe(c.UserID, c.ChID)
 				}
 			}
 		}
