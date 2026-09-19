@@ -344,6 +344,10 @@ function receive(msg) {
     noteTyping(msg)
     return
   }
+  if (msg.type === 'presence') {
+    if (msg.user_id !== props.me.id) notePresence(msg)
+    return
+  }
   // The message is what the typing was for.
   forgetTyping(msg.channel_id, msg.author.id)
   if (!channels.value.some((c) => c.id === msg.channel_id)) catchUpChannels()
@@ -425,6 +429,59 @@ function rearmTyping() {
   nextAnnounceAt = Math.min(nextAnnounceAt, announcedAt + TYPING_SERVER_GAP_MS)
 }
 
+/* ---------- presence ---------- */
+
+// { [userId]: { online, last_seen, epoch, version } }. Events about one person
+// come from different server nodes and can overtake each other, so each state
+// carries (epoch, version) and only a newer one replaces what we have. The
+// epoch changes when the server's Redis was restarted and its versions began
+// again from one.
+const presence = ref({})
+
+function newer(had, got) {
+  if (!had) return true
+  if (got.epoch !== had.epoch) return got.epoch > had.epoch
+  return got.version >= had.version
+}
+
+function notePresence(ev) {
+  const had = presence.value[ev.user_id]
+  if (!newer(had, ev)) return
+  presence.value = {
+    ...presence.value,
+    [ev.user_id]: {
+      online: ev.online,
+      last_seen: ev.last_seen || (ev.online ? null : had?.last_seen) || null,
+      epoch: ev.epoch,
+      version: ev.version,
+    },
+  }
+}
+
+// Events only tell what changes while the socket is up, so the state on arrival
+// is asked for over REST — after a reconnect too, since anything could have
+// happened while the tab was offline.
+async function loadPresence() {
+  const ids = channels.value
+    .filter((c) => c.kind === 'direct')
+    .map((c) => (c.members || []).find((m) => m.user_id !== props.me.id)?.user_id)
+    .filter(Boolean)
+  if (!ids.length) return
+
+  const states = await api.presence(ids).catch(() => null)
+  if (!states) return
+  presence.value = Object.fromEntries(
+    Object.entries(states).map(([id, s]) => [id, { online: s.online, last_seen: s.last_seen || null, epoch: s.epoch, version: s.version }])
+  )
+}
+
+// The person on the other side of the open direct chat, if it is one.
+const activePresence = computed(() => {
+  if (!active.value || active.value.kind !== 'direct') return null
+  const other = (active.value.members || []).find((m) => m.user_id !== props.me.id)
+  return other ? presence.value[other.user_id] || null : null
+})
+
 // A socket that was down missed messages; the REST history is what fills the gap.
 async function backfill() {
   const latest = await api.messages({ channel_id: activeId.value })
@@ -485,13 +542,17 @@ onMounted(async () => {
   if (activeId.value && !active.value) activeId.value = null
   if (activeId.value) selectChannel(activeId.value)
   loadPeople()
+  loadPresence()
   socket = createSocket({
     onMessage: receive,
     onSessionEnded: () => emit('session-ended'),
     onStateChange: (state) => {
       const wasOffline = connection.value === 'offline'
       connection.value = state
-      if (state === 'online' && wasOffline && activeId.value) backfill()
+      if (state === 'online' && wasOffline) {
+        loadPresence()
+        if (activeId.value) backfill()
+      }
     },
   })
 })
@@ -553,6 +614,7 @@ onUnmounted(() => {
         :pending="pendingAction && pendingAction.channelId === activeId ? pendingAction : null"
         :originals="originals"
         :typing="activeTyping"
+        :presence="activePresence"
         @typing="announceTyping"
         @reply="startReply"
         @find="findMessage"
