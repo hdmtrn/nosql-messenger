@@ -28,6 +28,7 @@ type server struct {
 	// Handlers broadcast and route sockets through bus, never through hub.
 	hub      *Hub
 	bus      publisher
+	presence *presence
 	auth     *auth
 	sessions *sessionStore
 	users    *userStore

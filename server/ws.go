@@ -130,6 +130,7 @@ func (s *server) handleWS(w http.ResponseWriter, r *http.Request) {
 		refuse(conn, err)
 		return
 	}
+	s.socketOpened(r.Context(), c, ids)
 	log.Printf("+ %s connected (channels: %d)", sess.Username, len(ids))
 
 	// The socket authenticated once, above; the session can expire while it
@@ -145,7 +146,11 @@ func (s *server) handleWS(w http.ResponseWriter, r *http.Request) {
 	go c.writePump(conn, sess.ExpiresAt, recheck)
 	c.readPump(conn, func(frame []byte) { s.handleFrame(c, sess, frame) })
 
+	// The channels are read before the hub forgets them, and the going is
+	// announced after the socket is out of the hub: it must not hear itself.
+	leaving := s.hub.ChannelsOf(c)
 	s.hub.Disconnect(c)
+	s.socketClosed(c, leaving)
 	log.Printf("- %s disconnected", sess.Username)
 }
 

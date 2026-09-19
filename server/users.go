@@ -24,6 +24,9 @@ type User struct {
 	PasswordHash string         `bson:"password_hash"       json:"-"`
 	AvatarID     *bson.ObjectID `bson:"avatar_id,omitempty" json:"avatar_id,omitempty"`
 	CreatedAt    time.Time      `bson:"created_at"          json:"created_at"`
+	// When the user's last socket closed. Written only on that edge, so a
+	// second tab closing costs nothing; a user who is online has no use for it.
+	LastSeenAt *time.Time `bson:"last_seen_at,omitempty" json:"last_seen_at,omitempty"`
 }
 
 // normaliseUsername folds the handle so that Mara and mara cannot be two people,
@@ -115,6 +118,14 @@ func (s *userStore) UpdateProfile(ctx context.Context, id bson.ObjectID, display
 	_, err := s.col.UpdateOne(ctx,
 		bson.M{"_id": id},
 		bson.M{"$set": bson.M{"display_name": displayName, "bio": bio}},
+	)
+	return err
+}
+
+func (s *userStore) SetLastSeen(ctx context.Context, id bson.ObjectID, at time.Time) error {
+	_, err := s.col.UpdateOne(ctx,
+		bson.M{"_id": id},
+		bson.M{"$set": bson.M{"last_seen_at": at}},
 	)
 	return err
 }

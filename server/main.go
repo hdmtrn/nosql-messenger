@@ -89,6 +89,7 @@ func run(ctx context.Context) error {
 		mongo:    mongoClient,
 		hub:      hub,
 		bus:      bus,
+		presence: newPresence(bus.rdb),
 		auth:     authSvc,
 		sessions: sessions,
 		users:    users,
