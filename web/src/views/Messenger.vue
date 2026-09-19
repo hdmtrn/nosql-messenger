@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api } from '../api'
 import { createSocket } from '../socket'
 import { avatarUrl, channelAvatarUrl, channelTitle, displayName, initials, rememberUser } from '../naming'
@@ -29,6 +29,11 @@ const showInfo = ref(false)
 // Username of the person whose page is open. It takes the same slot as the
 // channel info, so opening one closes the other.
 const person = ref('')
+// False while the panes from the address bar are being put back after a reload.
+// The chat's info panel waits for the channel list, so it mounts after the page
+// does and Transition would take that for an opening; with this off it just
+// stands there, as it did before the reload.
+const panesRestored = ref(false)
 
 const conversation = ref(null)
 const loadingOlder = ref(false)
@@ -484,6 +489,8 @@ onMounted(async () => {
   // URL was written by another account that used this tab before.
   if (activeId.value && !active.value) activeId.value = null
   if (activeId.value) selectChannel(activeId.value)
+  // let the restored panel render without its slide before animations come back
+  nextTick(() => { panesRestored.value = true })
   loadPeople()
   socket = createSocket({
     onMessage: receive,
@@ -567,7 +574,7 @@ onUnmounted(() => {
 
       <!-- The side panels slide like the rail collapses. v-if alone would remove them
            in one frame; Transition keeps the node until the width has closed. -->
-      <Transition name="side">
+      <Transition name="side" :css="panesRestored">
         <div v-if="showInfo && active && !showProfile" class="side">
           <InfoPanel
             :me="me"
@@ -582,7 +589,7 @@ onUnmounted(() => {
         </div>
       </Transition>
 
-      <Transition name="side">
+      <Transition name="side" :css="panesRestored">
         <div v-if="person && !showProfile" class="side">
           <UserPanel
             :username="person"
