@@ -49,6 +49,17 @@ type sessionStore struct {
 
 	mu    sync.RWMutex
 	cache map[string]cachedSession
+	// Counts evictions. A lookup notes it before asking the database and writes
+	// the answer to the cache only if it has not moved: an eviction in between
+	// means the session may have been deleted while the answer was on its way,
+	// and caching it then would bring a revoked session back for cacheTTL. One
+	// counter for the whole store rather than one per token, which would have
+	// to be cleaned up: an unrelated eviction costs only a skipped write, i.e.
+	// one more database lookup next time.
+	evictions uint64
+	// Runs just before a lookup writes to the cache, for tests that need a
+	// revocation to land exactly there. Nil outside tests.
+	beforeCache func()
 
 	// Called after a session is gone from the database, so that the other
 	// instances drop it from their caches too. Without it a revoked session
@@ -95,9 +106,26 @@ func (s *sessionStore) put(sess Session) {
 	s.mu.Unlock()
 }
 
+// putIfCurrent caches what a lookup read, unless something was evicted since
+// the lookup noted the counter (seen). The check and the write share the lock
+// with evict, so a revocation either comes first and the write is skipped, or
+// comes after and removes what was written.
+func (s *sessionStore) putIfCurrent(sess Session, seen uint64) {
+	if s.beforeCache != nil {
+		s.beforeCache()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.evictions != seen {
+		return
+	}
+	s.cache[sess.Token] = cachedSession{sess: sess, cachedAt: time.Now()}
+}
+
 func (s *sessionStore) evict(token string) {
 	s.mu.Lock()
 	delete(s.cache, token)
+	s.evictions++
 	s.mu.Unlock()
 }
 
@@ -110,6 +138,7 @@ func (s *sessionStore) evictByID(id bson.ObjectID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.evictions++
 	for token, entry := range s.cache {
 		if entry.sess.ID == id {
 			delete(s.cache, token)
@@ -153,6 +182,7 @@ func (s *sessionStore) ByToken(ctx context.Context, token string) (Session, erro
 
 	s.mu.RLock()
 	entry, hit := s.cache[token]
+	seen := s.evictions
 	s.mu.RUnlock()
 
 	sess := entry.sess
@@ -164,7 +194,7 @@ func (s *sessionStore) ByToken(ctx context.Context, token string) (Session, erro
 			}
 			return Session{}, fmt.Errorf("looking up session: %w", err)
 		}
-		s.put(sess)
+		s.putIfCurrent(sess, seen)
 	}
 
 	if sess.expired() {
@@ -172,11 +202,11 @@ func (s *sessionStore) ByToken(ctx context.Context, token string) (Session, erro
 		return Session{}, errSessionNotFound
 	}
 
-	s.touch(ctx, sess)
+	s.touch(ctx, sess, seen)
 	return sess, nil
 }
 
-func (s *sessionStore) touch(ctx context.Context, sess Session) {
+func (s *sessionStore) touch(ctx context.Context, sess Session, seen uint64) {
 	now := time.Now()
 	if now.Sub(sess.LastActivityAt) < touchThreshold {
 		return
@@ -185,17 +215,19 @@ func (s *sessionStore) touch(ctx context.Context, sess Session) {
 	sess.LastActivityAt = now
 	sess.ExpiresAt = now.Add(sessionLength)
 
-	_, err := s.col.UpdateOne(ctx,
+	res, err := s.col.UpdateOne(ctx,
 		bson.M{"token": sess.Token},
 		bson.M{"$set": bson.M{
 			"last_activity_at": sess.LastActivityAt,
 			"expires_at":       sess.ExpiresAt,
 		}})
-	if err != nil {
+	// Matching nothing is not an error to the driver: the session was deleted
+	// under us, and the extended copy must not go back into the cache.
+	if err != nil || res.MatchedCount == 0 {
 		return
 	}
 
-	s.put(sess)
+	s.putIfCurrent(sess, seen)
 }
 
 // Delete signs one device out. It deletes by token but reads the document back,
