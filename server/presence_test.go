@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"slices"
 	"strings"
@@ -323,6 +325,71 @@ func TestPresenceOnlineCarriesNoLastSeen(t *testing.T) {
 
 	if ev := nextEvent(t, watcher); !ev.Online || ev.LastSeen != nil {
 		t.Fatalf("event %+v, want online without a last seen", ev)
+	}
+}
+
+func askPresence(t *testing.T, s *server, ids ...string) (int, map[string]presenceView) {
+	t.Helper()
+
+	r := httptest.NewRequest(http.MethodGet, "/presence?ids="+strings.Join(ids, ","), nil)
+	w := httptest.NewRecorder()
+	s.handlePresence(w, r, Session{})
+
+	if w.Code != http.StatusOK {
+		return w.Code, nil
+	}
+	var out map[string]presenceView
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decoding the answer: %v", err)
+	}
+	return w.Code, out
+}
+
+// The snapshot is what a client gets on arrival: events only tell it what
+// changes afterwards.
+func TestPresenceSnapshot(t *testing.T) {
+	ctx := context.Background()
+	s, _, here, chID := presenceSetup(t)
+	s.users = newUserStore(testDB(t))
+
+	gone := bson.NewObjectID()
+	seenAt := time.Now().UTC().Add(-time.Hour).Truncate(time.Millisecond)
+	if err := s.users.Create(ctx, &User{ID: gone, Username: "gone", LastSeenAt: &seenAt}); err != nil {
+		t.Fatalf("creating the user: %v", err)
+	}
+	stranger := bson.NewObjectID().Hex()
+
+	openSocket(t, s, here, chID)
+
+	code, out := askPresence(t, s, here, gone.Hex(), stranger)
+	if code != http.StatusOK {
+		t.Fatalf("status %d, want 200", code)
+	}
+	if got := out[here]; !got.Online || got.LastSeen != nil {
+		t.Fatalf("the connected user: %+v, want online without a last seen", got)
+	}
+	if got := out[gone.Hex()]; got.Online || got.LastSeen == nil || !got.LastSeen.Equal(seenAt) {
+		t.Fatalf("the user who left: %+v, want offline at %v", got, seenAt)
+	}
+	// Never connected and never stored: offline, and nothing more is known.
+	if got := out[stranger]; got.Online || got.LastSeen != nil || got.Version != 0 {
+		t.Fatalf("the stranger: %+v, want an empty offline", got)
+	}
+}
+
+func TestPresenceSnapshotRefusesRubbish(t *testing.T) {
+	s, _, _, _ := presenceSetup(t)
+
+	if code, _ := askPresence(t, s, "not-an-id"); code != http.StatusBadRequest {
+		t.Fatalf("status %d for a malformed id, want 400", code)
+	}
+
+	many := make([]string, presenceMaxIDs+1)
+	for i := range many {
+		many[i] = bson.NewObjectID().Hex()
+	}
+	if code, _ := askPresence(t, s, many...); code != http.StatusBadRequest {
+		t.Fatalf("status %d for %d ids, want 400", code, len(many))
 	}
 }
 
