@@ -144,7 +144,7 @@ func TestRevokingASessionClosesItOnTheOtherInstance(t *testing.T) {
 	db := testDB(t)
 
 	_, busA := testInstance(t)
-	_, busB := testInstance(t)
+	hubB, busB := testInstance(t)
 
 	// Two stores over one database are two instances: separate caches, shared
 	// collection, as two processes would have.
@@ -157,6 +157,7 @@ func TestRevokingASessionClosesItOnTheOtherInstance(t *testing.T) {
 			return
 		}
 		storeB.evictByID(oid)
+		hubB.CloseSession(id)
 	}
 
 	user := &User{ID: bson.NewObjectID(), Username: "alice"}
@@ -164,6 +165,12 @@ func TestRevokingASessionClosesItOnTheOtherInstance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating a session: %v", err)
 	}
+
+	// A socket opened on B before the revocation authenticated once and would
+	// outlive the cache entry without being closed.
+	socket := newSubscriber(user.ID.Hex())
+	socket.sessionID = sess.ID.Hex()
+	hubB.Connect(socket, nil)
 
 	// B must have it cached, otherwise the test would pass even with no event:
 	// a lookup in MongoDB alone already refuses a deleted session.
@@ -178,12 +185,21 @@ func TestRevokingASessionClosesItOnTheOtherInstance(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		if _, err := storeB.ByToken(ctx, sess.Token); err != nil {
-			return // the second instance no longer accepts the token
+			break // the second instance no longer accepts the token
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("the revoked session still works on the second instance")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+
+	select {
+	case _, open := <-socket.send:
+		if open {
+			t.Fatal("the socket got a message instead of being closed")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the revoked session's socket is still open on the second instance")
 	}
 }
 

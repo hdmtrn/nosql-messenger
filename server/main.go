@@ -82,8 +82,14 @@ func run(ctx context.Context) error {
 
 	// The two directions of a revocation: this node announces its own, and acts
 	// on the ones announced elsewhere. The announcing node has already dropped
-	// its copy, so hearing its own event back changes nothing.
-	sessions.onRevoked = func(id bson.ObjectID) { bus.PublishRevoked(id.Hex()) }
+	// its copy and closed its sockets, so hearing its own event back changes
+	// nothing — and with Redis down, revocation still works where it was asked.
+	// Evicting the cache stops new requests; closing the sockets stops the ones
+	// already open, which authenticated once and would otherwise live on.
+	sessions.onRevoked = func(id bson.ObjectID) {
+		hub.CloseSession(id.Hex())
+		bus.PublishRevoked(id.Hex())
+	}
 	bus.onSessionRevoked = func(id string) {
 		oid, err := bson.ObjectIDFromHex(id)
 		if err != nil {
@@ -91,6 +97,7 @@ func run(ctx context.Context) error {
 			return
 		}
 		sessions.evictByID(oid)
+		hub.CloseSession(id)
 	}
 
 	go bus.Run(ctx)

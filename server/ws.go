@@ -81,7 +81,18 @@ func (s *server) handleWS(w http.ResponseWriter, r *http.Request, sess Session) 
 	}
 
 	c := newSubscriber(sess.UserID.Hex())
+	c.sessionID = sess.ID.Hex()
 	s.hub.Connect(c, ids)
+
+	// A revocation that landed after requireAuth but before Connect found no
+	// socket to close. Revocation evicts the cache before it closes sockets, and
+	// this asks again only after the socket is in the hub, so one of the two
+	// always sees the other. The answer is nearly always a cache hit.
+	if _, err := s.sessions.ByToken(r.Context(), sess.Token); err != nil {
+		s.hub.Disconnect(c)
+		conn.Close()
+		return
+	}
 	log.Printf("+ %s connected (channels: %d)", sess.Username, len(ids))
 
 	go c.writePump(conn)
