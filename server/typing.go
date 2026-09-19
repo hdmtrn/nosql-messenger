@@ -12,6 +12,14 @@ import (
 // refuses to configure its own interval below one second for the same reason.
 const typingMinInterval = time.Second
 
+// The gap between any two typing frames of one connection, whatever channel
+// they name. It is checked before anything that takes a lock: the per-channel
+// interval alone would not stop a flood that names a new channel id in every
+// frame, and each of those would take the hub's global mutex in Reads — the
+// mutex every broadcast on the node waits for. A real client sends one frame
+// every few seconds, so this never touches it.
+const typingMinGap = 100 * time.Millisecond
+
 // A frame from a client. Only ephemeral things come this way — anything that is
 // stored or needs a status code goes through REST.
 type clientFrame struct {
@@ -48,14 +56,23 @@ func (s *server) handleFrame(c *Subscriber, sess Session, raw []byte) {
 // and a message from the typist clears it at once. A lost event costs a
 // flicker, and a closed tab needs no cleanup.
 func (s *server) typing(c *Subscriber, sess Session, chID string) {
-	// Membership comes from the hub, not from MongoDB: this socket is routed to
-	// exactly the channels its user is in, and asking costs a map lookup.
-	if !s.hub.Reads(c, chID) {
+	// The cheap checks come first and take no lock: both fields belong to this
+	// connection's read goroutine. A dropped frame still moves lastTyping, so a
+	// flood stays dropped for as long as it lasts.
+	now := time.Now()
+	if now.Sub(c.lastTyping) < typingMinGap {
+		return
+	}
+	c.lastTyping = now
+	if now.Sub(c.typedAt[chID]) < typingMinInterval {
 		return
 	}
 
-	now := time.Now()
-	if now.Sub(c.typedAt[chID]) < typingMinInterval {
+	// Membership comes from the hub, not from MongoDB: this socket is routed to
+	// exactly the channels its user is in, and asking costs a map lookup. Only
+	// a channel that passed it is remembered, so typedAt holds this user's
+	// channels and not every id a client ever sent.
+	if !s.hub.Reads(c, chID) {
 		return
 	}
 	c.typedAt[chID] = now

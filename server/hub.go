@@ -12,9 +12,11 @@ type Subscriber struct {
 	channels map[string]struct{}
 	dropped  bool
 
-	// When this connection last announced typing, per channel. Touched only by
-	// the connection's read goroutine, so it needs no lock.
-	typedAt map[string]time.Time
+	// When this connection last sent a typing frame, and last announced typing
+	// per channel. Touched only by the connection's read goroutine, so they
+	// need no lock.
+	lastTyping time.Time
+	typedAt    map[string]time.Time
 }
 
 func newSubscriber(userID string) *Subscriber {
