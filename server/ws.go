@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"net/url"
@@ -21,17 +22,19 @@ const (
 	readLimit  = 512
 )
 
-// Sent when the socket's session was revoked or signed out. It is in the range
-// RFC 6455 leaves to applications, and it tells the client not to reconnect:
-// the next attempt would be refused anyway, and without a code the client
-// cannot tell a refusal from a network drop, so it would retry forever.
-const closeSessionRevoked = 4001
+// Sent when the socket has no session: revoked, signed out, expired, or never
+// there. It is in the range RFC 6455 leaves to applications, and it tells the
+// client not to reconnect: the next attempt would be refused anyway, and
+// without a code the client cannot tell a refusal from a network drop, so it
+// would retry forever.
+const closeSessionEnded = 4001
 
 // The reason travels with its code, so a code added later cannot go out with
 // another one's text. The client decides by the code; the reason is for people
 // reading logs and devtools.
 var closeReasons = map[int]string{
-	closeSessionRevoked: "session revoked",
+	closeSessionEnded:                "session ended",
+	websocket.CloseInternalServerErr: "internal error",
 }
 
 // closeFrame is the payload of the close frame; nil for a plain drop.
@@ -83,11 +86,28 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: checkOrigin,
 }
 
-func (s *server) handleWS(w http.ResponseWriter, r *http.Request, sess Session) {
+// handleWS checks the session after the upgrade, not before. Refused before
+// it, the answer is an HTTP 401 that the browser hides from the page: the
+// client sees a close with 1006, the same as a network drop, and reconnects
+// forever. Refused after it, the answer is a close code the client acts on.
+// Revolt checks the session inside the socket for the same reason, and
+// Rocket.Chat's client once looped exactly like ours did.
+func (s *server) handleWS(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+
+	sess, err := s.sessions.ByToken(r.Context(), tokenFromRequest(r))
+	if err != nil {
+		refuse(conn, err)
+		return
+	}
+
 	chans, err := s.channels.ForUser(r.Context(), sess.UserID, bson.ObjectID{}, channelsMaxLimit)
 	if err != nil {
 		log.Printf("listing channels for websocket: %v", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
+		closeNow(conn, websocket.CloseInternalServerErr)
 		return
 	}
 
@@ -96,25 +116,17 @@ func (s *server) handleWS(w http.ResponseWriter, r *http.Request, sess Session) 
 		ids = append(ids, ch.ID.Hex())
 	}
 
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		return
-	}
-
 	c := newSubscriber(sess.UserID.Hex())
 	c.sessionID = sess.ID.Hex()
 	s.hub.Connect(c, ids)
 
-	// A revocation that landed after requireAuth but before Connect found no
-	// socket to close. Revocation evicts the cache before it closes sockets, and
-	// this asks again only after the socket is in the hub, so one of the two
+	// A revocation that landed after the first check but before Connect found
+	// no socket to close. Revocation evicts the cache before it closes sockets,
+	// and this asks again only after the socket is in the hub, so one of the two
 	// always sees the other. The answer is nearly always a cache hit.
 	if _, err := s.sessions.ByToken(r.Context(), sess.Token); err != nil {
 		s.hub.Disconnect(c)
-		// The write pump has not started, so this goroutine may write.
-		conn.SetWriteDeadline(time.Now().Add(writeWait))
-		conn.WriteMessage(websocket.CloseMessage, closeFrame(closeSessionRevoked))
-		conn.Close()
+		refuse(conn, err)
 		return
 	}
 	log.Printf("+ %s connected (channels: %d)", sess.Username, len(ids))
@@ -124,6 +136,26 @@ func (s *server) handleWS(w http.ResponseWriter, r *http.Request, sess Session) 
 
 	s.hub.Disconnect(c)
 	log.Printf("- %s disconnected", sess.Username)
+}
+
+// refuse closes a socket whose session could not be confirmed. Only a session
+// that is really gone ends in 4001 and the sign-in screen; a database that did
+// not answer is a fault of ours, and the client should simply come back.
+func refuse(conn *websocket.Conn, err error) {
+	if errors.Is(err, errSessionNotFound) {
+		closeNow(conn, closeSessionEnded)
+		return
+	}
+	log.Printf("checking the session of a websocket: %v", err)
+	closeNow(conn, websocket.CloseInternalServerErr)
+}
+
+// closeNow is for a socket whose write pump has not started, so this
+// goroutine may write to it.
+func closeNow(conn *websocket.Conn, code int) {
+	conn.SetWriteDeadline(time.Now().Add(writeWait))
+	conn.WriteMessage(websocket.CloseMessage, closeFrame(code))
+	conn.Close()
 }
 
 // readPump hands every frame to handle on this goroutine, so the frames of one

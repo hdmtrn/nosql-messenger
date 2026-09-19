@@ -128,7 +128,7 @@ func (h *Hub) CloseSession(sessionID string) {
 	for _, subs := range h.byUser {
 		for c := range subs {
 			if c.sessionID == sessionID && !c.dropped {
-				c.closeCode = closeSessionRevoked
+				c.closeCode = closeSessionEnded
 				h.drop(c)
 			}
 		}

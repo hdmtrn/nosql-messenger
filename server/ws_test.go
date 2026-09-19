@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
 func TestCheckOrigin(t *testing.T) {
@@ -57,7 +59,7 @@ func TestCloseCodeTellsARevocationFromADrop(t *testing.T) {
 		close func(h *Hub, c *Subscriber)
 		want  int
 	}{
-		{"revoked", func(h *Hub, c *Subscriber) { h.CloseSession("s1") }, closeSessionRevoked},
+		{"revoked", func(h *Hub, c *Subscriber) { h.CloseSession("s1") }, closeSessionEnded},
 		{"dropped", func(h *Hub, c *Subscriber) { h.Disconnect(c) }, websocket.CloseNoStatusReceived},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -97,4 +99,74 @@ func TestCloseCodeTellsARevocationFromADrop(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Through the router, as a browser connects. A socket with no session must end
+// in 4001, not in an HTTP 401 before the upgrade: the browser reports that as
+// 1006, like a network drop, and the client would reconnect forever.
+func TestSocketWithoutASessionIsClosedWith4001(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+
+	sessions := newSessionStore(db)
+	if err := sessions.ensureIndexes(ctx); err != nil {
+		t.Fatalf("session indexes: %v", err)
+	}
+	h := NewHub()
+	s := &server{sessions: sessions, channels: newChannelStore(db), hub: h, bus: h}
+	srv := httptest.NewServer(s.routes())
+	defer srv.Close()
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws"
+
+	user := &User{ID: bson.NewObjectID(), Username: "alice"}
+	live, err := sessions.Create(ctx, user, "a browser")
+	if err != nil {
+		t.Fatalf("creating a session: %v", err)
+	}
+	gone, err := sessions.Create(ctx, user, "another browser")
+	if err != nil {
+		t.Fatalf("creating a session: %v", err)
+	}
+	if err := sessions.Revoke(ctx, user.ID, gone.ID); err != nil {
+		t.Fatalf("revoking: %v", err)
+	}
+
+	dial := func(t *testing.T, token string) *websocket.Conn {
+		t.Helper()
+		header := http.Header{}
+		if token != "" {
+			header.Set("Cookie", sessionCookie+"="+token)
+		}
+		conn, _, err := websocket.DefaultDialer.Dial(url, header)
+		if err != nil {
+			t.Fatalf("the upgrade was refused (%v); the check must come after it", err)
+		}
+		t.Cleanup(func() { conn.Close() })
+		conn.SetReadDeadline(time.Now().Add(time.Second))
+		return conn
+	}
+
+	for _, tc := range []struct{ name, token string }{
+		{"no cookie", ""},
+		{"unknown token", "not-a-token"},
+		{"revoked", gone.Token},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := dial(t, tc.token).ReadMessage()
+			var ce *websocket.CloseError
+			if !errors.As(err, &ce) || ce.Code != closeSessionEnded {
+				t.Fatalf("read gave %v, want close %d", err, closeSessionEnded)
+			}
+		})
+	}
+
+	t.Run("live", func(t *testing.T) {
+		conn := dial(t, live.Token)
+		conn.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+		_, _, err := conn.ReadMessage()
+		var ce *websocket.CloseError
+		if errors.As(err, &ce) {
+			t.Fatalf("a live session was closed with %d", ce.Code)
+		}
+	})
 }
