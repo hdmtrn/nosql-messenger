@@ -11,7 +11,7 @@ const props = defineProps({
   // Something above the field (a forward) can be sent with no text of its own.
   ready: Boolean,
 })
-const emit = defineEmits(['send'])
+const emit = defineEmits(['send', 'typing'])
 
 const MAX_BYTES = 10 << 20
 // At most this many pictures are prepared and uploaded at once, as Telegram's
@@ -196,6 +196,7 @@ function send() {
           @focus="focused = true"
           @blur="focused = false"
           @paste="paste"
+          @input="emit('typing')"
           @keydown.enter.exact.prevent="send"
         >
       </div>

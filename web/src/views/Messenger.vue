@@ -179,6 +179,9 @@ const PICTURES_PER_MESSAGE = 10
 // Each message waits for the one before it: sent in parallel, the server could
 // store them the other way round.
 async function send(text, attachments = []) {
+  // The listeners forget us when the message arrives, so the next keystroke
+  // has to announce again rather than wait out the interval.
+  typedAt = 0
   const action = pendingAction.value && pendingAction.value.channelId === activeId.value ? pendingAction.value : null
   if (action) pendingAction.value = null
   const forwarding = action && action.kind === 'forward'
@@ -318,6 +321,14 @@ function catchUpChannels() {
 }
 
 function receive(msg) {
+  // Typing shares the channel's stream with messages and is told apart by its
+  // type; read as a message, it would become a bubble with no author.
+  if (msg.type === 'typing') {
+    noteTyping(msg)
+    return
+  }
+  // The message is what the typing was for.
+  forgetTyping(msg.channel_id, msg.author.id)
   if (!channels.value.some((c) => c.id === msg.channel_id)) catchUpChannels()
   if (msg.channel_id !== activeId.value) {
     unread.value = { ...unread.value, [msg.channel_id]: (unread.value[msg.channel_id] || 0) + 1 }
@@ -329,6 +340,56 @@ function receive(msg) {
   if (known) return
   messages.value = [...messages.value, { ...msg, status: 'delivered' }]
   conversation.value?.toBottom()
+}
+
+/* ---------- typing ---------- */
+
+// The typist repeats every 3 s and a listener forgets them 4 s after the last
+// repeat, so one late repeat does not make it flicker. Telegram uses 5 s and
+// 6 s, but also sends an explicit cancel; without one, the line would linger
+// up to 6 s after the typing stopped, which is too long. Now it is at most 4 s.
+const TYPING_REPEAT_MS = 3000
+const TYPING_SHOWN_MS = 4000
+
+// { [channelId]: { [userId]: username } } of the people typing right now.
+const typing = ref({})
+const typingTimers = new Map()
+
+const activeTyping = computed(() => Object.values(typing.value[activeId.value] || {}))
+
+function noteTyping(ev) {
+  // Our own typing comes back from the bus like everyone else's, and to every
+  // tab of ours.
+  if (ev.user.id === props.me.id) return
+  const key = `${ev.channel_id}/${ev.user.id}`
+  clearTimeout(typingTimers.get(key))
+  typingTimers.set(key, setTimeout(() => forgetTyping(ev.channel_id, ev.user.id), TYPING_SHOWN_MS))
+  typing.value = {
+    ...typing.value,
+    [ev.channel_id]: { ...typing.value[ev.channel_id], [ev.user.id]: ev.user.username },
+  }
+}
+
+function forgetTyping(channelId, userId) {
+  const key = `${channelId}/${userId}`
+  clearTimeout(typingTimers.get(key))
+  typingTimers.delete(key)
+  if (!typing.value[channelId]?.[userId]) return
+  const rest = { ...typing.value[channelId] }
+  delete rest[userId]
+  typing.value = { ...typing.value, [channelId]: rest }
+}
+
+// Called on every keystroke; the socket hears about it once per interval and
+// per chat. The server drops repeats faster than a second anyway.
+let typedAt = 0
+let typedIn = null
+function announceTyping() {
+  const now = Date.now()
+  if (typedIn === activeId.value && now - typedAt < TYPING_REPEAT_MS) return
+  typedIn = activeId.value
+  typedAt = now
+  socket?.send({ type: 'typing', channel_id: activeId.value })
 }
 
 // A socket that was down missed messages; the REST history is what fills the gap.
@@ -401,7 +462,10 @@ onMounted(async () => {
   })
 })
 
-onUnmounted(() => socket && socket.close())
+onUnmounted(() => {
+  socket && socket.close()
+  typingTimers.forEach(clearTimeout)
+})
 </script>
 
 <template>
@@ -451,6 +515,8 @@ onUnmounted(() => socket && socket.close())
         :forward-targets="forwardTargets"
         :pending="pendingAction && pendingAction.channelId === activeId ? pendingAction : null"
         :originals="originals"
+        :typing="activeTyping"
+        @typing="announceTyping"
         @reply="startReply"
         @find="findMessage"
         @forward="pickForward"

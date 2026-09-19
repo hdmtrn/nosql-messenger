@@ -22,10 +22,12 @@ const props = defineProps({
   pending: { type: Object, default: null },
   // Originals of replies fetched because they are not in this page, by id.
   originals: { type: Map, default: () => new Map() },
+  // Usernames of the people typing here right now, the viewer never among them.
+  typing: { type: Array, default: () => [] },
 })
 
 const emit = defineEmits(['send', 'retry', 'discard', 'load-older', 'info', 'person',
-  'reply', 'forward', 'cancel-pending', 'find'])
+  'reply', 'forward', 'cancel-pending', 'find', 'typing'])
 
 const feed = ref(null)
 const composer = ref(null)
@@ -126,6 +128,17 @@ function forward(channelId) {
 
 const direct = () => props.channel.kind === 'direct'
 
+// Typing takes the place of the subtitle, as in Telegram. A direct conversation
+// has one other person, so their name would only repeat the title.
+const typingLine = computed(() => {
+  const names = props.typing.map(displayName)
+  if (!names.length) return ''
+  if (direct()) return 'typing…'
+  if (names.length === 1) return `${names[0]} is typing…`
+  if (names.length === 2) return `${names[0]} and ${names[1]} are typing…`
+  return `${names.length} people are typing…`
+})
+
 // A pause this long ends a run even when the same person keeps talking: the
 // header is what tells the reader the conversation moved on in time.
 const RUN_BREAK_MS = 5 * 60 * 1000
@@ -194,9 +207,10 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
                   display:flex;flex-direction:column;overflow:hidden">
     <PaneHeader
       :title="direct() ? displayName(title) : title"
-      :subtitle="direct() ? '@' + title
-                          : channel.member_count + (channel.member_count === 1 ? ' member' : ' members')"
-      :subtitle-upper="!direct()"
+      :subtitle="typingLine || (direct() ? '@' + title
+                          : channel.member_count + (channel.member_count === 1 ? ' member' : ' members'))"
+      :subtitle-upper="!direct() && !typingLine"
+      :subtitle-accent="!!typingLine"
       :open="infoOpen"
       @info="emit('info')"
     >
@@ -265,6 +279,7 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
       :placeholder="placeholder"
       :ready="pending?.kind === 'forward'"
       @send="(text, attachments) => emit('send', text, attachments)"
+      @typing="emit('typing')"
     >
       <!-- a reply still needs its own text; a forward can go on its own -->
       <div v-if="pending" class="pending">

@@ -38,6 +38,11 @@ export function createSocket({ onMessage, onStateChange }) {
   connect()
 
   return {
+    // Only ephemeral frames go this way, so one sent while the socket is down is
+    // simply lost; anything that must arrive goes through REST.
+    send(data) {
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(data))
+    },
     close() {
       closed = true
       clearTimeout(timer)

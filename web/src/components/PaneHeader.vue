@@ -4,6 +4,8 @@ defineProps({
   subtitle: String,
   // A handle reads as it is stored; a count is machine voice and shouts.
   subtitleUpper: { type: Boolean, default: true },
+  // Something happening now (typing) reads in the accent colour, as in Telegram.
+  subtitleAccent: Boolean,
   // The info panel is open: the arrow turns back towards the feed, like the rail's ‹ ›.
   open: Boolean,
 })
@@ -34,7 +36,8 @@ defineEmits(['info'])
           v-if="subtitle"
           :style="{ font: subtitleUpper ? 'var(--text-machine)' : 'var(--text-machine-11)',
                     textTransform: subtitleUpper ? 'uppercase' : 'none',
-                    letterSpacing: 'var(--mono-tracking)', color: 'var(--grey)' }"
+                    letterSpacing: 'var(--mono-tracking)',
+                    color: subtitleAccent ? 'var(--blue)' : 'var(--grey)' }"
         >{{ subtitle }}</span>
       </span>
     </button>
