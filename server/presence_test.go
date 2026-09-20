@@ -271,6 +271,31 @@ func TestPresenceLeavingSocketHearsNothing(t *testing.T) {
 	nextEvent(t, watcher)
 }
 
+// A socket the hub dropped itself still has to tell its channels that its user
+// went: a revoked session and an overflowing send buffer both drop it before
+// handleWS reads its channels, so the drop must leave them readable.
+func TestPresenceDroppedSocketStillTellsTheChannel(t *testing.T) {
+	s, watcher, user, chID := presenceSetup(t)
+
+	c := openSocket(t, s, user, chID)
+	if ev := nextEvent(t, watcher); !ev.Online {
+		t.Fatalf("event %+v, want online", ev)
+	}
+
+	// What a revocation does, and what a full send buffer does in Publish.
+	session := bson.NewObjectID().Hex()
+	c.sessionID = session
+	s.hub.CloseSession(session)
+
+	// The rest is handleWS's own ending, unchanged by the drop.
+	closeSocket(t, s, c)
+
+	gone := nextEvent(t, watcher)
+	if gone.UserID != user || gone.Online {
+		t.Fatalf("event %+v, want %s offline", gone, user)
+	}
+}
+
 // Last seen is written on the edge only: while another tab is open the user has
 // not been seen leaving, and the offline event carries the time it was written.
 func TestPresenceLastSeen(t *testing.T) {
