@@ -26,7 +26,9 @@ type User struct {
 	CreatedAt    time.Time      `bson:"created_at"          json:"created_at"`
 	// When the user's last socket closed. Written only on that edge, so a
 	// second tab closing costs nothing; a user who is online has no use for it.
-	LastSeenAt *time.Time `bson:"last_seen_at,omitempty" json:"last_seen_at,omitempty"`
+	// Never encoded here: the profile is public so that search can find a
+	// stranger, and GET /presence is where this is answered, to those who may ask.
+	LastSeenAt *time.Time `bson:"last_seen_at,omitempty" json:"-"`
 }
 
 // normaliseUsername folds the handle so that Mara and mara cannot be two people,
