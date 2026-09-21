@@ -527,6 +527,16 @@ async function addFriend(username) {
   loadPeople()
 }
 
+// An invite followed from a message, by the same path as one followed from the
+// address bar — the server answers with the channel whether we have just joined
+// it or were in it already, so a click always ends in the conversation.
+async function joinByInvite(code) {
+  const joined = await api.followInvite(code).catch(() => null)
+  if (!joined) return
+  await loadChannels()
+  selectChannel(joined.channel_id)
+}
+
 function openPerson(username) {
   showInfo.value = false
   person.value = username
@@ -625,6 +635,7 @@ onUnmounted(() => {
         :person="person"
         :info-open="showInfo"
         @send="send"
+        @invite="joinByInvite"
         @retry="deliver"
         @discard="discard"
         @load-older="loadOlder"
