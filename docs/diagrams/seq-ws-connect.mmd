@@ -1,0 +1,41 @@
+%% WebSocket connect. See README for the notes referenced by step number.
+%% Sources: web/src/socket.js, server/ws.go, server/hub.go, server/bus.go,
+%% server/presence.go, server/channels.go, server/sessions.go
+sequenceDiagram
+  autonumber
+  participant C as socket.js
+  participant WS as handleWS
+  participant ST as session / channel store
+  participant HUB as Hub
+  participant BUS as bus
+  participant P as presence
+  participant R as Redis
+  participant M as MongoDB
+
+  C->>WS: GET /ws with the session cookie
+  Note over WS: Upgrade first, then checkOrigin
+  WS->>ST: sessions.ByToken(token)
+  ST->>M: sessions.FindOne on a cache miss
+  alt errSessionNotFound
+    WS-->>C: close 4001 session ended
+  else session valid
+    WS->>ST: channels.ForUser(userID, 200)
+    ST->>M: channels.Aggregate on members.user_id
+    ST-->>WS: channels
+    WS->>HUB: Connect(subscriber, channelIDs)
+    HUB->>BUS: watch(chID) per first local reader
+    Note over BUS: pending[chID] = true, one wake signal
+    BUS->>R: applyWatches, one SUBSCRIBE for the set
+    WS->>ST: sessions.ByToken again
+    Note over WS,ST: closes the revocation race
+    WS->>P: socketOpened, presence.connect
+    P->>R: MULTI SADD, SMEMBERS, INCR, EXEC
+    R-->>P: added, members, version
+    opt the user was offline until now
+      P->>BUS: announcePresence per channel
+      BUS->>R: PUBLISH ch:{channelID} presenceEvent
+    end
+    Note over WS: go writePump, then readPump
+    WS-->>C: socket open
+    Note over C: onStateChange('online')
+  end

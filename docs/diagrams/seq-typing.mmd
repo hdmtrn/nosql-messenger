@@ -1,0 +1,32 @@
+%% Typing: the only frame a client may send over the socket. Nothing is stored.
+%% See README for the notes referenced by step number.
+%% Sources: web/src/views/Messenger.vue, web/src/socket.js, server/ws.go,
+%% server/typing.go, server/hub.go, server/bus.go
+sequenceDiagram
+  autonumber
+  participant A as Alice
+  participant T as server.typing
+  participant HUB as Hub
+  participant R as Redis
+  participant N2 as instance 2
+  participant B as Bob
+
+  Note over A: keystroke, announceTyping()
+  Note over A: one frame per chat per 3000 ms
+  A->>T: {type: 'typing', channel_id}
+  Note over T: handleFrame drops anything else
+  Note over T: lastTyping gap under 100 ms, drop
+  Note over T: typedAt gap under 1 s, drop
+  T->>HUB: Hub.Reads(c, chID)
+  alt this socket does not read that channel
+    HUB-->>T: false, ignored silently
+  else
+    HUB-->>T: true
+    T->>R: PUBLISH ch:{channelID} typingEvent
+    R-->>N2: typingEvent
+    N2->>B: Hub.Publish, writePump
+    Note over B: noteTyping, shown for 4000 ms
+    R-->>A: the same event reaches Alice's tabs
+    Note over A: dropped, ev.user.id is me.id
+  end
+  Note over A,B: no stop event: the listener forgets after 4 s,<br/>and receive() calls forgetTyping on the message

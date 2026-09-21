@@ -1,0 +1,58 @@
+%% Presence: a socket closing, a node dying, and the state a client asks for
+%% on arrival. See README for the notes referenced by step number.
+%% Sources: server/ws.go, server/presence.go, server/presence_nodes.go,
+%% server/presence_http.go, server/users.go, web/src/views/Messenger.vue
+sequenceDiagram
+  autonumber
+  participant B as Bob's last tab
+  participant WS as handleWS
+  participant P as presence
+  participant US as userStore
+  participant R as Redis
+  participant SV as a surviving node
+  participant A as Alice
+
+  rect rgb(238, 244, 250)
+  Note over B,A: 1. the socket closes normally
+  B->>WS: socket closed, readPump returns
+  Note over WS,P: ChannelsOf before Disconnect.<br/>Hub.drop keeps c.channels, so a socket the<br/>hub evicted is announced too
+  WS->>P: socketClosed, presence.disconnect
+  P->>R: MULTI SREM, SREM, SMEMBERS, INCR, EXEC
+  R-->>P: removed, remaining, version
+  Note over P: onlineIn ignores nodes with no pulse
+  opt no live socket left anywhere
+    P->>US: SetLastSeen(userID, now)
+    P->>R: PUBLISH ch:{channelID} presenceEvent
+    R-->>A: online=false with last_seen
+    Note over A: notePresence, kept only if newer()
+  end
+  end
+
+  rect rgb(250, 245, 238)
+  Note over P,A: 2. the node dies without saying anything
+  P--xR: presence:alive:{nodeID} expires after 30s
+  loop every presenceBeat, 10s
+    SV->>R: SET presence:alive:{me} EX 30, SADD presence:nodes
+    SV->>R: SMEMBERS presence:nodes, EXISTS each pulse
+    R-->>SV: the nodes with no pulse
+  end
+  SV->>R: SETNX presence:sweeper, one sweeper per round
+  SV->>R: SREM presence:nodes {dead}, one winner
+  SV->>R: SMEMBERS presence:node:{dead}
+  R-->>SV: the orphaned user and socket pairs
+  loop per orphaned socket
+    SV->>R: presence.remove, INCR version
+    SV->>US: SetLastSeen
+    SV->>R: PUBLISH ch:{channelID} online=false
+  end
+  SV->>R: DEL presence:node:{dead}
+  end
+
+  rect rgb(242, 250, 240)
+  Note over A,R: 3. state on arrival, events only say what changes
+  A->>P: GET /presence?ids=a,b,c
+  Note over P: visibleTo: SharingAChannelWith + FriendsAmong
+  P->>R: pipelined SMEMBERS and GET version, visible ids only
+  P->>US: LastSeenByIDs for the offline ones
+  P-->>A: online, version, epoch, last_seen
+  end

@@ -1,0 +1,27 @@
+%% Internal Go package dependencies.
+%% Source: `go list ./...` and `go list -f '{{.Imports}}' ./...` on go.mod module 'messenger'.
+%% There is exactly ONE internal package, so there are no internal edges to draw:
+%% every .go file under server/ is `package main`. The layering that a package
+%% graph would normally show lives in backend-architecture.mmd instead.
+flowchart TD
+  subgraph internal["module messenger — internal packages"]
+    srv["messenger/server<br/>package main<br/>39 files (27 source + 12 test), no sub-packages<br/>no internal imports"]
+  end
+
+  subgraph external["external modules — go.mod require block"]
+    gws["github.com/gorilla/websocket v1.5.3"]
+    grds["github.com/redis/go-redis/v9 v9.22.0"]
+    bson["go.mongodb.org/mongo-driver/v2/bson"]
+    mgo["go.mongodb.org/mongo-driver/v2/mongo"]
+    mopt["go.mongodb.org/mongo-driver/v2/mongo/options"]
+    mref["go.mongodb.org/mongo-driver/v2/mongo/readpref"]
+    argon["golang.org/x/crypto/argon2"]
+  end
+
+  srv -->|"ws.go, hub.go"| gws
+  srv -->|"bus.go, presence.go"| grds
+  srv -->|"every store, hub.go"| bson
+  srv -->|"mongo.go and every store"| mgo
+  srv -->|"index and query options"| mopt
+  srv -->|"mongo.go, health.go — Ping"| mref
+  srv -->|"password.go"| argon

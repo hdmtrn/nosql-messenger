@@ -1,0 +1,56 @@
+%% Whole system: Vue client, two Go instances, Redis, MongoDB.
+%% Exact Redis key and topic formats are in the README tables.
+%% Sources: docker-compose.yml, Dockerfile, server/main.go, server/server.go,
+%% server/bus.go, server/presence.go, web/src/api.js, web/src/socket.js
+flowchart LR
+  subgraph client["Browser"]
+    vue["Vue 3 app<br/>web/dist"]
+    apijs["api.js<br/>fetch"]
+    wsjs["socket.js<br/>WebSocket"]
+    vue --> apijs
+    vue --> wsjs
+  end
+
+  subgraph app["service 'app' — replicas: 2, no proxy in front"]
+    subgraph n1["instance 1 — host port 8080"]
+      mux1["routes()<br/>http.ServeMux"]
+      hub1["Hub<br/>this process only"]
+      bus1["bus<br/>redis.PubSub"]
+      pres1["presence<br/>nodeID"]
+      st1["7 stores"]
+      mux1 --> st1
+      mux1 --> bus1
+      mux1 --> hub1
+      hub1 <--> bus1
+      mux1 --> pres1
+    end
+    subgraph n2["instance 2 — host port 8081"]
+      mux2["routes()"]
+      hub2["Hub"]
+      bus2["bus"]
+      pres2["presence"]
+      st2["7 stores"]
+      mux2 --> st2
+      mux2 --> bus2
+      mux2 --> hub2
+      hub2 <--> bus2
+      mux2 --> pres2
+    end
+  end
+
+  redis[("Redis 8.0<br/>no persistence")]
+  mongo[("MongoDB 8.0<br/>replica set rs0")]
+
+  apijs -->|"HTTP REST"| mux1
+  wsjs -->|"WebSocket /ws"| mux1
+  apijs -.->|"second browser, by hand"| mux2
+  wsjs -.-> mux2
+  mux1 -->|"GET / serveWeb"| vue
+
+  bus1 <-->|"PUBLISH / SUBSCRIBE<br/>ch:{channelID}<br/>session-revoked<br/>subscription"| redis
+  bus2 <--> redis
+  pres1 <-->|"presence:* keys<br/>sockets, node, version<br/>alive, nodes, sweeper, epoch"| redis
+  pres2 <--> redis
+
+  st1 -->|"users, sessions, channels,<br/>messages, friend_requests,<br/>invites, media, GridFS"| mongo
+  st2 --> mongo

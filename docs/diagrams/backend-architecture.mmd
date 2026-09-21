@@ -1,0 +1,117 @@
+%% Inside one Go instance (package main, messenger/server), grouped by layer.
+%% Sources: server/main.go, server/server.go, server/middleware.go, server/auth.go,
+%% server/ws.go, server/hub.go, server/bus.go, server/typing.go, server/presence.go,
+%% server/presence_nodes.go, server/*_http.go, server/users.go, server/sessions.go,
+%% server/channels.go, server/messages.go, server/friends.go, server/invites.go,
+%% server/media.go, server/mongo.go
+flowchart LR
+  subgraph entry["Entry — main.go, server.go, middleware.go"]
+    run["run(ctx)<br/>builds the stores, Hub,<br/>bus, presence"]
+    routes["routes()<br/>http.ServeMux"]
+    logging["withLogging<br/>responseRecorder"]
+    reqauth["requireAuth<br/>sessions.ByToken"]
+    wire["wireRevocation<br/>onRevoked / onSessionRevoked"]
+    run --> routes
+    routes --> logging
+    routes --> reqauth
+    run --> wire
+  end
+
+  subgraph handlers["Handlers — *_http.go, auth.go, health.go"]
+    hauth["handleRegister / handleLogin<br/>handleLogout / handleMe"]
+    husers["handleSearchUsers, handleGetUser,<br/>handleUpdateProfile, handleSetAvatar,<br/>handleDeleteAvatar, announceProfile"]
+    hsess["handleListSessions<br/>handleRevokeSession"]
+    hch["handleCreateChannel, handleListChannels,<br/>handleGetChannel, handleOpenDirect,<br/>handleLeaveChannel,<br/>handleChannelsInCommon,<br/>handleSetChannelAvatar"]
+    hinv["handleCreateInvite, handleListInvites,<br/>handleRevokeInvite, handleFollowInvite"]
+    hmsg["handleSendMessage,<br/>handleForwardMessage,<br/>handleListMessages,<br/>deliverMessage"]
+    hfr["handleSendFriendRequest,<br/>handleListFriendRequests,<br/>handleAcceptFriendRequest,<br/>handleDeclineFriendRequest,<br/>handleListFriends"]
+    hmedia["handleUploadMedia,<br/>handleGetMedia, saveUpload"]
+    hpres["handlePresence<br/>visibleTo"]
+    hhealth["handleHealth — mongo.Ping"]
+    hweb["serveWeb — SPA fallback"]
+  end
+
+  subgraph realtime["WebSocket and fan-out — ws.go, hub.go, typing.go, bus.go"]
+    hws["handleWS<br/>Upgrade, then sessions.ByToken"]
+    sub["Subscriber<br/>send chan, socketID"]
+    pumps["readPump / writePump<br/>ping 30s, pong 60s"]
+    hub["Hub<br/>Connect, Publish, Subscribe,<br/>Unsubscribe, CloseSession, Reads"]
+    frame["handleFrame / typing<br/>clientFrame type 'typing'"]
+    pubif["publisher interface<br/>Publish, Subscribe,<br/>Unsubscribe"]
+    busrun["bus.Run(ctx)<br/>one PubSub per process<br/>pending set + wake, applyWatches"]
+    hws --> sub
+    hws --> hub
+    sub --> pumps
+    pumps --> frame
+    frame --> hub
+    hub -->|"watch/unwatch into the pending set"| busrun
+    busrun -->|"hub.Publish(chID, payload)"| hub
+  end
+
+  subgraph services["Services — auth.go, presence.go, presence_nodes.go"]
+    authsvc["auth<br/>argon2, sem(6), dummyHash"]
+    pres["presence<br/>connect, disconnect, remove, lookup,<br/>beat, listen, sweeping, claim"]
+    presloop["runPresence / presenceRound<br/>sweepNode, reregister"]
+    announce["socketOpened / socketClosed<br/>announcePresence, markLastSeen"]
+    presloop --> pres
+    announce --> pres
+  end
+
+  subgraph repos["Repositories — one Mongo collection each"]
+    ustore["userStore — users"]
+    sstore["sessionStore — sessions<br/>+ in-process cache"]
+    cstore["channelStore — channels"]
+    mstore["messageStore — messages"]
+    fstore["friendStore — friend_requests"]
+    istore["inviteStore — invites"]
+    mdstore["mediaStore — media, GridFS"]
+  end
+
+  subgraph adapters["Adapters"]
+    mgo["connectMongo<br/>mongo.Client"]
+    rdb["newBus<br/>redis.NewClient"]
+  end
+
+  mongo[("MongoDB")]
+  redis[("Redis")]
+
+  routes --> hauth & husers & hsess & hch & hinv & hmsg & hfr & hmedia & hpres & hhealth & hweb
+  routes --> hws
+  reqauth --> sstore
+
+  hauth --> authsvc
+  authsvc --> ustore
+  authsvc --> sstore
+  husers --> ustore
+  husers -->|"profile event"| pubif
+  hsess --> sstore
+  hch --> cstore
+  hch -->|"Subscribe / Unsubscribe"| pubif
+  hinv --> istore
+  hinv --> cstore
+  hinv -->|"Subscribe"| pubif
+  hmsg --> mstore
+  hmsg --> cstore
+  hmsg --> mdstore
+  hmsg -->|"Publish(chID, Message JSON)"| pubif
+  hfr --> fstore
+  hmedia --> mdstore
+  hpres --> pres
+  hpres --> ustore
+  hpres -->|"SharingAChannelWith"| cstore
+  hpres -->|"FriendsAmong"| fstore
+  hws --> cstore
+  hws --> sstore
+  hws --> announce
+  frame -->|"Publish(chID, typingEvent)"| pubif
+  announce -->|"Publish(chID, presenceEvent)"| pubif
+  pubif --> busrun
+  wire --> sstore
+  wire --> hub
+  sstore -->|"onRevoked → PublishRevoked"| busrun
+
+  ustore & sstore & cstore & mstore & fstore & istore & mdstore --> mgo
+  busrun --> rdb
+  pres --> rdb
+  mgo --> mongo
+  rdb --> redis

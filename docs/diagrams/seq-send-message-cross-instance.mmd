@@ -1,0 +1,27 @@
+%% Sending a message when the two people are on DIFFERENT instances.
+%% The only difference is which nodes hold a subscription to ch:{channelID}.
+%% See README for the notes referenced by step number.
+%% Sources: server/messages_http.go, server/bus.go, server/hub.go, server/ws.go
+sequenceDiagram
+  autonumber
+  participant A as Alice on 8080
+  participant N1 as instance 1
+  participant M as MongoDB
+  participant R as Redis
+  participant N2 as instance 2
+  participant B as Bob on 8081
+
+  Note over N2,B: Bob connected here earlier, so instance 2<br/>ran SUBSCRIBE ch:{channelID}
+  A->>N1: POST /messages
+  N1->>M: messages.Insert
+  M-->>N1: stored Message
+  Note over N1,M: persist first, announce second
+  N1->>R: PUBLISH ch:{channelID}
+  N1-->>A: 201 stored
+  R-->>N2: ch:{channelID}
+  Note over N2: bus.Run, prefix ch:, Hub.Publish
+  N2->>B: writePump, TextMessage
+  opt channel not in Bob's loaded list
+    B->>N2: catchUpChannels, GET /channels
+  end
+  Note over R,N2: With no subscriber anywhere the event is dropped.<br/>The message is in MongoDB, and backfill() fetches it.

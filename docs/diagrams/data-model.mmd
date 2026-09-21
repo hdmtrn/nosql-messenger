@@ -1,0 +1,274 @@
+%% Persisted structs with their MongoDB collection, the runtime structs that
+%% hold cluster state, the JSON events that travel Pub/Sub, and the Redis keys.
+%% Key and index detail is in the README tables. Placeholders such as
+%% ch:CHANNEL_ID stand for ch:{channelID} — Mermaid rejects braces in a member.
+%% Sources: server/users.go, sessions.go, channels.go, messages.go, friends.go,
+%% invites.go, media.go, hub.go, bus.go, presence.go, typing.go, users_http.go
+classDiagram
+  direction LR
+
+  class User {
+    <<collection users>>
+    +ObjectID ID
+    +string Username
+    +string DisplayName
+    +string Bio
+    +string PasswordHash
+    +ObjectID AvatarID
+    +time_Time CreatedAt
+    +time_Time LastSeenAt
+  }
+
+  class Session {
+    <<collection sessions>>
+    +ObjectID ID
+    +string Token
+    +ObjectID UserID
+    +string Username
+    +time_Time CreatedAt
+    +time_Time ExpiresAt
+    +time_Time LastActivityAt
+    +string UserAgent
+    +expired() bool
+  }
+
+  class Channel {
+    <<collection channels>>
+    +ObjectID ID
+    +string Kind
+    +string Name
+    +ObjectID CreatedBy
+    +time_Time CreatedAt
+    +List~ChannelMember~ Members
+    +ObjectID AvatarID
+    +int MemberCount
+    +string DirectKey
+  }
+
+  class ChannelMember {
+    <<embedded>>
+    +ObjectID UserID
+    +string Username
+    +string Role
+    +time_Time JoinedAt
+  }
+
+  class Message {
+    <<collection messages>>
+    +ObjectID ID
+    +ObjectID ChannelID
+    +MessageAuthor Author
+    +string Text
+    +time_Time CreatedAt
+    +string ClientMsgID
+    +ForwardedFrom Forwarded
+    +ObjectID ReplyTo
+    +List~Attachment~ Attachments
+    +forwardOf() ForwardedFrom
+  }
+
+  class MessageAuthor {
+    <<embedded>>
+    +ObjectID ID
+    +string Username
+  }
+
+  class ForwardedFrom {
+    <<embedded>>
+    +ObjectID MessageID
+    +ObjectID ChannelID
+    +MessageAuthor Author
+    +time_Time CreatedAt
+  }
+
+  class Attachment {
+    <<embedded>>
+    +ObjectID ID
+    +string ContentType
+    +int Width
+    +int Height
+  }
+
+  class Media {
+    <<collection media>>
+    +ObjectID ID
+    +ObjectID FileID
+    +ObjectID OwnerID
+    +string Kind
+    +string ContentType
+    +int Width
+    +int Height
+    +ObjectID ChannelID
+    +time_Time CreatedAt
+    +time_Time ExpiresAt
+  }
+
+  class GridFS {
+    <<fs.files, fs.chunks>>
+    +raw image bytes
+  }
+
+  class FriendRequest {
+    <<collection friend_requests>>
+    +ObjectID ID
+    +FriendParty From
+    +FriendParty To
+    +string Status
+    +time_Time CreatedAt
+    +time_Time RespondedAt
+  }
+
+  class FriendParty {
+    <<embedded>>
+    +ObjectID ID
+    +string Username
+  }
+
+  class Invite {
+    <<collection invites>>
+    +string Code
+    +ObjectID ChannelID
+    +ObjectID CreatedBy
+    +time_Time CreatedAt
+  }
+
+  User "1" --> "0..*" Session : user_id
+  Channel *-- ChannelMember : members
+  Channel "1" --> "0..*" Message : channel_id
+  Channel "1" --> "0..*" Invite : channel_id
+  Message *-- MessageAuthor : author
+  Message o-- ForwardedFrom : forwarded
+  Message *-- Attachment : attachments
+  Message --> Message : reply_to
+  Attachment ..> Media : same _id
+  Media --> GridFS : file_id
+  Media ..> Channel : channel_id
+  User ..> Media : avatar_id
+  Channel ..> Media : avatar_id
+  FriendRequest *-- FriendParty : from, to
+  User ..> MessageAuthor : denormalised
+  User ..> ChannelMember : denormalised
+
+  class publisher {
+    <<interface>>
+    +Publish(chID, msg)
+    +Subscribe(userID, chID)
+    +Unsubscribe(userID, chID)
+  }
+
+  class bus {
+    +redis_Client rdb
+    +redis_PubSub sub
+    +sync_Mutex mu
+    +map pending
+    +chan~struct~ wake
+    +func onSessionRevoked
+    +Run(ctx)
+    +applyWatches(ctx)
+    +PublishRevoked(sessionID)
+    +Watch(chID)
+    +Unwatch(chID)
+  }
+
+  class Hub {
+    +sync_Mutex mu
+    +map byChannel
+    +map byUser
+    +func watch
+    +func unwatch
+    +Connect(c, channelIDs)
+    +CloseSession(sessionID)
+    +Reads(c, chID) bool
+    +ChannelsOf(c) List~string~
+  }
+
+  class Subscriber {
+    +string userID
+    +string sessionID
+    +string socketID
+    +chan~bytes~ send
+    +int closeCode
+    +map channels
+    +bool dropped
+    +time_Time lastTyping
+    +map typedAt
+  }
+
+  class presence {
+    +redis_Client rdb
+    +string nodeID
+    +map alive
+    +int64 epoch
+    +connect(ctx, userID, socket)
+    +disconnect(ctx, userID, socket)
+    +lookup(ctx, userIDs)
+    +beat(ctx) bool
+    +listen(ctx) List~string~
+    +sweeping(ctx) bool
+    +claim(ctx, nodeID) bool
+  }
+
+  class presenceState {
+    +bool Online
+    +int64 Version
+    +int64 Epoch
+  }
+
+  class RedisTopics {
+    <<pub/sub>>
+    ch:CHANNEL_ID per channel, watched
+    session-revoked permanent
+    subscription permanent
+  }
+
+  class RedisPresenceKeys {
+    <<plain keys>>
+    presence:sockets:USER_ID SET
+    presence:node:NODE_ID SET
+    presence:version:USER_ID counter
+    presence:alive:NODE_ID 30s TTL
+    presence:nodes SET
+    presence:sweeper SETNX 10s
+    presence:epoch SETNX millis
+  }
+
+  class subscriptionChange {
+    +string UserID
+    +string ChID
+    +bool Subscribed
+  }
+
+  class typingEvent {
+    +string Type
+    +string ChannelID
+    +MessageAuthor User
+  }
+
+  class presenceEvent {
+    +string Type
+    +string UserID
+    +bool Online
+    +int64 Version
+    +int64 Epoch
+    +time_Time LastSeen
+  }
+
+  class profileEvent {
+    +string Type
+    +profileView User
+  }
+
+  publisher <|.. bus
+  publisher <|.. Hub
+  bus --> Hub : Publish on incoming
+  Hub --> bus : watch, unwatch
+  Hub *-- Subscriber
+  bus --> RedisTopics
+  presence --> RedisPresenceKeys
+  presence ..> presenceState
+  presence ..> User : SetLastSeen
+  subscriptionChange ..> RedisTopics : subscription
+  Message ..> RedisTopics : channel topic
+  typingEvent ..> RedisTopics : channel topic
+  presenceEvent ..> RedisTopics : channel topic
+  profileEvent ..> RedisTopics : channel topic

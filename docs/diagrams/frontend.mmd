@@ -1,0 +1,76 @@
+%% Vue app: views, components, client modules, and the backend surface each one
+%% touches. The exact api.js call per module is in the README table.
+%% There is no vue-router and no pinia: routing is paneFromUrl/paneToUrl in
+%% views/Messenger.vue, state is refs there plus a reactive Map in naming.js.
+%% Sources: web/src/main.js, App.vue, api.js, socket.js, naming.js, pending.js,
+%% images.js, views/*.vue, components/*.vue, web/vite.config.js
+flowchart TD
+  main["main.js"]
+  app["App.vue<br/>me, re-checked on focus<br/>sessionEnded remounts"]
+  signin["views/SignIn.vue"]
+  messenger["views/Messenger.vue<br/>THE store and THE router<br/>channels, messages, unread, presence,<br/>typing, friends, pendingAction, originals<br/>paneFromUrl / paneToUrl"]
+
+  subgraph views["views/"]
+    conv["Conversation.vue<br/>feed, scroll anchoring"]
+    info["InfoPanel.vue<br/>channel info, invites"]
+    profile["Profile.vue<br/>own profile, devices"]
+    userp["UserPanel.vue<br/>another person"]
+  end
+
+  subgraph comps["components/"]
+    rail["ChannelRail → ChannelRow"]
+    bubble["MessageBubble"]
+    composer["MessageComposer → SendFilesDialog"]
+    menu["MessageMenu"]
+    viewer["MediaViewer"]
+    prims["ChannelGlyph, SgAvatar, SgButton,<br/>SgDialog, SgInput, SgSpinner, PaneHeader"]
+  end
+
+  subgraph clients["client modules"]
+    apijs["api.js<br/>request / upload"]
+    wsjs["socket.js<br/>backoff 1s..15s<br/>close 4001 ends the session"]
+    naming["naming.js<br/>reactive Map people"]
+    pending["pending.js<br/>/invite/{code} at load"]
+    images["images.js<br/>1280 px, JPEG 0.87"]
+  end
+
+  http["HTTP, same origin"]
+  ws["WebSocket /ws"]
+
+  main --> app
+  app --> signin
+  app --> messenger
+  app -->|"/auth/me, /auth/logout"| apijs
+  signin -->|"/auth/login, /auth/register"| apijs
+
+  messenger --> conv & info & profile & userp & rail
+  conv --> bubble & composer & menu & viewer & prims
+  info --> viewer & prims
+  profile --> viewer & prims
+  userp --> viewer & prims
+  rail --> prims
+  menu --> prims
+  bubble --> prims
+
+  messenger -->|"/channels, /messages,<br/>/presence, /friends,<br/>/invites/{code}"| apijs
+  info -->|"/channels/{id},<br/>/channels/{id}/invites,<br/>/channels/{id}/avatar"| apijs
+  profile -->|"/auth/me/profile,<br/>/auth/me/avatar,<br/>/auth/sessions"| apijs
+  userp -->|"/users/{username}"| apijs
+  rail -->|"/users?q="| apijs
+  composer -->|"POST /media"| apijs
+  naming -->|"/users/{username}"| apijs
+
+  messenger --> wsjs & naming & pending
+  info --> naming & images & pending
+  profile --> naming & images
+  userp --> naming
+  conv --> naming
+  rail --> naming
+  composer --> images
+  bubble -.->|"/media/{id}"| http
+  viewer -.->|"/media/{id}"| http
+
+  apijs --> http
+  wsjs --> ws
+  ws -->|"in: Message, typing,<br/>presence, profile"| messenger
+  messenger -->|"out: typing only"| wsjs

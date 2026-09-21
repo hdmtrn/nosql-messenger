@@ -1,0 +1,42 @@
+%% Loading history: first page, older pages, reply originals, backfill.
+%% See README for the notes referenced by step number.
+%% Sources: web/src/views/Messenger.vue, web/src/views/Conversation.vue,
+%% server/messages_http.go, server/messages.go
+sequenceDiagram
+  autonumber
+  participant CV as Conversation.vue
+  participant MG as Messenger.vue
+  participant H as handleListMessages
+  participant MS as messageStore
+  participant M as MongoDB
+
+  Note over MG: selectChannel(id)
+  MG->>H: GET /messages?channel_id=ID
+  Note over H: channelForMember, IsMember
+  H->>MS: List(channelID, zero, 0)
+  MS->>M: Find, sort _id desc, limit 50
+  M-->>MG: newest 50
+  Note over MG: .reverse(), then toBottom()
+
+  CV->>MG: load-older on the top sentinel
+  MG->>H: GET /messages?channel_id=ID&before=OID
+  H->>MS: List(channelID, before, limit)
+  MS->>M: Find _id lt before, sort desc, limit 50
+  M-->>MG: older page
+  alt empty page
+    Note over MG: hasOlder = false
+  else
+    Note over CV,MG: distanceFromBottom, prepend, keepPosition
+  end
+  Note over H,M: _id is the cursor, not created_at
+
+  Note over MG: watch(messages) runs resolveReplies()
+  MG->>H: GET /messages?channel_id=ID&ids=a,b,c
+  Note over H: ids excludes before and limit, max 100
+  H->>MS: ByIDs(channelID, ids)
+  MS->>M: Find _id in ids
+  M-->>MG: the quoted originals
+  Note over MG: a missing id becomes null in originals
+
+  Note over MG: socket went offline, then online
+  MG->>H: backfill(), GET /messages?channel_id=ID

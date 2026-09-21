@@ -1,0 +1,37 @@
+%% Sending a message when both people are on the SAME instance.
+%% It still travels Redis: bus.Publish is the only broadcast path.
+%% See README for the notes referenced by step number.
+%% Sources: web/src/views/Messenger.vue, server/messages_http.go,
+%% server/messages.go, server/bus.go, server/hub.go
+sequenceDiagram
+  autonumber
+  participant A as Alice
+  participant H as handleSendMessage
+  participant M as MongoDB
+  participant BUS as bus
+  participant R as Redis
+  participant HUB as Hub
+  participant B as Bob
+
+  Note over A: send(), client_msg_id = randomUUID()
+  A->>H: POST /messages
+  Note over H: channelForMember, IsMember
+  Note over H,M: parseMediaIDs, validateText, media.Attach
+  H->>M: messages.Insert
+  alt duplicate channel_id + client_msg_id
+    M-->>H: errDuplicateMessage
+    H->>M: ByClientMsgID(channelID, id)
+    H-->>A: 200 stored, NOT broadcast again
+  else stored
+    M-->>H: stored Message
+    H->>BUS: bus.Publish(channelID, payload)
+    BUS->>R: PUBLISH ch:{channelID}
+    H-->>A: 201 stored
+  end
+  R-->>BUS: ch:{channelID}
+  BUS->>HUB: Hub.Publish(chID, payload)
+  Note over HUB: c.send per Subscriber, drop if full
+  HUB->>B: writePump, TextMessage
+  HUB->>A: the sender's own socket too
+  Note over B: receive(), no type field, so a message
+  Note over A: already known by client_msg_id

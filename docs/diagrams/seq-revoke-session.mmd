@@ -1,0 +1,28 @@
+%% Revoking a session: the 'session-revoked' Redis topic.
+%% See README for the notes referenced by step number.
+%% Sources: web/src/views/Profile.vue, server/users_http.go, server/sessions.go,
+%% server/main.go (wireRevocation), server/bus.go, server/hub.go, server/ws.go
+sequenceDiagram
+  autonumber
+  participant P as Profile.vue
+  participant N1 as instance 1
+  participant M as MongoDB
+  participant R as Redis
+  participant N2 as instance 2
+  participant D as the revoked device
+
+  P->>N1: DELETE /auth/sessions/{id}
+  N1->>M: sessions.FindOneAndDelete by _id and user_id
+  M-->>N1: the deleted document, with its token
+  Note over N1: invalidate(token), invalidations++
+  Note over N1: onRevoked, set by wireRevocation
+  par act here first
+    N1->>D: Hub.CloseSession, close 4001
+  and announce second
+    N1->>R: PUBLISH session-revoked ID
+  end
+  N1-->>P: 200 status revoked
+  R-->>N2: session-revoked ID
+  Note over N2: invalidateByID scans the local cache
+  N2->>D: Hub.CloseSession, close 4001
+  Note over D: socket.js stops retrying on 4001,<br/>App.vue re-reads /auth/me
