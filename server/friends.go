@@ -190,3 +190,33 @@ func (s *friendStore) Friends(ctx context.Context, userID bson.ObjectID) ([]Frie
 	}
 	return friends, nil
 }
+
+// FriendsAmong narrows a list of people down to those the user is friends with.
+// Each branch of the $or is served by one of the two indexes, since a friendship
+// is one document and the user can be on either side of it.
+func (s *friendStore) FriendsAmong(ctx context.Context, userID bson.ObjectID, ids []bson.ObjectID) (map[bson.ObjectID]bool, error) {
+	friends := map[bson.ObjectID]bool{}
+	if len(ids) == 0 {
+		return friends, nil
+	}
+
+	accepted, err := s.list(ctx, bson.M{
+		"status": friendAccepted,
+		"$or": []bson.M{
+			{"from.id": userID, "to.id": bson.M{"$in": ids}},
+			{"to.id": userID, "from.id": bson.M{"$in": ids}},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	for _, r := range accepted {
+		other := r.To.ID
+		if other == userID {
+			other = r.From.ID
+		}
+		friends[other] = true
+	}
+	return friends, nil
+}

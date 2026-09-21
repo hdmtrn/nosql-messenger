@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -27,9 +28,6 @@ const (
 	// Also one topic for all: a subscription change concerns one user, and
 	// nobody knows which nodes hold that user's sockets.
 	subscriptionTopic = "subscription"
-	// Watch changes waiting for the bus goroutine. They arrive from the
-	// hub, which holds its mutex at the time, so enqueuing must never block.
-	watchQueue = 256
 	// A publish outlives the request that caused it, so it cannot borrow the
 	// request context — but it must not hang either.
 	publishTimeout = 2 * time.Second
@@ -63,16 +61,18 @@ type subscriptionChange struct {
 	Subscribed bool   `json:"subscribed"`
 }
 
-type watchChange struct {
-	chID string
-	on   bool
-}
-
 type bus struct {
-	rdb     *redis.Client
-	sub     *redis.PubSub
-	hub     *Hub
-	changes chan watchChange
+	rdb *redis.Client
+	sub *redis.PubSub
+	hub *Hub
+
+	// Channels this node still has to subscribe to or unsubscribe from. A set,
+	// not a queue: the hub announces a change under its own mutex, so this must
+	// never block, and a cold start after a restart announces every channel of
+	// the node at once. Repeats collapse, so nothing has to be dropped.
+	mu      sync.Mutex
+	pending map[string]bool
+	wake    chan struct{}
 
 	// Set by main once the session store exists. Without it a revocation event
 	// is simply ignored, which is what a test that only checks messages wants.
@@ -113,7 +113,8 @@ func newBus(ctx context.Context, hub *Hub) (*bus, error) {
 		rdb:     rdb,
 		sub:     sub,
 		hub:     hub,
-		changes: make(chan watchChange, watchQueue),
+		pending: make(map[string]bool),
+		wake:    make(chan struct{}, 1),
 	}, nil
 }
 
@@ -172,17 +173,51 @@ func (b *bus) publishSubscription(c subscriptionChange) {
 }
 
 // Watch and Unwatch are called from the hub while it holds its mutex, so they
-// only leave a note for the bus goroutine. A full queue means Redis is slow or
-// gone; dropping the note is better than stalling every broadcast behind the
-// hub's global lock.
+// only note what has to change; talking to Redis is the bus goroutine's job.
 func (b *bus) Watch(chID string)   { b.change(chID, true) }
 func (b *bus) Unwatch(chID string) { b.change(chID, false) }
 
 func (b *bus) change(chID string, on bool) {
+	b.mu.Lock()
+	b.pending[chID] = on
+	b.mu.Unlock()
+
+	// One pending signal is enough: it says there is work, the set says what.
 	select {
-	case b.changes <- watchChange{chID: chID, on: on}:
+	case b.wake <- struct{}{}:
 	default:
-		log.Printf("bus: dropped a watch change for %s", chID)
+	}
+}
+
+// applyWatches takes the whole set at once and tells Redis in one command per
+// direction, which is what makes a burst of a few hundred channels a couple of
+// round trips instead of a few hundred. A failed command is only logged:
+// go-redis records the channels whatever the command returned, and resubscribes
+// them itself when it reconnects.
+func (b *bus) applyWatches(ctx context.Context) {
+	b.mu.Lock()
+	pending := b.pending
+	b.pending = make(map[string]bool)
+	b.mu.Unlock()
+
+	var add, drop []string
+	for chID, on := range pending {
+		if on {
+			add = append(add, channelTopic+chID)
+		} else {
+			drop = append(drop, channelTopic+chID)
+		}
+	}
+
+	if len(add) > 0 {
+		if err := b.sub.Subscribe(ctx, add...); err != nil {
+			log.Printf("bus: subscribing to %d channels: %v", len(add), err)
+		}
+	}
+	if len(drop) > 0 {
+		if err := b.sub.Unsubscribe(ctx, drop...); err != nil {
+			log.Printf("bus: unsubscribing from %d channels: %v", len(drop), err)
+		}
 	}
 }
 
@@ -202,16 +237,8 @@ func (b *bus) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 
-		case c := <-b.changes:
-			var err error
-			if c.on {
-				err = sub.Subscribe(ctx, channelTopic+c.chID)
-			} else {
-				err = sub.Unsubscribe(ctx, channelTopic+c.chID)
-			}
-			if err != nil {
-				log.Printf("bus: watch change for %s: %v", c.chID, err)
-			}
+		case <-b.wake:
+			b.applyWatches(ctx)
 
 		case m, ok := <-incoming:
 			if !ok {

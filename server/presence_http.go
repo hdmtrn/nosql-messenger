@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"strings"
@@ -21,8 +22,8 @@ type presenceView struct {
 	LastSeen *time.Time `json:"last_seen,omitempty"`
 }
 
-func (s *server) handlePresence(w http.ResponseWriter, r *http.Request, _ Session) {
-	ids := make([]string, 0, presenceMaxIDs)
+func (s *server) handlePresence(w http.ResponseWriter, r *http.Request, sess Session) {
+	asked := make([]bson.ObjectID, 0, presenceMaxIDs)
 	offline := make([]bson.ObjectID, 0, presenceMaxIDs)
 
 	for _, raw := range strings.Split(r.URL.Query().Get("ids"), ",") {
@@ -30,14 +31,28 @@ func (s *server) handlePresence(w http.ResponseWriter, r *http.Request, _ Sessio
 		if id == "" {
 			continue
 		}
-		if _, err := bson.ObjectIDFromHex(id); err != nil {
+		oid, err := bson.ObjectIDFromHex(id)
+		if err != nil {
 			writeError(w, http.StatusBadRequest, "malformed user id")
 			return
 		}
-		ids = append(ids, id)
-		if len(ids) > presenceMaxIDs {
+		asked = append(asked, oid)
+		if len(asked) > presenceMaxIDs {
 			writeError(w, http.StatusBadRequest, "too many ids")
 			return
+		}
+	}
+
+	visible, err := s.visibleTo(r.Context(), sess, asked)
+	if err != nil {
+		log.Printf("presence: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	ids := make([]string, 0, len(asked))
+	for _, oid := range asked {
+		if visible[oid] {
+			ids = append(ids, oid.Hex())
 		}
 	}
 
@@ -72,4 +87,23 @@ func (s *server) handlePresence(w http.ResponseWriter, r *http.Request, _ Sessio
 	}
 
 	writeJSON(w, http.StatusOK, out)
+}
+
+// visibleTo narrows the people asked about to those the caller may see at all.
+// The boundary is the one the project already draws for writing to a person: a
+// channel in common, or friendship. Somebody outside it is left out of the answer
+// rather than reported offline, which would still confirm the account exists.
+func (s *server) visibleTo(ctx context.Context, sess Session, ids []bson.ObjectID) (map[bson.ObjectID]bool, error) {
+	visible, err := s.channels.SharingAChannelWith(ctx, sess.UserID, ids)
+	if err != nil {
+		return nil, err
+	}
+	friends, err := s.friends.FriendsAmong(ctx, sess.UserID, ids)
+	if err != nil {
+		return nil, err
+	}
+	for id := range friends {
+		visible[id] = true
+	}
+	return visible, nil
 }
