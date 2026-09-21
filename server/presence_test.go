@@ -328,12 +328,12 @@ func TestPresenceOnlineCarriesNoLastSeen(t *testing.T) {
 	}
 }
 
-func askPresence(t *testing.T, s *server, ids ...string) (int, map[string]presenceView) {
+func askPresence(t *testing.T, s *server, asker Session, ids ...string) (int, map[string]presenceView) {
 	t.Helper()
 
 	r := httptest.NewRequest(http.MethodGet, "/presence?ids="+strings.Join(ids, ","), nil)
 	w := httptest.NewRecorder()
-	s.handlePresence(w, r, Session{})
+	s.handlePresence(w, r, asker)
 
 	if w.Code != http.StatusOK {
 		return w.Code, nil
@@ -350,18 +350,38 @@ func askPresence(t *testing.T, s *server, ids ...string) (int, map[string]presen
 func TestPresenceSnapshot(t *testing.T) {
 	ctx := context.Background()
 	s, _, here, chID := presenceSetup(t)
-	s.users = newUserStore(testDB(t))
+	db := testDB(t)
+	s.users, s.channels, s.friends = newUserStore(db), newChannelStore(db), newFriendStore(db)
+	if err := s.channels.ensureIndexes(ctx); err != nil {
+		t.Fatalf("channel indexes: %v", err)
+	}
+
+	hereID, err := bson.ObjectIDFromHex(here)
+	if err != nil {
+		t.Fatalf("the test user id is not an ObjectID: %v", err)
+	}
+	asker := Session{UserID: hereID, Username: "here"}
 
 	gone := bson.NewObjectID()
 	seenAt := time.Now().UTC().Add(-time.Hour).Truncate(time.Millisecond)
 	if err := s.users.Create(ctx, &User{ID: gone, Username: "gone", LastSeenAt: &seenAt}); err != nil {
 		t.Fatalf("creating the user: %v", err)
 	}
-	stranger := bson.NewObjectID().Hex()
+	// Never connected and never stored, but in the room, so the snapshot answers
+	// about them at all.
+	newcomer := bson.NewObjectID()
+
+	// The snapshot only speaks about people the asker meets somewhere.
+	room := createChannel(t, s.channels, "room", asker)
+	for _, id := range []bson.ObjectID{gone, newcomer} {
+		if err := s.channels.AddMember(ctx, room.ID, Session{UserID: id, Username: id.Hex()}); err != nil {
+			t.Fatalf("adding %s to the room: %v", id.Hex(), err)
+		}
+	}
 
 	openSocket(t, s, here, chID)
 
-	code, out := askPresence(t, s, here, gone.Hex(), stranger)
+	code, out := askPresence(t, s, asker, here, gone.Hex(), newcomer.Hex())
 	if code != http.StatusOK {
 		t.Fatalf("status %d, want 200", code)
 	}
@@ -371,16 +391,15 @@ func TestPresenceSnapshot(t *testing.T) {
 	if got := out[gone.Hex()]; got.Online || got.LastSeen == nil || !got.LastSeen.Equal(seenAt) {
 		t.Fatalf("the user who left: %+v, want offline at %v", got, seenAt)
 	}
-	// Never connected and never stored: offline, and nothing more is known.
-	if got := out[stranger]; got.Online || got.LastSeen != nil || got.Version != 0 {
-		t.Fatalf("the stranger: %+v, want an empty offline", got)
+	if got := out[newcomer.Hex()]; got.Online || got.LastSeen != nil || got.Version != 0 {
+		t.Fatalf("the newcomer: %+v, want an empty offline", got)
 	}
 }
 
 func TestPresenceSnapshotRefusesRubbish(t *testing.T) {
 	s, _, _, _ := presenceSetup(t)
 
-	if code, _ := askPresence(t, s, "not-an-id"); code != http.StatusBadRequest {
+	if code, _ := askPresence(t, s, Session{}, "not-an-id"); code != http.StatusBadRequest {
 		t.Fatalf("status %d for a malformed id, want 400", code)
 	}
 
@@ -388,7 +407,7 @@ func TestPresenceSnapshotRefusesRubbish(t *testing.T) {
 	for i := range many {
 		many[i] = bson.NewObjectID().Hex()
 	}
-	if code, _ := askPresence(t, s, many...); code != http.StatusBadRequest {
+	if code, _ := askPresence(t, s, Session{}, many...); code != http.StatusBadRequest {
 		t.Fatalf("status %d for %d ids, want 400", code, len(many))
 	}
 }
@@ -517,5 +536,58 @@ func TestPresenceBeatNoticesBeingForgotten(t *testing.T) {
 	}
 	if known, err := p.beat(ctx); err != nil || known {
 		t.Fatalf("beat after being forgotten: known=%v err=%v, want false", known, err)
+	}
+}
+
+// Whether somebody is online is state, not a public profile field: the boundary
+// is the one the project already draws for writing to a person — a shared
+// channel, or friendship. A stranger is answered as if the id were not there at
+// all, since "offline" would still confirm that the account exists.
+func TestPresenceAnswersOnlyAboutPeopleYouKnow(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	p, _ := testPresence(t)
+
+	h := NewHub()
+	s := &server{
+		hub: h, bus: h, presence: p,
+		users:    newUserStore(db),
+		channels: newChannelStore(db),
+		friends:  newFriendStore(db),
+	}
+	if err := s.channels.ensureIndexes(ctx); err != nil {
+		t.Fatalf("channel indexes: %v", err)
+	}
+	if err := s.friends.ensureIndexes(ctx); err != nil {
+		t.Fatalf("friend indexes: %v", err)
+	}
+
+	me := person("me")
+	mate := person("mate")   // shares a channel
+	buddy := person("buddy") // a friend, no channel in common
+	stranger := person("stranger")
+
+	ch := createChannel(t, s.channels, "room", me)
+	if err := s.channels.AddMember(ctx, ch.ID, mate); err != nil {
+		t.Fatalf("adding the channel mate: %v", err)
+	}
+	if _, err := s.friends.Send(ctx, me, &User{ID: buddy.UserID, Username: buddy.Username}); err != nil {
+		t.Fatalf("sending the friend request: %v", err)
+	}
+	if _, err := s.friends.Send(ctx, buddy, &User{ID: me.UserID, Username: me.Username}); err != nil {
+		t.Fatalf("accepting the friend request: %v", err)
+	}
+
+	_, got := askPresence(t, s, me,
+		mate.UserID.Hex(), buddy.UserID.Hex(), stranger.UserID.Hex())
+
+	if _, ok := got[mate.UserID.Hex()]; !ok {
+		t.Errorf("the channel mate is missing from %v", got)
+	}
+	if _, ok := got[buddy.UserID.Hex()]; !ok {
+		t.Errorf("the friend is missing from %v", got)
+	}
+	if _, ok := got[stranger.UserID.Hex()]; ok {
+		t.Errorf("a stranger was answered about: %v", got)
 	}
 }

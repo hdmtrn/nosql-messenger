@@ -437,3 +437,39 @@ func (s *server) channelsOf(ctx context.Context, userID string) []string {
 	}
 	return ids
 }
+
+// SharingAChannelWith narrows a list of people down to those the user actually
+// meets somewhere. The pair of $match clauses is served by the multikey index on
+// members.user_id, and the unwind is what makes the answer the ids themselves
+// rather than every member of every channel they have in common.
+func (s *channelStore) SharingAChannelWith(ctx context.Context, userID bson.ObjectID, ids []bson.ObjectID) (map[bson.ObjectID]bool, error) {
+	seen := map[bson.ObjectID]bool{}
+	if len(ids) == 0 {
+		return seen, nil
+	}
+
+	cur, err := s.col.Aggregate(ctx, []bson.M{
+		{"$match": bson.M{"$and": []bson.M{
+			{"members.user_id": userID},
+			{"members.user_id": bson.M{"$in": ids}},
+		}}},
+		{"$project": bson.M{"members.user_id": 1}},
+		{"$unwind": "$members"},
+		{"$match": bson.M{"members.user_id": bson.M{"$in": ids}}},
+		{"$group": bson.M{"_id": "$members.user_id"}},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing people sharing a channel: %w", err)
+	}
+
+	var rows []struct {
+		ID bson.ObjectID `bson:"_id"`
+	}
+	if err := cur.All(ctx, &rows); err != nil {
+		return nil, fmt.Errorf("decoding people sharing a channel: %w", err)
+	}
+	for _, row := range rows {
+		seen[row.ID] = true
+	}
+	return seen, nil
+}
