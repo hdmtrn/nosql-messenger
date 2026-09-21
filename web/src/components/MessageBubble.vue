@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import SgAvatar from './SgAvatar.vue'
 import SgButton from './SgButton.vue'
 import SgSpinner from './SgSpinner.vue'
+import { albumLayout } from '../album'
 
 const props = defineProps({
   own: Boolean,
@@ -100,14 +101,41 @@ const quoteStyle = computed(() => {
     '--quote-muted': onBlue ? 'rgba(255, 255, 255, 0.75)' : 'var(--text-muted)',
   }
 })
-// One picture keeps its proportions inside a 280px box; several go into a grid of
-// squares. The size is known before the file arrives, so the feed does not jump.
+// One picture keeps its proportions inside a 280px box. Several become an album
+// laid out by their proportions, the way Telegram does it. Both state the shape
+// before the files arrive, so the feed does not jump when they do.
 const PICTURE = 280
-const TILE = 136
+const pictureWidth = (a) =>
+  Math.round(a.width * Math.min(1, PICTURE / a.width, PICTURE / a.height))
+
 function pictureStyle(a) {
-  if (props.attachments.length > 1) return { width: TILE + 'px', height: TILE + 'px' }
-  const scale = Math.min(1, PICTURE / a.width, PICTURE / a.height)
-  return { width: Math.round(a.width * scale) + 'px', aspectRatio: `${a.width} / ${a.height}` }
+  return { width: pictureWidth(a) + 'px', aspectRatio: `${a.width} / ${a.height}` }
+}
+
+const album = computed(() =>
+  props.attachments.length > 1 ? albumLayout(props.attachments) : null
+)
+
+// The layout comes back in the coordinates of a 280px album; here it turns into
+// percentages, and that is the whole of the responsiveness — the album keeps its
+// proportions and shrinks with the bubble, with nothing measured at runtime.
+const percent = (value, total) => ((100 * value) / total).toFixed(3) + '%'
+
+// Only the corners of the album itself are round, as in a real album. The inner
+// ones are not square as Telegram leaves them: our gap is wider, and a hairline
+// takes the sharpness off without reading as a separate tile.
+const ALBUM_RADIUS = 12
+const SEAM_RADIUS = 2
+
+function tileStyle(tile) {
+  const { width, height } = album.value
+  return {
+    left: percent(tile.x, width),
+    top: percent(tile.y, height),
+    width: percent(tile.w, width),
+    height: percent(tile.h, height),
+    borderRadius: tile.corners.map((c) => (c ? ALBUM_RADIUS : SEAM_RADIUS) + 'px').join(' '),
+  }
 }
 const pictureUrl = (a) => a.preview || `/media/${a.id}`
 
@@ -120,13 +148,26 @@ const corners = computed(() => {
   if (!props.head || !props.avatar) return r
   return props.own ? `${r} 0 ${r} ${r}` : `0 ${r} ${r} ${r}`
 })
+// Pictures decide how wide the bubble is, and the text under them wraps inside
+// that width — the rule every messenger follows. The other way round, a long
+// caption stretched the bubble and left the album sitting in the corner of it.
+const mediaWidth = computed(() => {
+  if (album.value) return album.value.width
+  return props.attachments.length === 1 ? pictureWidth(props.attachments[0]) : 0
+})
+
+const PADDING_X = 12
+
 const bubbleStyle = computed(() => ({
   position: 'relative',
-  // ~65 characters per line is the readable measure and caps the bubble on a wide
-  // pane; on a narrow one the 85% leaves the other side a visible margin without
-  // wrapping short messages early
-  maxWidth: 'min(65ch, 85%)',
-  padding: '8px 12px',
+  // Without pictures: ~65 characters per line is the readable measure and caps the
+  // bubble on a wide pane; on a narrow one the 85% leaves the other side a visible
+  // margin without wrapping short messages early. With pictures: their own width,
+  // plus the padding they sit in, since the box is border-box.
+  maxWidth: mediaWidth.value
+    ? `min(${mediaWidth.value + 2 * PADDING_X}px, 85%)`
+    : 'min(65ch, 85%)',
+  padding: `8px ${PADDING_X}px`,
   borderRadius: corners.value,
   font: 'var(--text-body)',
   // a word longer than the bubble (a link, a code) breaks instead of pushing the
@@ -178,11 +219,13 @@ const bubbleStyle = computed(() => ({
         <span v-if="forwarded" :style="forwardStyle">Forwarded from
           <button type="button" class="source" @click="$emit('forwarded-author')">{{ forwarded }}</button>
         </span>
-        <div v-if="attachments.length" class="pictures"
-             :class="{ grid: attachments.length > 1 }">
+        <div v-if="attachments.length" class="pictures" :class="{ album: !!album }"
+             :style="album ? { width: album.width + 'px', aspectRatio: `${album.width} / ${album.height}` } : null">
           <button v-for="(a, i) in attachments" :key="a.id" type="button" class="picture-open"
+                  :style="album ? tileStyle(album.tiles[i]) : null"
                   aria-label="Open picture" @click="$emit('picture', i)">
-            <img :src="pictureUrl(a)" alt="" loading="lazy" class="picture" :style="pictureStyle(a)">
+            <img :src="pictureUrl(a)" alt="" loading="lazy" class="picture"
+                 :style="album ? null : pictureStyle(a)">
           </button>
         </div>
         <slot />
@@ -222,10 +265,23 @@ button.who { cursor: pointer; }
   display: flex;
   margin: 4px -4px 4px;
 }
-.pictures.grid {
-  display: grid;
-  grid-template-columns: repeat(2, auto);
-  gap: 4px;
+/* The album is a box of known proportions with the tiles placed inside it in
+   percentages, so it holds its shape at any width. The width is stated in pixels
+   as well, so that a message of pictures alone is 280px wide rather than as wide
+   as the bubble lets it be. */
+.pictures.album {
+  display: block;
+  position: relative;
+  max-width: 100%;
+  margin: 4px 0;
+}
+.pictures.album .picture-open {
+  position: absolute;
+}
+.pictures.album .picture {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
 }
 .picture-open {
   display: block;
