@@ -80,13 +80,33 @@ func newMessageStore(db *mongo.Database) *messageStore {
 }
 
 func (s *messageStore) ensureIndexes(ctx context.Context) error {
+	// The unique index used to be on client_msg_id alone, which let an id made
+	// up by one client collide with another's and answer with their message.
+	// The compound one below replaces it, and Mongo names indexes after their
+	// keys, so the old one has to go by name or it would stay and keep
+	// enforcing the global uniqueness. A database that never had it answers
+	// IndexNotFound (27), and one where nothing has been written yet has no
+	// collection to look in either (NamespaceNotFound, 26).
+	if err := s.col.Indexes().DropOne(ctx, "client_msg_id_1"); err != nil {
+		var cmdErr mongo.CommandError
+		if !errors.As(err, &cmdErr) || (cmdErr.Code != 26 && cmdErr.Code != 27) {
+			return fmt.Errorf("dropping the old client_msg_id index: %w", err)
+		}
+	}
+
 	_, err := s.col.Indexes().CreateMany(ctx, []mongo.IndexModel{
 		{
 			Keys: bson.D{{Key: "channel_id", Value: 1}, {Key: "_id", Value: 1}},
 		},
 		{
-			Keys:    bson.D{{Key: "client_msg_id", Value: 1}},
-			Options: options.Index().SetUnique(true).SetSparse(true),
+			// Partial rather than sparse: a sparse compound index takes any
+			// document holding one of its keys, and every message has a
+			// channel_id, so the ones sent without a client_msg_id would all
+			// index as {channel, null} and the second one in a channel would
+			// be refused as a duplicate.
+			Keys: bson.D{{Key: "channel_id", Value: 1}, {Key: "client_msg_id", Value: 1}},
+			Options: options.Index().SetUnique(true).
+				SetPartialFilterExpression(bson.M{"client_msg_id": bson.M{"$exists": true}}),
 		},
 	})
 	return err
@@ -127,9 +147,12 @@ func (s *messageStore) ByID(ctx context.Context, id bson.ObjectID) (Message, err
 	return msg, nil
 }
 
-func (s *messageStore) ByClientMsgID(ctx context.Context, clientMsgID string) (Message, error) {
+// The channel is half of the lookup, as it is half of the index: a
+// client_msg_id is the sender's own key for retrying, never a way to read a
+// message out of a channel they are not in.
+func (s *messageStore) ByClientMsgID(ctx context.Context, channelID bson.ObjectID, clientMsgID string) (Message, error) {
 	var msg Message
-	err := s.col.FindOne(ctx, bson.M{"client_msg_id": clientMsgID}).Decode(&msg)
+	err := s.col.FindOne(ctx, bson.M{"channel_id": channelID, "client_msg_id": clientMsgID}).Decode(&msg)
 	if errors.Is(err, mongo.ErrNoDocuments) {
 		return Message{}, errMessageNotFound
 	}

@@ -199,7 +199,7 @@ func (s *server) handleForwardMessage(w http.ResponseWriter, r *http.Request, se
 	// A repeat is answered before copying, so a retried forward leaves no second
 	// set of media records behind.
 	if req.ClientMsgID != "" {
-		existing, err := s.messages.ByClientMsgID(r.Context(), req.ClientMsgID)
+		existing, err := s.messages.ByClientMsgID(r.Context(), channelID, req.ClientMsgID)
 		if err == nil {
 			writeJSON(w, http.StatusOK, existing)
 			return
@@ -238,7 +238,7 @@ func (s *server) handleForwardMessage(w http.ResponseWriter, r *http.Request, se
 func (s *server) deliverMessage(w http.ResponseWriter, r *http.Request, msg Message) {
 	stored, err := s.messages.Insert(r.Context(), msg)
 	if errors.Is(err, errDuplicateMessage) {
-		existing, ferr := s.messages.ByClientMsgID(r.Context(), msg.ClientMsgID)
+		existing, ferr := s.messages.ByClientMsgID(r.Context(), msg.ChannelID, msg.ClientMsgID)
 		if ferr != nil {
 			log.Printf("resolving duplicate message: %v", ferr)
 			writeError(w, http.StatusInternalServerError, "internal error")

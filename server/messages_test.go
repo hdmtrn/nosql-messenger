@@ -376,3 +376,74 @@ func callMessageHandler(
 	h(w, r, sess)
 	return w.Code, w.Body.Bytes()
 }
+
+// client_msg_id is an id the client makes up so a retry does not store the
+// message twice. It is not a key anyone may read by: the unique index used to
+// be global, so sending with an id somebody else had already used answered with
+// their message, out of a channel the sender is not in.
+func TestClientMsgIDIsScopedToItsChannel(t *testing.T) {
+	db := testDB(t)
+	channels, messages := newMessageTestStores(t, db)
+
+	alice, bob := person("alice"), person("bob")
+	hers := createChannel(t, channels, "hers", alice)
+	his := createChannel(t, channels, "his", bob)
+
+	h := NewHub()
+	s := &server{channels: channels, messages: messages, hub: h, bus: h}
+
+	send := func(sess Session, ch Channel, text string) (int, Message) {
+		code, body := callMessageHandler(t, s.handleSendMessage, "", map[string]string{
+			"channel_id":    ch.ID.Hex(),
+			"text":          text,
+			"client_msg_id": "the-same-on-both",
+		}, sess)
+		var msg Message
+		if err := json.Unmarshal(body, &msg); err != nil {
+			t.Fatalf("decoding reply %s: %v", body, err)
+		}
+		return code, msg
+	}
+
+	if code, _ := send(alice, hers, "something private"); code != http.StatusCreated {
+		t.Fatalf("alice's send gave %d, want 201", code)
+	}
+
+	code, got := send(bob, his, "bob's own text")
+	if code != http.StatusCreated {
+		t.Fatalf("bob's send gave %d, want 201", code)
+	}
+	if got.ChannelID != his.ID {
+		t.Fatalf("bob was answered with a message from channel %s, want his own %s",
+			got.ChannelID.Hex(), his.ID.Hex())
+	}
+	if got.Text != "bob's own text" {
+		t.Fatalf("bob was answered with the text %q, want his own", got.Text)
+	}
+}
+
+// Messages sent without a client_msg_id must not collide with one another. The
+// index is partial rather than sparse for exactly this: a sparse compound index
+// takes any document holding one of its keys, and every message has a
+// channel_id, so all of them would index as {channel, null} and the second one
+// in a channel would be refused as a duplicate.
+func TestMessagesWithoutAClientMsgIDDoNotCollide(t *testing.T) {
+	db := testDB(t)
+	channels, messages := newMessageTestStores(t, db)
+
+	owner := person("owner")
+	ch := createChannel(t, channels, "room", owner)
+
+	h := NewHub()
+	s := &server{channels: channels, messages: messages, hub: h, bus: h}
+
+	for i, text := range []string{"first", "second"} {
+		code, body := callMessageHandler(t, s.handleSendMessage, "", map[string]string{
+			"channel_id": ch.ID.Hex(),
+			"text":       text,
+		}, owner)
+		if code != http.StatusCreated {
+			t.Fatalf("message %d gave %d (%s), want 201", i+1, code, body)
+		}
+	}
+}
