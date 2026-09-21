@@ -90,7 +90,7 @@ jobs:
       # The Dockerfile builds the frontend and the Go binary itself, so this one
       # step covers both builds. The image is thrown away: it only proves the
       # Dockerfile still builds. The production image is arm64 and is built
-      # outside CI (see DEVLOG).
+      # outside CI, on the machine that deploys it.
       # --progress=plain keeps the full output of every RUN in the log instead
       # of collapsing it, which is what a failed build needs.
       - name: Build image
