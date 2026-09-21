@@ -105,9 +105,11 @@ const quoteStyle = computed(() => {
 // laid out by their proportions, the way Telegram does it. Both state the shape
 // before the files arrive, so the feed does not jump when they do.
 const PICTURE = 280
+const pictureWidth = (a) =>
+  Math.round(a.width * Math.min(1, PICTURE / a.width, PICTURE / a.height))
+
 function pictureStyle(a) {
-  const scale = Math.min(1, PICTURE / a.width, PICTURE / a.height)
-  return { width: Math.round(a.width * scale) + 'px', aspectRatio: `${a.width} / ${a.height}` }
+  return { width: pictureWidth(a) + 'px', aspectRatio: `${a.width} / ${a.height}` }
 }
 
 const album = computed(() =>
@@ -146,13 +148,26 @@ const corners = computed(() => {
   if (!props.head || !props.avatar) return r
   return props.own ? `${r} 0 ${r} ${r}` : `0 ${r} ${r} ${r}`
 })
+// Pictures decide how wide the bubble is, and the text under them wraps inside
+// that width — the rule every messenger follows. The other way round, a long
+// caption stretched the bubble and left the album sitting in the corner of it.
+const mediaWidth = computed(() => {
+  if (album.value) return album.value.width
+  return props.attachments.length === 1 ? pictureWidth(props.attachments[0]) : 0
+})
+
+const PADDING_X = 12
+
 const bubbleStyle = computed(() => ({
   position: 'relative',
-  // ~65 characters per line is the readable measure and caps the bubble on a wide
-  // pane; on a narrow one the 85% leaves the other side a visible margin without
-  // wrapping short messages early
-  maxWidth: 'min(65ch, 85%)',
-  padding: '8px 12px',
+  // Without pictures: ~65 characters per line is the readable measure and caps the
+  // bubble on a wide pane; on a narrow one the 85% leaves the other side a visible
+  // margin without wrapping short messages early. With pictures: their own width,
+  // plus the padding they sit in, since the box is border-box.
+  maxWidth: mediaWidth.value
+    ? `min(${mediaWidth.value + 2 * PADDING_X}px, 85%)`
+    : 'min(65ch, 85%)',
+  padding: `8px ${PADDING_X}px`,
   borderRadius: corners.value,
   font: 'var(--text-body)',
   // a word longer than the bubble (a link, a code) breaks instead of pushing the
