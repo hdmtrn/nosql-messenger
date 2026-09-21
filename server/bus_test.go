@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -238,4 +239,69 @@ func TestSubscribingReachesASocketOnTheOtherInstance(t *testing.T) {
 
 	busA.Unsubscribe("bob", "c-join")
 	waitForSubscribers(t, busB, channelTopic+"c-join", 0)
+}
+
+// notSubscribed asks Redis which of these channels this instance is not
+// listening on. Redis is the honest witness here: the hub can believe it
+// watches a channel while the SUBSCRIBE for it never went out.
+func notSubscribed(t *testing.T, b *bus, chIDs []string) []string {
+	t.Helper()
+
+	ctx := context.Background()
+	var missing []string
+	for start := 0; start < len(chIDs); start += 400 {
+		end := min(start+400, len(chIDs))
+		topics := make([]string, 0, end-start)
+		for _, id := range chIDs[start:end] {
+			topics = append(topics, channelTopic+id)
+		}
+		counts, err := b.rdb.PubSubNumSub(ctx, topics...).Result()
+		if err != nil {
+			t.Fatalf("asking Redis who is subscribed: %v", err)
+		}
+		for topic, n := range counts {
+			if n == 0 {
+				missing = append(missing, topic)
+			}
+		}
+	}
+	return missing
+}
+
+// A node subscribes to a channel once, when it gains its first local reader, so
+// a change lost there leaves that channel silent until every reader of it has
+// reconnected. A restart is what produces the burst: every client comes back at
+// once and the node is cold, so each of their channels is new to it.
+func TestBurstOfConnectionsLosesNoSubscription(t *testing.T) {
+	hub, b := testInstance(t)
+
+	const sockets, perSocket = 4, 200
+	all := make([]string, 0, sockets*perSocket)
+	var wg sync.WaitGroup
+	for range sockets {
+		ids := make([]string, perSocket)
+		for i := range ids {
+			ids[i] = bson.NewObjectID().Hex()
+		}
+		all = append(all, ids...)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			hub.Connect(newSubscriber(bson.NewObjectID().Hex()), ids)
+		}()
+	}
+	wg.Wait()
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		missing := notSubscribed(t, b, all)
+		if len(missing) == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d of %d channels never reached SUBSCRIBE, e.g. %s",
+				len(missing), len(all), missing[0])
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
