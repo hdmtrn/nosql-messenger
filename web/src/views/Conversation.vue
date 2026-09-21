@@ -4,6 +4,7 @@ import PaneHeader from '../components/PaneHeader.vue'
 import MessageBubble from '../components/MessageBubble.vue'
 import MessageComposer from '../components/MessageComposer.vue'
 import MessageMenu from '../components/MessageMenu.vue'
+import MessageText from '../components/MessageText.vue'
 import SgAvatar from '../components/SgAvatar.vue'
 import ChannelGlyph from '../components/ChannelGlyph.vue'
 import MediaViewer from '../components/MediaViewer.vue'
@@ -29,7 +30,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['send', 'retry', 'discard', 'load-older', 'info', 'person',
-  'reply', 'forward', 'cancel-pending', 'find', 'typing'])
+  'reply', 'forward', 'cancel-pending', 'find', 'typing', 'invite'])
 
 const feed = ref(null)
 const composer = ref(null)
@@ -281,7 +282,7 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
         @quote="openQuote(m)"
         @picture="openPicture(m, $event)"
         @forwarded-author="m.forwarded.author.id === me.id || emit('person', m.forwarded.author.username)"
-      >{{ m.text }}</MessageBubble>
+      ><MessageText :text="m.text" @invite="emit('invite', $event)" /></MessageBubble>
     </div>
 
     <MediaViewer
