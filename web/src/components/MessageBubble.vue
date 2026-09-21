@@ -101,11 +101,12 @@ const quoteStyle = computed(() => {
   }
 })
 // One picture keeps its proportions inside a 280px box; several go into a grid of
-// squares. The size is known before the file arrives, so the feed does not jump.
+// squares, and their size is the grid's business — a tile has to be able to
+// shrink with the bubble. Both paths state the proportions rather than wait for
+// the file, so the feed does not jump when it arrives.
 const PICTURE = 280
-const TILE = 136
 function pictureStyle(a) {
-  if (props.attachments.length > 1) return { width: TILE + 'px', height: TILE + 'px' }
+  if (props.attachments.length > 1) return { aspectRatio: '1 / 1' }
   const scale = Math.min(1, PICTURE / a.width, PICTURE / a.height)
   return { width: Math.round(a.width * scale) + 'px', aspectRatio: `${a.width} / ${a.height}` }
 }
@@ -224,8 +225,19 @@ button.who { cursor: pointer; }
 }
 .pictures.grid {
   display: grid;
-  grid-template-columns: repeat(2, auto);
+  /* A tile is at most 136px and may be less. Neither half is optional: an auto
+     track is stretched by the default content distribution, which drove the two
+     columns apart and left a hole where the fourth tile of an odd set would go,
+     while a track that cannot shrink hangs outside the bubble — the bubble is
+     only as wide as the text under the pictures, and on a phone that is narrower
+     than two tiles. */
+  grid-template-columns: repeat(2, minmax(0, 136px));
+  justify-content: start;
   gap: 4px;
+}
+.pictures.grid .picture {
+  width: 100%;
+  height: auto;
 }
 .picture-open {
   display: block;
