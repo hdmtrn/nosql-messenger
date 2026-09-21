@@ -353,6 +353,12 @@ function receive(msg) {
     if (msg.user_id !== props.me.id) notePresence(msg)
     return
   }
+  // Somebody added us, or answered a request of ours. The event says only that
+  // the two lists changed, so they are fetched rather than patched here.
+  if (msg.type === 'friends') {
+    loadPeople()
+    return
+  }
   // A changed name or picture: messages carry the username only, so without
   // this the new one would appear on the next reload.
   if (msg.type === 'profile') {
