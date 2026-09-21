@@ -146,6 +146,11 @@ func (h *Hub) Unsubscribe(userID, chID string) {
 func (h *Hub) Reads(c *Subscriber, chID string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	// A dropped socket keeps its channels for the announcement, but it is out
+	// of every index and reads nothing any more.
+	if c.dropped {
+		return false
+	}
 	_, ok := c.channels[chID]
 	return ok
 }
@@ -207,7 +212,8 @@ func (h *Hub) drop(c *Subscriber) {
 			h.unwatch(chID)
 		}
 	}
-	c.channels = nil
+	// The set itself stays: the socket is out of every index already, and the
+	// channels it read are who presence has to tell that its user went.
 
 	delete(h.byUser[c.userID], c)
 	if len(h.byUser[c.userID]) == 0 {
