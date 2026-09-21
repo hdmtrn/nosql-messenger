@@ -32,6 +32,14 @@ type Subscriber struct {
 	typedAt    map[string]time.Time
 }
 
+// userTopic addresses one person instead of a channel. The hub indexes sockets
+// by user already, but that index reaches this process only, while the bus
+// carries channel topics — so an event for somebody sitting on another node
+// needs an address of the same kind. The prefix keeps the key out of the space
+// of channel ids, and a pseudo-channel costs the bus no second kind of topic
+// and leaves broadcast with the one seam it has.
+func userTopic(userID string) string { return "u:" + userID }
+
 func newSubscriber(userID string) *Subscriber {
 	return &Subscriber{
 		userID:   userID,
@@ -74,6 +82,9 @@ func (h *Hub) Connect(c *Subscriber, channelIDs []string) {
 	}
 	h.byUser[c.userID][c] = struct{}{}
 
+	// Every socket reads its owner's topic, so a node subscribes to it for as
+	// long as it holds one of their sockets, and stops when it holds none.
+	h.attach(c, userTopic(c.userID))
 	for _, chID := range channelIDs {
 		h.attach(c, chID)
 	}

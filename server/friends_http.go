@@ -13,6 +13,23 @@ type friendRequestBody struct {
 	Username string `json:"username"`
 }
 
+// A friendship changed for these two: a request arrived, or one was answered.
+// The event carries nothing — both lists are one small request away, and a
+// payload would mean deriving "friend / incoming / sent" a second time in the
+// client. Constant, so it is written out once instead of encoded per event.
+var friendsPayload = []byte(`{"type":"friends"}`)
+
+// announceFriends tells both parties, on every node and in every tab. Telling
+// the one who acted is not redundant: their other tabs got no HTTP answer.
+func (s *server) announceFriends(ids ...bson.ObjectID) {
+	if s.bus == nil {
+		return
+	}
+	for _, id := range ids {
+		s.bus.Publish(userTopic(id.Hex()), friendsPayload)
+	}
+}
+
 func (s *server) handleSendFriendRequest(w http.ResponseWriter, r *http.Request, sess Session) {
 	var body friendRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -45,6 +62,8 @@ func (s *server) handleSendFriendRequest(w http.ResponseWriter, r *http.Request,
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+
+	s.announceFriends(req.From.ID, req.To.ID)
 
 	code := http.StatusCreated
 	if req.Status == friendAccepted {
@@ -87,6 +106,7 @@ func (s *server) respond(w http.ResponseWriter, r *http.Request, sess Session, s
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	s.announceFriends(req.From.ID, req.To.ID)
 	writeJSON(w, http.StatusOK, req)
 }
 
