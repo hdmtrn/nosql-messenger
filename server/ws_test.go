@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -61,6 +65,7 @@ func TestCloseCodeTellsARevocationFromADrop(t *testing.T) {
 	}{
 		{"revoked", func(h *Hub, c *Subscriber) { h.CloseSession("s1") }, closeSessionEnded},
 		{"dropped", func(h *Hub, c *Subscriber) { h.Disconnect(c) }, websocket.CloseNoStatusReceived},
+		{"shutdown", func(h *Hub, c *Subscriber) { h.CloseAll(closeServiceRestart) }, closeServiceRestart},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := NewHub()
@@ -220,5 +225,152 @@ func TestSocketClosesWhenItsSessionRunsOut(t *testing.T) {
 				t.Fatal("the pump never asked about the expired session")
 			}
 		})
+	}
+}
+
+// A deploy stops a node with SIGTERM. Its sockets must hear 1012, which sends a
+// client to another node at once, and the node must take no new ones: the
+// listener goes before the sockets are told, so a client that reconnects at
+// once cannot land on it again. drain returns only after the socket handlers
+// have, since they still use Redis and MongoDB.
+func TestShutdownTellsSocketsToReconnect(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	h := NewHub()
+	s := &server{sessions: newSessionStore(db), channels: newChannelStore(db), hub: h, bus: h}
+
+	// Logging its going is the last thing a handler does at a shutdown, and
+	// drain must not return before it: Redis and MongoDB close right after.
+	var logged lockedBuffer
+	prev := log.Writer()
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(prev) })
+
+	hs, url, header, _ := serveOneSocket(t, s)
+	conn := dialWith(t, url, header)
+
+	// The upgrade answers before the handler puts the socket in the hub; a
+	// shutdown in between would test the refusal, not the close.
+	waitUntil(t, "the socket reached the hub", func() bool { return len(h.Subscribers()) == 1 })
+
+	drainCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := s.drain(drainCtx, hs); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	if !strings.Contains(logged.String(), "- alice disconnected") {
+		t.Fatal("drain returned before the socket's handler did")
+	}
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, _, err := conn.ReadMessage()
+	var ce *websocket.CloseError
+	if !errors.As(err, &ce) || ce.Code != closeServiceRestart {
+		t.Fatalf("read gave %v, want close %d", err, closeServiceRestart)
+	}
+
+	if again, _, err := websocket.DefaultDialer.Dial(url, header); err == nil {
+		again.Close()
+		t.Fatal("a stopped node took a new socket")
+	}
+}
+
+// A node that is shutting down announces nobody offline: its users are back on
+// another node within a second, and the announcement would flash them offline
+// and online to everyone. Their sockets stay in presence until the node's pulse
+// runs out and the sweep of dead nodes takes them.
+func TestShutdownLeavesPresenceToTheSweep(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	hub, bus := testInstance(t)
+	p := newPresence(bus.rdb)
+	s := &server{sessions: newSessionStore(db), channels: newChannelStore(db), users: newUserStore(db),
+		hub: hub, bus: bus, presence: p}
+
+	hs, url, header, userID := serveOneSocket(t, s)
+	key := presenceSocketsKey + userID
+	t.Cleanup(func() {
+		bus.rdb.Del(ctx, key, presenceNodeKey+p.nodeID, presenceVersionKey+userID)
+	})
+
+	dialWith(t, url, header)
+	waitUntil(t, "presence holds the socket", func() bool { return bus.rdb.SCard(ctx, key).Val() == 1 })
+
+	drainCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := s.drain(drainCtx, hs); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+
+	if n, err := bus.rdb.SCard(ctx, key).Result(); err != nil || n != 1 {
+		t.Fatalf("presence holds %d sockets after the shutdown (%v), want 1 left for the sweep", n, err)
+	}
+}
+
+// serveOneSocket starts s as main would and returns it with the address of its
+// socket, the cookie of a fresh session to open it with, and that user's id.
+func serveOneSocket(t *testing.T, s *server) (*http.Server, string, http.Header, string) {
+	t.Helper()
+	ctx := context.Background()
+
+	if err := s.sessions.ensureIndexes(ctx); err != nil {
+		t.Fatalf("session indexes: %v", err)
+	}
+	user := &User{ID: bson.NewObjectID(), Username: "alice"}
+	sess, err := s.sessions.Create(ctx, user, "a browser")
+	if err != nil {
+		t.Fatalf("creating a session: %v", err)
+	}
+	header := http.Header{}
+	header.Set("Cookie", sessionCookie+"="+sess.Token)
+
+	hs := s.httpServer("")
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listening: %v", err)
+	}
+	go hs.Serve(ln)
+	t.Cleanup(func() { hs.Close() })
+
+	return hs, "ws://" + ln.Addr().String() + "/ws", header, user.ID.Hex()
+}
+
+func dialWith(t *testing.T, url string, header http.Header) *websocket.Conn {
+	t.Helper()
+	conn, _, err := websocket.DefaultDialer.Dial(url, header)
+	if err != nil {
+		t.Fatalf("dialing: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	return conn
+}
+
+// lockedBuffer takes log output from the handler goroutines while the test
+// reads it.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func waitUntil(t *testing.T, what string, ok func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for !ok() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting until %s", what)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

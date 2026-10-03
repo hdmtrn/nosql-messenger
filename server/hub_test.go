@@ -131,3 +131,28 @@ func TestCloseSessionDropsOnlyThatSessionsSockets(t *testing.T) {
 		t.Fatalf("the other session's socket got %d messages, want 1", len(phone.send))
 	}
 }
+
+// A handler that upgraded just before the shutdown would otherwise connect a
+// socket nobody is left to close.
+func TestCloseAllClosesAndRefusesLaterSockets(t *testing.T) {
+	h := NewHub()
+	early := newSubscriber("u1")
+	h.Connect(early, []string{"a"})
+
+	h.CloseAll(closeServiceRestart)
+
+	if _, ok := <-early.send; ok {
+		t.Fatal("an open socket survived CloseAll")
+	}
+	if early.closeCode != closeServiceRestart {
+		t.Fatalf("close code %d, want %d", early.closeCode, closeServiceRestart)
+	}
+
+	late := newSubscriber("u2")
+	if h.Connect(late, []string{"a"}) {
+		t.Fatal("the hub took a socket after CloseAll")
+	}
+	if len(h.byChannel) != 0 || len(h.byUser) != 0 {
+		t.Fatalf("indexes not empty: %d channels, %d users", len(h.byChannel), len(h.byUser))
+	}
+}

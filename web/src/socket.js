@@ -5,6 +5,11 @@ const RETRY_MAX = 15000
 // this code can reach us — a refused handshake would look like a network drop,
 // and the tab would retry forever.
 const SESSION_ENDED = 4001
+// The node is shutting down for a deploy or a restart, and another one is
+// serving. The tab comes back at once rather than backing off as from a
+// network drop, spread over a second so that every tab of the node does not
+// arrive in the same instant.
+const SERVICE_RESTART = 1012
 
 export function createSocket({ onMessage, onStateChange, onSessionEnded }) {
   let ws = null
@@ -36,6 +41,11 @@ export function createSocket({ onMessage, onStateChange, onSessionEnded }) {
       if (e.code === SESSION_ENDED) {
         closed = true
         onSessionEnded()
+        return
+      }
+      if (e.code === SERVICE_RESTART) {
+        retry = RETRY_MIN
+        timer = setTimeout(connect, Math.random() * RETRY_MIN)
         return
       }
       timer = setTimeout(connect, retry)

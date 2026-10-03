@@ -221,6 +221,12 @@ func (b *bus) applyWatches(ctx context.Context) {
 	}
 }
 
+// Close releases the connections to Redis once nothing publishes any more. The
+// subscription is not among them: Run closes it when its context ends.
+func (b *bus) Close() error {
+	return b.rdb.Close()
+}
+
 // Run owns the subscription for the lifetime of the process: one connection to
 // Redis for the whole instance, not one per client as Revolt does.
 func (b *bus) Run(ctx context.Context) {

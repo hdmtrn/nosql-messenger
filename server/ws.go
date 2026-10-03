@@ -30,11 +30,16 @@ const (
 // would retry forever.
 const closeSessionEnded = 4001
 
+// Sent when this node is shutting down. Another node is serving, so the client
+// comes back at once instead of backing off as from a network drop.
+const closeServiceRestart = websocket.CloseServiceRestart
+
 // The reason travels with its code, so a code added later cannot go out with
 // another one's text. The client decides by the code; the reason is for people
 // reading logs and devtools.
 var closeReasons = map[int]string{
 	closeSessionEnded:                "session ended",
+	closeServiceRestart:              "service restart",
 	websocket.CloseInternalServerErr: "internal error",
 }
 
@@ -94,6 +99,11 @@ var upgrader = websocket.Upgrader{
 // Revolt checks the session inside the socket for the same reason, and
 // Rocket.Chat's client once looped exactly like ours did.
 func (s *server) handleWS(w http.ResponseWriter, r *http.Request) {
+	// Counted before the upgrade, while http.Server still tracks the request:
+	// after it the connection is hijacked, and Shutdown no longer waits for it.
+	s.sockets.Add(1)
+	defer s.sockets.Done()
+
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
@@ -119,7 +129,10 @@ func (s *server) handleWS(w http.ResponseWriter, r *http.Request) {
 
 	c := newSubscriber(sess.UserID.Hex())
 	c.sessionID = sess.ID.Hex()
-	s.hub.Connect(c, ids)
+	if !s.hub.Connect(c, ids) {
+		closeNow(conn, closeServiceRestart)
+		return
+	}
 
 	// A revocation that landed after the first check but before Connect found
 	// no socket to close. Revocation invalidates the cache before it closes sockets,
@@ -150,8 +163,17 @@ func (s *server) handleWS(w http.ResponseWriter, r *http.Request) {
 	// announced after the socket is out of the hub: it must not hear itself.
 	leaving := s.hub.ChannelsOf(c)
 	s.hub.Disconnect(c)
-	s.socketClosed(c, leaving)
 	log.Printf("- %s disconnected", sess.Username)
+
+	// A node that is shutting down leaves its sockets in presence. Its users are
+	// back on another node within a second, and announcing them offline now
+	// would flash them offline and online to everyone. Once this node's pulse
+	// runs out, the sweep of dead nodes removes the sockets, and announces only
+	// the users who did not come back.
+	if s.hub.Closed() {
+		return
+	}
+	s.socketClosed(c, leaving)
 }
 
 // refuse closes a socket whose session could not be confirmed. Only a session
