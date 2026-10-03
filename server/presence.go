@@ -342,12 +342,19 @@ func (p *presence) listen(ctx context.Context) ([]string, error) {
 	return dead, nil
 }
 
-// sweeping takes the right to clean up for one round. The key expires by
-// itself, so a node that dies mid-sweep does not block the next one.
+// sweeping takes the right to clean up for one round.
 func (p *presence) sweeping(ctx context.Context) (bool, error) {
-	ok, err := p.rdb.SetNX(ctx, presenceSweeperKey, p.nodeID, presenceBeat).Result()
+	return p.takeRound(ctx, presenceSweeperKey, presenceBeat)
+}
+
+// takeRound gives one node the work of a round that comes every interval. The
+// key expires by itself, so a node that dies mid-round does not block the next
+// one, and it expires before the round ends: a key living exactly one interval
+// would still be there when its holder's next tick arrives.
+func (p *presence) takeRound(ctx context.Context, key string, every time.Duration) (bool, error) {
+	ok, err := p.rdb.SetNX(ctx, key, p.nodeID, every-every/10).Result()
 	if err != nil {
-		return false, fmt.Errorf("taking the sweeper key: %w", err)
+		return false, fmt.Errorf("taking %s: %w", key, err)
 	}
 	return ok, nil
 }

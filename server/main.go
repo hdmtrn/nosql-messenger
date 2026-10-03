@@ -25,6 +25,11 @@ func run(ctx context.Context) error {
 	}
 	defer mongoClient.Disconnect(ctx)
 	log.Println("connected to MongoDB")
+	if replicaSetLeftover(ctx, mongoClient) {
+		log.Println(`WARNING: this MongoDB data was written by a replica set member, so mongod ` +
+			`keeps the TTL monitor off and expired sessions are never removed. Run once ` +
+			`db.getSiblingDB("local").dropDatabase() and restart mongod; see the README.`)
+	}
 
 	db := mongoClient.Database(dbName)
 

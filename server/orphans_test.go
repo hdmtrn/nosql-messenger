@@ -125,24 +125,62 @@ func TestSweepLeavesYoungUnreferencedFilesAlone(t *testing.T) {
 	}
 }
 
-func TestOneNodeSweepsPerRound(t *testing.T) {
+func TestSweepGoesOnPastACollectionItCannotRead(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	channels, messages, invites, media := newChannelStore(db), newMessageStore(db), newInviteStore(db), newMediaStore(db)
+
+	alice := person("alice")
+	gone := createChannel(t, channels, "gone", alice)
+	if _, err := invites.Create(ctx, gone.ID, alice.UserID); err != nil {
+		t.Fatalf("creating invite: %v", err)
+	}
+	if _, err := channels.col.DeleteOne(ctx, bson.M{"_id": gone.ID}); err != nil {
+		t.Fatalf("deleting the channel: %v", err)
+	}
+	// A channel id that is not an ObjectID makes the messages pass fail.
+	if _, err := messages.col.InsertOne(ctx, bson.M{"channel_id": "not-an-id", "text": "stray"}); err != nil {
+		t.Fatalf("inserting the stray message: %v", err)
+	}
+
+	s := &server{channels: channels, messages: messages, invites: invites, media: media}
+	if err := s.sweepOrphans(ctx, time.Now()); err == nil {
+		t.Fatalf("a collection the sweep could not read went unreported")
+	}
+	if n, _ := invites.col.CountDocuments(ctx, bson.M{"channel_id": gone.ID}); n != 0 {
+		t.Fatalf("one unreadable collection kept the others from being swept: %d invites left", n)
+	}
+}
+
+func TestOneNodeTakesARound(t *testing.T) {
 	ctx := context.Background()
 	first, _ := testPresence(t)
 	second, _ := testPresence(t)
-	first.rdb.Del(ctx, orphanSweeperKey)
-	t.Cleanup(func() { first.rdb.Del(ctx, orphanSweeperKey) })
+	// A key of its own: the tests share Redis with whatever runs on the machine.
+	key := "test:round:" + bson.NewObjectID().Hex()
+	t.Cleanup(func() { first.rdb.Del(ctx, key) })
 
-	a, b := &server{presence: first}, &server{presence: second}
-	if !a.takeOrphanRound(ctx) {
-		t.Fatalf("the first node did not get the round")
+	if ok, err := first.takeRound(ctx, key, time.Hour); err != nil || !ok {
+		t.Fatalf("the first node did not get the round: ok %v, err %v", ok, err)
 	}
-	if b.takeOrphanRound(ctx) {
-		t.Fatalf("a second node took the same round")
+	if ok, err := second.takeRound(ctx, key, time.Hour); err != nil || ok {
+		t.Fatalf("a second node took the same round: ok %v, err %v", ok, err)
 	}
 
-	nowhere := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1"})
+	// Gone before the holder's next tick, or that tick would find it and skip.
+	ttl, err := first.rdb.PTTL(ctx, key).Result()
+	if err != nil {
+		t.Fatalf("reading the key's TTL: %v", err)
+	}
+	if ttl <= 0 || ttl > time.Hour-time.Hour/10 {
+		t.Fatalf("the key lives %v, want it gone well before the round ends", ttl)
+	}
+}
+
+func TestOrphanSweepGoesAheadWithRedisDown(t *testing.T) {
+	nowhere := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", MaxRetries: -1})
 	t.Cleanup(func() { nowhere.Close() })
-	if !(&server{presence: newPresence(nowhere)}).takeOrphanRound(ctx) {
+	if !(&server{presence: newPresence(nowhere)}).takeOrphanRound(context.Background()) {
 		t.Fatalf("with Redis down the node skipped the sweep instead of doing it")
 	}
 }

@@ -351,23 +351,15 @@ func (s *mediaStore) DeleteExpired(ctx context.Context, now time.Time) (int, err
 }
 
 func (s *mediaStore) sweepExpired(ctx context.Context) {
-	ticker := time.NewTicker(mediaSweepInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case now := <-ticker.C:
-			n, err := s.DeleteExpired(ctx, now)
-			if err != nil {
-				log.Printf("deleting unsent media: %v", err)
-			}
-			if n > 0 {
-				log.Printf("deleted %d unsent media files", n)
-			}
+	runEvery(ctx, sweepStart(), mediaSweepInterval, func(now time.Time) {
+		n, err := s.DeleteExpired(ctx, now)
+		if err != nil {
+			log.Printf("deleting unsent media: %v", err)
 		}
-	}
+		if n > 0 {
+			log.Printf("deleted %d unsent media files", n)
+		}
+	})
 }
 
 func (s *mediaStore) Open(ctx context.Context, m Media) (*mongo.GridFSDownloadStream, error) {

@@ -33,6 +33,28 @@ Vite serves the page on 5173 and proxies the API. It rewrites `Host`, so the Web
 origin check refuses the socket unless 5173 is listed in `WS_ALLOWED_ORIGINS` — REST keeps
 working while realtime events silently do not.
 
+### A volume from the replica-set days
+
+MongoDB used to run as a single-node replica set with a one-shot `mongo-init` container. A
+data volume created then still starts, but mongod keeps the TTL monitor off for it, so expired
+sessions are never removed; the server logs a warning about it at startup. Bring the stack up
+without the old container, then clear the leftover configuration once:
+
+```bash
+docker compose up -d --build --remove-orphans
+```
+
+```bash
+docker compose exec mongo mongosh --quiet --eval 'db.getSiblingDB("local").dropDatabase()'
+```
+
+```bash
+docker compose restart mongo
+```
+
+Rebuild before running the tests against an old stack: a replica set advertises itself as
+`mongo:27017`, which does not resolve from the host, so the tests cannot reach it and skip.
+
 ## Tests
 
 ```bash

@@ -61,8 +61,10 @@ key; the sweep is idempotent, so with Redis down every node sweeps rather than n
 
 Writes are acknowledged with `j: true`: a standalone `mongod` would otherwise acknowledge
 before the journal, and a message is announced to the other nodes right after its
-acknowledgement. Turning this into a replica set later is a restart with `--replSet` and one
-`rs.initiate()`; the data stays where it is.
+acknowledgement. The driver retries writes only on a replica set, so here a network error
+between the application and MongoDB reaches the caller; for a message that means the client
+sends it again under the same `client_msg_id`. Turning this into a replica set later is a
+restart with `--replSet` and one `rs.initiate()`; the data stays where it is.
 
 ## One WebSocket connection per user
 

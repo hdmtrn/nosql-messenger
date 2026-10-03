@@ -264,7 +264,7 @@ func TestDiscardTakesInvitesWithIt(t *testing.T) {
 	}
 }
 
-func TestDiscardSparesAChannelSomeoneJustJoined(t *testing.T) {
+func TestLastLeaveSparesAChannelSomeoneJustJoined(t *testing.T) {
 	ctx := context.Background()
 	db := testDB(t)
 	channels, invites, messages := newChannelStore(db), newInviteStore(db), newMessageStore(db)
@@ -278,24 +278,66 @@ func TestDiscardSparesAChannelSomeoneJustJoined(t *testing.T) {
 		t.Fatalf("inserting message: %v", err)
 	}
 
-	// The window inside Leave: the last member is pulled out and the channel
-	// looks empty, then someone joins before discard runs.
-	if _, err := channels.col.UpdateOne(ctx, bson.M{"_id": ch.ID},
-		bson.M{"$pull": bson.M{"members": bson.M{"user_id": owner.UserID}}}); err != nil {
-		t.Fatalf("pulling the owner: %v", err)
+	// The window inside Leave: the last member is out and the channel looks
+	// empty, then someone joins before discard runs.
+	channels.beforeDiscard = func() {
+		if err := channels.AddMember(ctx, ch.ID, newcomer); err != nil {
+			t.Errorf("joining: %v", err)
+		}
 	}
-	if err := channels.AddMember(ctx, ch.ID, newcomer); err != nil {
-		t.Fatalf("joining: %v", err)
-	}
-	if err := channels.discard(ctx, messages, invites, newMediaStore(db), ch.ID); err != nil {
-		t.Fatalf("discarding: %v", err)
+	if err := channels.Leave(ctx, messages, invites, newMediaStore(db), ch.ID, owner.UserID); err != nil {
+		t.Fatalf("leaving: %v", err)
 	}
 
-	if n, _ := channels.col.CountDocuments(ctx, bson.M{"_id": ch.ID}); n != 1 {
-		t.Fatalf("a channel with a member in it was discarded")
+	got, err := channels.ByID(ctx, ch.ID)
+	if err != nil {
+		t.Fatalf("a channel with a member in it was discarded: %v", err)
 	}
 	if n, _ := messages.col.CountDocuments(ctx, bson.M{"channel_id": ch.ID}); n != 1 {
 		t.Fatalf("the channel survived but its history did not")
+	}
+	if role := memberRole(got, newcomer.UserID); role != roleOwner {
+		t.Fatalf("the one member of the spared channel is %q, want %q", role, roleOwner)
+	}
+}
+
+func TestEnsureOwnerPicksTheEarliestRemaining(t *testing.T) {
+	ctx := context.Background()
+	channels := newChannelStore(testDB(t))
+
+	owner, first, second := person("owner"), person("first"), person("second")
+	ch, err := channels.Create(ctx, "team", owner)
+	if err != nil {
+		t.Fatalf("creating channel: %v", err)
+	}
+	for _, u := range []Session{first, second} {
+		if err := channels.AddMember(ctx, ch.ID, u); err != nil {
+			t.Fatalf("joining: %v", err)
+		}
+	}
+
+	// The owner and the member next in line leave at once: the owner's Leave
+	// still has the first member in its list when it gets to the promotion.
+	for _, u := range []Session{owner, first} {
+		if _, err := channels.col.UpdateOne(ctx, bson.M{"_id": ch.ID},
+			bson.M{"$pull": bson.M{"members": bson.M{"user_id": u.UserID}}}); err != nil {
+			t.Fatalf("pulling %s: %v", u.Username, err)
+		}
+	}
+	if err := channels.ensureOwner(ctx, ch.ID); err != nil {
+		t.Fatalf("ensuring an owner: %v", err)
+	}
+	// A second call finds the owner in place and changes nothing.
+	if err := channels.ensureOwner(ctx, ch.ID); err != nil {
+		t.Fatalf("ensuring an owner again: %v", err)
+	}
+
+	got, err := channels.ByID(ctx, ch.ID)
+	if err != nil {
+		t.Fatalf("reading channel: %v", err)
+	}
+	if role := memberRole(got, second.UserID); role != roleOwner {
+		t.Fatalf("the remaining member is %q, want %q", role, roleOwner)
 	}
 }
 

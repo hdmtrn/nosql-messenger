@@ -24,6 +24,8 @@ const (
 
 	channelsPageSize = 100
 	channelsMaxLimit = 200
+
+	discardPurgeTimeout = 2 * time.Minute
 )
 
 type ChannelMember struct {
@@ -60,6 +62,10 @@ var (
 
 type channelStore struct {
 	col *mongo.Collection
+
+	// Runs between Leave seeing the channel empty and discard, for tests that
+	// need someone to join exactly there. Nil outside tests.
+	beforeDiscard func()
 }
 
 func newChannelStore(db *mongo.Database) *channelStore {
@@ -317,17 +323,30 @@ func (s *channelStore) Leave(ctx context.Context, messages *messageStore, invite
 	}
 
 	if len(ch.Members) == 0 {
-		return s.discard(ctx, messages, invites, media, channelID)
-	}
-
-	for _, m := range ch.Members {
-		if m.Role == roleOwner {
-			return nil
+		if s.beforeDiscard != nil {
+			s.beforeDiscard()
 		}
+		discarded, err := s.discard(ctx, messages, invites, media, channelID)
+		if err != nil || discarded {
+			return err
+		}
+		// Someone joined in between: the channel lives on and needs an owner.
 	}
-	_, err = s.col.UpdateOne(ctx,
-		bson.M{"_id": channelID, "members.user_id": ch.Members[0].UserID},
-		bson.M{"$set": bson.M{"members.$.role": roleOwner}},
+	return s.ensureOwner(ctx, channelID)
+}
+
+// ensureOwner hands the role to the earliest member when nobody holds it.
+// The check is the filter rather than the member list Leave got back: that
+// list is stale by the time the update runs, and the member it names may
+// have left in between.
+func (s *channelStore) ensureOwner(ctx context.Context, channelID bson.ObjectID) error {
+	_, err := s.col.UpdateOne(ctx,
+		bson.M{
+			"_id":          channelID,
+			"members.0":    bson.M{"$exists": true},
+			"members.role": bson.M{"$ne": roleOwner},
+		},
+		bson.M{"$set": bson.M{"members.0.role": roleOwner}},
 	)
 	if err != nil {
 		return fmt.Errorf("promoting owner: %w", err)
@@ -342,21 +361,24 @@ func (s *channelStore) Leave(ctx context.Context, messages *messageStore, invite
 // and the orphan sweep collects it.
 //
 // The picture files go last, and only those nothing else points at: a forwarded
-// copy may still name the same bytes.
-func (s *channelStore) discard(ctx context.Context, messages *messageStore, invites *inviteStore, media *mediaStore, channelID bson.ObjectID) error {
+// copy may still name the same bytes. It reports whether the channel went.
+func (s *channelStore) discard(ctx context.Context, messages *messageStore, invites *inviteStore, media *mediaStore, channelID bson.ObjectID) (bool, error) {
 	res, err := s.col.DeleteOne(ctx, bson.M{"_id": channelID, "members": bson.M{"$size": 0}})
 	if err != nil {
-		return fmt.Errorf("discarding empty channel: %w", err)
+		return false, fmt.Errorf("discarding empty channel: %w", err)
 	}
 	if res.DeletedCount == 0 {
-		return nil
+		return false, nil
 	}
 
 	// The client leaving must not stop the cleanup halfway: the decision is made.
-	if err := s.purge(context.WithoutCancel(ctx), messages, invites, media, channelID); err != nil {
+	// Nor may a stalled database hold the request forever; the sweep finishes.
+	purgeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), discardPurgeTimeout)
+	defer cancel()
+	if err := s.purge(purgeCtx, messages, invites, media, channelID); err != nil {
 		log.Printf("discarding channel %s: %v", channelID.Hex(), err)
 	}
-	return nil
+	return true, nil
 }
 
 // purge deletes what belongs to a channel that is already gone. Every step can
