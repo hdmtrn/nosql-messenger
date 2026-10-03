@@ -77,6 +77,21 @@ is exactly the kind of bug that reading the code does not find.
 CI runs four independent jobs on every push: `go vet` plus a `gofmt` check, the short test
 run, the full run against a real MongoDB and Redis, and a throwaway Docker image build.
 
+## Profiling
+
+Each node serves `net/http/pprof` on `127.0.0.1:9090`, reachable only from inside its own
+container: compose publishes nothing for it. Take a profile there and read it on the host:
+
+```bash
+docker compose exec --index 1 app wget -qO- 127.0.0.1:9090/debug/pprof/heap > heap.pb.gz
+```
+
+```bash
+go tool pprof -top heap.pb.gz
+```
+
+A CPU profile is `/debug/pprof/profile?seconds=30`; `--index 2` picks the other node.
+
 ## Layout
 
 | Path | What is in it |
