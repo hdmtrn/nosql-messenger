@@ -5,12 +5,20 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
 const dbName = "messenger"
+
+// shutdownTimeout is how long a stopping node waits for its requests and
+// sockets. It has to fit inside the grace period of whatever stops the
+// container (stop_grace_period in compose, stopTimeout in ECS), or the process
+// is killed in the middle of the drain.
+const shutdownTimeout = 20 * time.Second
 
 func main() {
 	if err := run(context.Background()); err != nil {
@@ -19,11 +27,26 @@ func main() {
 }
 
 func run(ctx context.Context) error {
+	// docker and ECS stop a container with SIGTERM. Without a handler the Go
+	// runtime exits on the spot: requests in flight are cut off and sockets die
+	// without a close frame. The background loops started below end with ctx,
+	// at the signal; requests and sockets are drained at the end of run.
+	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	mongoClient, err := connectMongo(ctx)
 	if err != nil {
 		return err
 	}
-	defer mongoClient.Disconnect(ctx)
+	// Not ctx, which has ended by then: Disconnect with an ended context closes
+	// the connections still in use instead of waiting for them.
+	defer func() {
+		dctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := mongoClient.Disconnect(dctx); err != nil {
+			log.Printf("disconnecting from MongoDB: %v", err)
+		}
+	}()
 	log.Println("connected to MongoDB")
 
 	db := mongoClient.Database(dbName)
@@ -76,6 +99,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	defer bus.Close()
 	// Method values: hub keeps the two functions, not the bus itself, so it
 	// stays unaware of what is on the other end.
 	hub.watch, hub.unwatch = bus.Watch, bus.Unwatch
@@ -104,17 +128,72 @@ func run(ctx context.Context) error {
 	go srv.runPurge(ctx)
 	go srv.runFileSweep(ctx)
 
-	httpSrv := &http.Server{
-		Addr:              ":8080",
-		Handler:           srv.routes(),
+	httpSrv := srv.httpServer(":8080")
+
+	log.Printf("cookies: Secure=%v (set COOKIE_SECURE=false for plain http)", secureCookies)
+	log.Println("listening on", httpSrv.Addr)
+
+	served := make(chan error, 1)
+	go func() { served <- httpSrv.ListenAndServe() }()
+
+	select {
+	case err := <-served:
+		return err
+	case <-ctx.Done():
+	}
+	// A second signal now kills the process the default way, for when the
+	// drain itself hangs.
+	stop()
+	log.Println("shutting down")
+
+	drainCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	if err := srv.drain(drainCtx, httpSrv); err != nil {
+		log.Printf("shutdown: %v", err)
+	}
+	log.Println("drained, closing Redis and MongoDB")
+	return nil
+}
+
+// httpServer builds the server run starts, in a function of its own so that the
+// shutdown test stops this very server rather than a copy of its settings.
+func (s *server) httpServer(addr string) *http.Server {
+	hs := &http.Server{
+		Addr:              addr,
+		Handler:           s.routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 		WriteTimeout:      10 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
+	// Shutdown leaves hijacked connections alone, and every socket is one. It
+	// calls this after closing the listener, so a client told to reconnect
+	// cannot land on this node again.
+	hs.RegisterOnShutdown(func() { s.hub.CloseAll(closeServiceRestart) })
+	return hs
+}
 
-	log.Printf("cookies: Secure=%v (set COOKIE_SECURE=false for plain http)", secureCookies)
-	log.Println("listening on", httpSrv.Addr)
-	return httpSrv.ListenAndServe()
+// drain stops hs the way a deploy needs: no new connections, sockets told to
+// reconnect elsewhere, requests in flight allowed to finish, and the socket
+// handlers waited for, since they use Redis and MongoDB until they return.
+func (s *server) drain(ctx context.Context, hs *http.Server) error {
+	if err := hs.Shutdown(ctx); err != nil {
+		return fmt.Errorf("requests still running: %w", err)
+	}
+
+	// Waiting is safe only now. Every request has finished or been hijacked,
+	// and handleWS counts itself before the hijack, so no handler can start
+	// counting while Wait runs.
+	done := make(chan struct{})
+	go func() {
+		s.sockets.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("sockets still open: %w", ctx.Err())
+	}
 }
 
 // wireRevocation connects the two directions of a revocation: this node

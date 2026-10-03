@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"go.mongodb.org/mongo-driver/v2/mongo"
 )
@@ -37,6 +38,10 @@ type server struct {
 	friends  *friendStore
 	invites  *inviteStore
 	media    *mediaStore
+
+	// The socket handlers still running. Shutdown waits for them before it
+	// closes Redis and MongoDB, which they use until they return.
+	sockets sync.WaitGroup
 }
 
 func (s *server) routes() http.Handler {

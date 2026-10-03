@@ -62,6 +62,10 @@ type Hub struct {
 	// nothing, which is what tests and a single instance need.
 	watch   func(chID string)
 	unwatch func(chID string)
+
+	// Set by CloseAll when the process is going away. A handler that upgraded
+	// just before it would otherwise connect a socket nobody closes.
+	closed bool
 }
 
 func NewHub() *Hub {
@@ -73,9 +77,14 @@ func NewHub() *Hub {
 	}
 }
 
-func (h *Hub) Connect(c *Subscriber, channelIDs []string) {
+// Connect returns false once the hub is closed; the socket is then not in it.
+func (h *Hub) Connect(c *Subscriber, channelIDs []string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+
+	if h.closed {
+		return false
+	}
 
 	if h.byUser[c.userID] == nil {
 		h.byUser[c.userID] = make(map[*Subscriber]struct{})
@@ -88,6 +97,7 @@ func (h *Hub) Connect(c *Subscriber, channelIDs []string) {
 	for _, chID := range channelIDs {
 		h.attach(c, chID)
 	}
+	return true
 }
 
 // Subscribers copies every socket of this node, which presence needs when it
@@ -183,6 +193,28 @@ func (h *Hub) CloseSession(sessionID string) {
 			}
 		}
 	}
+}
+
+// CloseAll drops every socket with code and refuses the ones that come after,
+// for a process that is shutting down.
+func (h *Hub) CloseAll(code int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.closed = true
+	for _, subs := range h.byUser {
+		for c := range subs {
+			c.closeCode = code
+			h.drop(c)
+		}
+	}
+}
+
+// Closed reports whether CloseAll has run.
+func (h *Hub) Closed() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.closed
 }
 
 func (h *Hub) Publish(chID string, msg []byte) {
