@@ -135,6 +135,35 @@ func (s *messageStore) Insert(ctx context.Context, msg Message) (Message, error)
 	return msg, nil
 }
 
+// deleteBatch deletes up to n of a channel's messages and reports how many it
+// found, so a caller loops until nothing is left. Small deletes keep a purge
+// of a long history from holding the database in one long operation.
+func (s *messageStore) deleteBatch(ctx context.Context, channelID bson.ObjectID, n int) (int, error) {
+	cur, err := s.col.Find(ctx, bson.M{"channel_id": channelID},
+		options.Find().SetProjection(bson.M{"_id": 1}).SetLimit(int64(n)))
+	if err != nil {
+		return 0, fmt.Errorf("finding messages to delete: %w", err)
+	}
+	var found []struct {
+		ID bson.ObjectID `bson:"_id"`
+	}
+	if err := cur.All(ctx, &found); err != nil {
+		return 0, fmt.Errorf("decoding messages to delete: %w", err)
+	}
+	if len(found) == 0 {
+		return 0, nil
+	}
+
+	ids := make([]bson.ObjectID, len(found))
+	for i, f := range found {
+		ids[i] = f.ID
+	}
+	if _, err := s.col.DeleteMany(ctx, bson.M{"_id": bson.M{"$in": ids}}); err != nil {
+		return 0, fmt.Errorf("deleting messages: %w", err)
+	}
+	return len(found), nil
+}
+
 func (s *messageStore) ByID(ctx context.Context, id bson.ObjectID) (Message, error) {
 	var msg Message
 	err := s.col.FindOne(ctx, bson.M{"_id": id}).Decode(&msg)

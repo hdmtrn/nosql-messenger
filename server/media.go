@@ -248,47 +248,42 @@ func (s *mediaStore) deleteWhere(ctx context.Context, filter bson.M) error {
 	return nil
 }
 
-// deleteForChannel removes the channel's media records and returns the files
-// they pointed at. It does not touch the files: a forwarded picture is a second
-// record over the same bytes, so a file may still be in use elsewhere. Run
-// once the channel itself is gone.
-func (s *mediaStore) deleteForChannel(ctx context.Context, channelID bson.ObjectID) ([]bson.ObjectID, error) {
-	filter := bson.M{"channel_id": channelID}
+// purgeChannel deletes a marked channel's pictures. Files go before the
+// records naming them, so a purge cut short finds its files again on the next
+// try; a file that a forwarded copy in another channel names is kept.
+func (s *mediaStore) purgeChannel(ctx context.Context, channelID bson.ObjectID) error {
 	var fileIDs []bson.ObjectID
-	if err := s.col.Distinct(ctx, "file_id", filter).Decode(&fileIDs); err != nil {
-		return nil, fmt.Errorf("listing channel files: %w", err)
+	if err := s.col.Distinct(ctx, "file_id", bson.M{"channel_id": channelID}).Decode(&fileIDs); err != nil {
+		return fmt.Errorf("listing channel files: %w", err)
 	}
-	if _, err := s.col.DeleteMany(ctx, filter); err != nil {
-		return nil, fmt.Errorf("deleting channel media: %w", err)
-	}
-	return fileIDs, nil
-}
-
-// DeleteUnreferencedFiles deletes those of the files no media record points at
-// any more. A file whose last record is gone is garbage; one that a forwarded
-// copy still names is kept.
-func (s *mediaStore) DeleteUnreferencedFiles(ctx context.Context, fileIDs []bson.ObjectID) error {
 	for _, id := range fileIDs {
-		n, err := s.col.CountDocuments(ctx, bson.M{"file_id": id}, options.Count().SetLimit(1))
+		n, err := s.col.CountDocuments(ctx,
+			bson.M{"file_id": id, "channel_id": bson.M{"$ne": channelID}},
+			options.Count().SetLimit(1))
 		if err != nil {
 			return fmt.Errorf("counting references to file %s: %w", id.Hex(), err)
 		}
 		if n > 0 {
 			continue
 		}
-		err = s.files.Delete(ctx, id)
-		if err != nil && !errors.Is(err, mongo.ErrFileNotFound) {
+		// Delete also clears the chunks a delete cut short left behind.
+		if err := s.files.Delete(ctx, id); err != nil && !errors.Is(err, mongo.ErrFileNotFound) {
 			return fmt.Errorf("deleting file %s: %w", id.Hex(), err)
 		}
+	}
+	if _, err := s.col.DeleteMany(ctx, bson.M{"channel_id": channelID}); err != nil {
+		return fmt.Errorf("deleting channel media: %w", err)
 	}
 	return nil
 }
 
 // deleteUnreferencedBefore deletes the stored files uploaded before cutoff that
-// no media record names: a record went and its file stayed. Save uploads the
-// file before inserting its record, so cutoff has to leave uploads in progress
-// alone.
-func (s *mediaStore) deleteUnreferencedBefore(ctx context.Context, cutoff time.Time) (int, error) {
+// no media record names, which a crash inside Save or deleteWhere leaves. Save
+// uploads the file before inserting its record, so cutoff has to leave uploads
+// in progress alone. This infers garbage from absence, so it deletes nothing
+// when there are more than limit: that many is a broken media collection, not
+// a crash.
+func (s *mediaStore) deleteUnreferencedBefore(ctx context.Context, cutoff time.Time, limit int) (int, error) {
 	cur, err := s.db.Collection("fs.files").Aggregate(ctx, mongo.Pipeline{
 		{{Key: "$match", Value: bson.M{"uploadDate": bson.M{"$lt": cutoff}}}},
 		{{Key: "$lookup", Value: bson.M{
@@ -296,6 +291,7 @@ func (s *mediaStore) deleteUnreferencedBefore(ctx context.Context, cutoff time.T
 		}}},
 		{{Key: "$match", Value: bson.M{"refs": bson.M{"$size": 0}}}},
 		{{Key: "$project", Value: bson.M{"_id": 1}}},
+		{{Key: "$limit", Value: limit + 1}},
 	})
 	if err != nil {
 		return 0, fmt.Errorf("finding unreferenced files: %w", err)
@@ -305,6 +301,10 @@ func (s *mediaStore) deleteUnreferencedBefore(ctx context.Context, cutoff time.T
 	}
 	if err := cur.All(ctx, &files); err != nil {
 		return 0, fmt.Errorf("decoding unreferenced files: %w", err)
+	}
+	if len(files) > limit {
+		return 0, fmt.Errorf("more than %d stored files look unreferenced, more than a crash leaves; "+
+			"deleted none, check the %s collection", limit, s.col.Name())
 	}
 
 	deleted := 0

@@ -232,7 +232,7 @@ func TestRevokeOnlyTouchesItsOwnChannel(t *testing.T) {
 	}
 }
 
-func TestDiscardTakesInvitesWithIt(t *testing.T) {
+func TestLastLeaveMarksTheChannelAndRevokesItsInvites(t *testing.T) {
 	ctx := context.Background()
 	db := testDB(t)
 	channels, invites, messages := newChannelStore(db), newInviteStore(db), newMessageStore(db)
@@ -249,55 +249,114 @@ func TestDiscardTakesInvitesWithIt(t *testing.T) {
 		t.Fatalf("inserting message: %v", err)
 	}
 
-	// The last member leaving takes the channel, and a code outliving the
-	// channel it points at would be an invite to nothing.
-	if err := channels.Leave(ctx, messages, invites, newMediaStore(db), ch.ID, owner.UserID); err != nil {
-		t.Fatalf("leaving: %v", err)
-	}
-
-	left, err := invites.ForChannel(ctx, ch.ID)
-	if err != nil {
-		t.Fatalf("listing invites: %v", err)
-	}
-	if len(left) != 0 {
-		t.Fatalf("%d invites outlived their channel", len(left))
-	}
-}
-
-func TestLastLeaveSparesAChannelSomeoneJustJoined(t *testing.T) {
-	ctx := context.Background()
-	db := testDB(t)
-	channels, invites, messages := newChannelStore(db), newInviteStore(db), newMessageStore(db)
-
-	owner, newcomer := person("owner"), person("newcomer")
-	ch, err := channels.Create(ctx, "busy", owner)
-	if err != nil {
-		t.Fatalf("creating channel: %v", err)
-	}
-	if _, err := messages.Insert(ctx, Message{ChannelID: ch.ID, Author: authorOf(owner), Text: "hello", ClientMsgID: "c1"}); err != nil {
-		t.Fatalf("inserting message: %v", err)
-	}
-
-	// The window inside Leave: the last member is out and the channel looks
-	// empty, then someone joins before discard runs.
-	channels.beforeDiscard = func() {
-		if err := channels.AddMember(ctx, ch.ID, newcomer); err != nil {
-			t.Errorf("joining: %v", err)
-		}
-	}
-	if err := channels.Leave(ctx, messages, invites, newMediaStore(db), ch.ID, owner.UserID); err != nil {
+	if err := channels.Leave(ctx, invites, ch.ID, owner.UserID); err != nil {
 		t.Fatalf("leaving: %v", err)
 	}
 
 	got, err := channels.ByID(ctx, ch.ID)
 	if err != nil {
-		t.Fatalf("a channel with a member in it was discarded: %v", err)
+		t.Fatalf("the channel went at once instead of waiting for the purge: %v", err)
 	}
+	if got.DeletedAt == nil {
+		t.Fatalf("the last member left and the channel is not marked")
+	}
+	// A code outliving the channel it points at would be an invite to nothing.
+	left, err := invites.ForChannel(ctx, ch.ID)
+	if err != nil {
+		t.Fatalf("listing invites: %v", err)
+	}
+	if len(left) != 0 {
+		t.Fatalf("%d invites outlived the last member", len(left))
+	}
+	// Deleting the history is the purge job's.
 	if n, _ := messages.col.CountDocuments(ctx, bson.M{"channel_id": ch.ID}); n != 1 {
-		t.Fatalf("the channel survived but its history did not")
+		t.Fatalf("the history went at once: %d of 1 messages left", n)
 	}
-	if role := memberRole(got, newcomer.UserID); role != roleOwner {
-		t.Fatalf("the one member of the spared channel is %q, want %q", role, roleOwner)
+}
+
+func TestAMarkedChannelTakesNoNewMembers(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	channels, invites := newChannelStore(db), newInviteStore(db)
+
+	owner, newcomer := person("owner"), person("newcomer")
+	ch, err := channels.Create(ctx, "doomed", owner)
+	if err != nil {
+		t.Fatalf("creating channel: %v", err)
+	}
+	if err := channels.Leave(ctx, invites, ch.ID, owner.UserID); err != nil {
+		t.Fatalf("leaving: %v", err)
+	}
+
+	// The mark is what closes the race with the last member leaving: a join
+	// that comes after it finds the channel gone.
+	if err := channels.AddMember(ctx, ch.ID, newcomer); !errors.Is(err, errChannelNotFound) {
+		t.Fatalf("joining a marked channel: got %v, want errChannelNotFound", err)
+	}
+}
+
+func TestALeaveThatLeavesSomeoneKeepsTheChannel(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	channels, invites := newChannelStore(db), newInviteStore(db)
+
+	owner, member := person("owner"), person("member")
+	ch, err := channels.Create(ctx, "team", owner)
+	if err != nil {
+		t.Fatalf("creating channel: %v", err)
+	}
+	if err := channels.AddMember(ctx, ch.ID, member); err != nil {
+		t.Fatalf("joining: %v", err)
+	}
+	if err := channels.Leave(ctx, invites, ch.ID, owner.UserID); err != nil {
+		t.Fatalf("leaving: %v", err)
+	}
+
+	got, err := channels.ByID(ctx, ch.ID)
+	if err != nil {
+		t.Fatalf("reading channel: %v", err)
+	}
+	if got.DeletedAt != nil {
+		t.Fatalf("a channel with a member left in it was marked")
+	}
+	if role := memberRole(got, member.UserID); role != roleOwner {
+		t.Fatalf("the remaining member is %q, want %q", role, roleOwner)
+	}
+	// The same write handles direct_key for conversations; a named channel
+	// must not come out of it with a null key, which the unique index would
+	// then hold against the next named channel.
+	if n, _ := channels.col.CountDocuments(ctx, bson.M{"_id": ch.ID, "direct_key": bson.M{"$exists": true}}); n != 0 {
+		t.Fatalf("leaving gave a named channel a direct_key")
+	}
+}
+
+func TestBothLeavingAConversationFreesThePair(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	channels, invites := newChannelStore(db), newInviteStore(db)
+	if err := channels.ensureIndexes(ctx); err != nil {
+		t.Fatalf("indexes: %v", err)
+	}
+
+	alice, bob := person("alice"), person("bob")
+	first, err := channels.Direct(ctx, alice, &User{ID: bob.UserID, Username: bob.Username})
+	if err != nil {
+		t.Fatalf("opening: %v", err)
+	}
+	for _, u := range []Session{alice, bob} {
+		if err := channels.Leave(ctx, invites, first.ID, u.UserID); err != nil {
+			t.Fatalf("%s leaving: %v", u.Username, err)
+		}
+	}
+
+	// The marked conversation waits for the purge, but the two of them can
+	// talk again in the meantime.
+	again, err := channels.Direct(ctx, alice, &User{ID: bob.UserID, Username: bob.Username})
+	if err != nil {
+		t.Fatalf("opening again: %v", err)
+	}
+	if again.ID == first.ID || again.DeletedAt != nil || len(again.Members) != 2 {
+		t.Fatalf("opening again returned the marked conversation: %+v", again)
 	}
 }
 

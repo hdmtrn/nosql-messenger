@@ -50,14 +50,22 @@ timestamp: a measurement found up to 4173 documents sharing the same `created_at
 
 ## MongoDB runs standalone
 
-One `mongod`, no replica set. The only operation that spans collections, discarding a channel
-its last member has left, needs no transaction: deleting the channel document is the commit
-point, and it happens only while the channel is still empty, so someone who joined in the
-meantime keeps it. Past that point the messages, invites and media records are unreachable,
-and a failure halfway leaves garbage rather than a broken channel. An hourly sweep collects
-whatever names a channel that no longer exists, which also covers a message that passed its
-membership check just before the channel went. One node takes each round through a Redis
-key; the sweep is idempotent, so with Redis down every node sweeps rather than none.
+One `mongod`, no replica set, and no transactions. The only operation that spans collections
+is removing a channel its last member has left, and it is split in two. Leaving is one write
+that takes the member out and, when nobody is left, marks the channel `deleted_at`; the mark
+is the commit point, and joining refuses a marked channel, so no one gets into a channel whose
+history is going. A purge job then removes the messages, invites, pictures and finally the
+channel itself. The channel goes last because its mark is the record of what is left to do: a
+purge cut short anywhere is picked up again from it, and nothing is ever inferred from a
+channel being absent. The job waits ten minutes after the mark, so a message that passed its
+membership check just before it is purged with the rest.
+
+The job runs on every node. A node claims one marked channel at a time with a single write
+that checks the claim is free and takes it until a time; a claim that runs out lets another
+node finish what a dead one started, and only the node still holding the claim may delete the
+channel. Stored files no record names, which a crash inside an upload can leave, are the one
+thing found by absence; that sweep takes one node per round through a Redis key and deletes
+nothing when more than a hundred files look unreferenced at once.
 
 Writes are acknowledged with `j: true`: a standalone `mongod` would otherwise acknowledge
 before the journal, and a message is announced to the other nodes right after its

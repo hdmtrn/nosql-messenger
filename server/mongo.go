@@ -6,7 +6,6 @@ import (
 	"os"
 	"time"
 
-	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.mongodb.org/mongo-driver/v2/mongo/readpref"
@@ -38,12 +37,4 @@ func connectMongo(ctx context.Context) (*mongo.Client, error) {
 		return nil, fmt.Errorf("ping MongoDB: %w", err)
 	}
 	return client, nil
-}
-
-// replicaSetLeftover reports a volume written while MongoDB still ran as a
-// replica set. Started standalone, mongod keeps the TTL monitor off for such
-// data, so expired sessions stay in the database without any error.
-func replicaSetLeftover(ctx context.Context, client *mongo.Client) bool {
-	n, err := client.Database("local").Collection("system.replset").CountDocuments(ctx, bson.M{})
-	return err == nil && n > 0
 }

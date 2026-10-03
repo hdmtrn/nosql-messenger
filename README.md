@@ -37,8 +37,8 @@ working while realtime events silently do not.
 
 MongoDB used to run as a single-node replica set with a one-shot `mongo-init` container. A
 data volume created then still starts, but mongod keeps the TTL monitor off for it, so expired
-sessions are never removed; the server logs a warning about it at startup. Bring the stack up
-without the old container, then clear the leftover configuration once:
+sessions are never removed, and nothing reports it. Bring the stack up without the old
+container, then clear the leftover configuration once:
 
 ```bash
 docker compose up -d --build --remove-orphans

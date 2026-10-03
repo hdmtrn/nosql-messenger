@@ -25,11 +25,6 @@ func run(ctx context.Context) error {
 	}
 	defer mongoClient.Disconnect(ctx)
 	log.Println("connected to MongoDB")
-	if replicaSetLeftover(ctx, mongoClient) {
-		log.Println(`WARNING: this MongoDB data was written by a replica set member, so mongod ` +
-			`keeps the TTL monitor off and expired sessions are never removed. Run once ` +
-			`db.getSiblingDB("local").dropDatabase() and restart mongod; see the README.`)
-	}
 
 	db := mongoClient.Database(dbName)
 
@@ -106,7 +101,8 @@ func run(ctx context.Context) error {
 	}
 
 	go srv.runPresence(ctx)
-	go srv.runOrphanSweep(ctx)
+	go srv.runPurge(ctx)
+	go srv.runFileSweep(ctx)
 
 	httpSrv := &http.Server{
 		Addr:              ":8080",
