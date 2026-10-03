@@ -1,5 +1,7 @@
 # Messenger on Go and MongoDB
 
+[![CI](https://github.com/hdmtrn/nosql-messenger/actions/workflows/ci.yml/badge.svg)](https://github.com/hdmtrn/nosql-messenger/actions/workflows/ci.yml)
+
 A real-time group messenger built on a document database: Go on the backend, MongoDB for
 storage, Redis Pub/Sub as the bus between application instances, Vue 3 on the frontend,
 WebSocket for delivery, Docker Compose for the whole environment. Written as a university
