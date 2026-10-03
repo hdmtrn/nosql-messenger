@@ -251,7 +251,7 @@ func (s *mediaStore) deleteWhere(ctx context.Context, filter bson.M) error {
 // deleteForChannel removes the channel's media records and returns the files
 // they pointed at. It does not touch the files: a forwarded picture is a second
 // record over the same bytes, so a file may still be in use elsewhere. Run
-// inside the transaction that removes the channel.
+// once the channel itself is gone.
 func (s *mediaStore) deleteForChannel(ctx context.Context, channelID bson.ObjectID) ([]bson.ObjectID, error) {
 	filter := bson.M{"channel_id": channelID}
 	var fileIDs []bson.ObjectID

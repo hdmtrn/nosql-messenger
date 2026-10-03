@@ -1,7 +1,7 @@
 services:
   mongo:
     image: mongo:8.0
-    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    command: ["mongod", "--bind_ip_all"]
     # Loopback only: the database is not exposed, neither locally nor on the
     # instance. Admin access on the instance goes through an SSH tunnel.
     ports:
@@ -15,16 +15,6 @@ services:
       timeout: 5s
       retries: 12
       start_period: 10s
-
-  mongo-init:
-    image: mongo:8.0
-    depends_on:
-      mongo:
-        condition: service_healthy
-    restart: "no"
-    command: >-
-      mongosh --host mongo:27017 --quiet --eval
-      "try { rs.status().ok } catch (e) { rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'mongo:27017'}]}) }"
 
   redis:
     image: redis:8.0-alpine
@@ -51,16 +41,10 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-      # A healthy mongod does NOT yet mean an initiated replica set, and the app
-      # fails its ping against an uninitiated one. So it waits not for mongo but
-      # for the one-shot mongo-init to exit with code zero.
-      mongo-init:
-        condition: service_completed_successfully
+      mongo:
+        condition: service_healthy
     environment:
-      # directConnection is required: the replica set was initiated as
-      # mongo:27017, and without this flag the driver would follow the
-      # advertised topology instead of the address in the URI.
-      MONGO_URI: "mongodb://mongo:27017/?directConnection=true"
+      MONGO_URI: "mongodb://mongo:27017"
       REDIS_ADDR: "redis:6379"
       # The code defaults to true, and the browser will not accept such a cookie
       # over http, so login would not work. On the instance with TLS the

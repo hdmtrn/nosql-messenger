@@ -48,11 +48,17 @@ serves the descending sort as a backward scan (IXSCAN backward, no SORT stage). 
 is cursor-based on `before` rather than `skip`, and the cursor is `_id` rather than a
 timestamp: a measurement found up to 4173 documents sharing the same `created_at`.
 
-## MongoDB runs as a replica set
+## MongoDB runs standalone
 
-`--replSet rs0` from the first commit, even for a single node. Change streams and
-transactions are only available in that mode, and the measurements that go into the thesis
-have to be taken on the configuration that is actually shipped.
+One `mongod`, no replica set. The only operation that spans collections, discarding a channel
+its last member has left, needs no transaction: deleting the channel document is the commit
+point, and it happens only while the channel is still empty, so someone who joined in the
+meantime keeps it. Past that point the messages, invites and media records are unreachable,
+and a failure halfway leaves garbage rather than a broken channel. Writes are acknowledged
+with `j: true`: a standalone `mongod` would otherwise acknowledge before the journal, and a
+message is announced to the other nodes right after its acknowledgement. Turning this into a
+replica set later is a restart with `--replSet` and one `rs.initiate()`; the data stays where
+it is.
 
 ## One WebSocket connection per user
 

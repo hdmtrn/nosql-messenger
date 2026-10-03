@@ -264,6 +264,41 @@ func TestDiscardTakesInvitesWithIt(t *testing.T) {
 	}
 }
 
+func TestDiscardSparesAChannelSomeoneJustJoined(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	channels, invites, messages := newChannelStore(db), newInviteStore(db), newMessageStore(db)
+
+	owner, newcomer := person("owner"), person("newcomer")
+	ch, err := channels.Create(ctx, "busy", owner)
+	if err != nil {
+		t.Fatalf("creating channel: %v", err)
+	}
+	if _, err := messages.Insert(ctx, Message{ChannelID: ch.ID, Author: authorOf(owner), Text: "hello", ClientMsgID: "c1"}); err != nil {
+		t.Fatalf("inserting message: %v", err)
+	}
+
+	// The window inside Leave: the last member is pulled out and the channel
+	// looks empty, then someone joins before discard runs.
+	if _, err := channels.col.UpdateOne(ctx, bson.M{"_id": ch.ID},
+		bson.M{"$pull": bson.M{"members": bson.M{"user_id": owner.UserID}}}); err != nil {
+		t.Fatalf("pulling the owner: %v", err)
+	}
+	if err := channels.AddMember(ctx, ch.ID, newcomer); err != nil {
+		t.Fatalf("joining: %v", err)
+	}
+	if err := channels.discard(ctx, messages, invites, newMediaStore(db), ch.ID); err != nil {
+		t.Fatalf("discarding: %v", err)
+	}
+
+	if n, _ := channels.col.CountDocuments(ctx, bson.M{"_id": ch.ID}); n != 1 {
+		t.Fatalf("a channel with a member in it was discarded")
+	}
+	if n, _ := messages.col.CountDocuments(ctx, bson.M{"channel_id": ch.ID}); n != 1 {
+		t.Fatalf("the channel survived but its history did not")
+	}
+}
+
 func TestFollowingAnInviteTwiceIsNotAnError(t *testing.T) {
 	ctx := context.Background()
 	db := testDB(t)

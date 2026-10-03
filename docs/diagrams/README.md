@@ -150,7 +150,7 @@ flowchart LR
   end
 
   redis[("Redis 8.0<br/>no persistence")]
-  mongo[("MongoDB 8.0<br/>replica set rs0")]
+  mongo[("MongoDB 8.0<br/>standalone")]
 
   apijs -->|"HTTP REST"| mux1
   wsjs -->|"WebSocket /ws"| mux1

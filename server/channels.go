@@ -335,44 +335,34 @@ func (s *channelStore) Leave(ctx context.Context, messages *messageStore, invite
 	return nil
 }
 
-// discard drops a channel and everything that belongs to it together. The
-// collections must go or stay as one, which is what the replica set buys us
-// besides change streams.
+// discard drops a channel nobody is left in, with everything that belongs to it.
+// Deleting the channel document is the commit point, and only while it is still
+// empty: someone may have joined since Leave saw it empty. Past that point the
+// rest is unreachable, so a failure leaves garbage rather than a broken channel.
 //
-// The picture files are the exception: they are deleted only after the commit,
-// and only those nothing else points at. A crash in between leaves an unused
-// file behind, which is harmless; the other order could leave a forwarded copy
-// pointing at deleted bytes.
+// The picture files go last, and only those nothing else points at: a forwarded
+// copy may still name the same bytes.
 func (s *channelStore) discard(ctx context.Context, messages *messageStore, invites *inviteStore, media *mediaStore, channelID bson.ObjectID) error {
-	sess, err := s.col.Database().Client().StartSession()
-	if err != nil {
-		return fmt.Errorf("starting session: %w", err)
-	}
-	defer sess.EndSession(ctx)
-
-	// WithTransaction may run the function more than once, so the file list is
-	// whatever the last, committed attempt found.
-	var files []bson.ObjectID
-	_, err = sess.WithTransaction(ctx, func(ctx context.Context) (any, error) {
-		if _, err := s.col.DeleteOne(ctx, bson.M{"_id": channelID}); err != nil {
-			return nil, err
-		}
-		if _, err := messages.col.DeleteMany(ctx, bson.M{"channel_id": channelID}); err != nil {
-			return nil, err
-		}
-		if _, err := invites.col.DeleteMany(ctx, bson.M{"channel_id": channelID}); err != nil {
-			return nil, err
-		}
-		var err error
-		files, err = media.deleteForChannel(ctx, channelID)
-		return nil, err
-	})
+	res, err := s.col.DeleteOne(ctx, bson.M{"_id": channelID, "members": bson.M{"$size": 0}})
 	if err != nil {
 		return fmt.Errorf("discarding empty channel: %w", err)
 	}
+	if res.DeletedCount == 0 {
+		return nil
+	}
 
+	if _, err := messages.col.DeleteMany(ctx, bson.M{"channel_id": channelID}); err != nil {
+		log.Printf("discarding channel %s: messages: %v", channelID.Hex(), err)
+	}
+	if _, err := invites.col.DeleteMany(ctx, bson.M{"channel_id": channelID}); err != nil {
+		log.Printf("discarding channel %s: invites: %v", channelID.Hex(), err)
+	}
+	files, err := media.deleteForChannel(ctx, channelID)
+	if err != nil {
+		log.Printf("discarding channel %s: %v", channelID.Hex(), err)
+		return nil
+	}
 	if err := media.DeleteUnreferencedFiles(ctx, files); err != nil {
-		// The channel is gone either way; what is left is unused bytes.
 		log.Printf("discarding channel %s: %v", channelID.Hex(), err)
 	}
 	return nil
