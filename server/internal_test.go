@@ -17,7 +17,7 @@ func TestProfilesOnlyOnTheInternalMux(t *testing.T) {
 		return rec.Code, rec.Body.String()
 	}
 
-	code, body := get(internalRoutes())
+	code, body := get((&server{}).internalRoutes())
 	if code != http.StatusOK || !strings.Contains(body, "goroutine profile:") {
 		t.Fatalf("internal mux answered %d without a goroutine profile", code)
 	}

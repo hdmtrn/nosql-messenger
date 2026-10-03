@@ -17,7 +17,7 @@ export default defineConfig({
       '/presence': api,
       '/friends': api,
       '/media': api,
-      '/health': api,
+      '/healthz': api,
       '/ws': { ...api, ws: true },
     },
   },

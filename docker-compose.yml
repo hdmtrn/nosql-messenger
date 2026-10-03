@@ -73,7 +73,7 @@ services:
     # default 10 s would kill it in the middle of that.
     stop_grace_period: 25s
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
       interval: 10s
       timeout: 3s
       retries: 3
