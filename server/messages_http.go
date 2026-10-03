@@ -111,8 +111,7 @@ func (s *server) messageForMember(w http.ResponseWriter, r *http.Request, raw st
 
 func (s *server) handleSendMessage(w http.ResponseWriter, r *http.Request, sess Session) {
 	var req sendMessageRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "malformed JSON")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 
@@ -182,8 +181,7 @@ type forwardMessageRequest struct {
 // caller is in. The text comes from the stored message, not from the request.
 func (s *server) handleForwardMessage(w http.ResponseWriter, r *http.Request, sess Session) {
 	var req forwardMessageRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "malformed JSON")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 

@@ -98,8 +98,7 @@ type profileRequest struct {
 
 func (s *server) handleUpdateProfile(w http.ResponseWriter, r *http.Request, sess Session) {
 	var req profileRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "malformed JSON")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 
