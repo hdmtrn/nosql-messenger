@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -127,6 +128,17 @@ func run(ctx context.Context) error {
 	go srv.runPresence(ctx)
 	go srv.runPurge(ctx)
 	go srv.runFileSweep(ctx)
+
+	// Closed rather than drained at shutdown: nobody waits for a profile.
+	internal := internalServer()
+	go func() {
+		// Diagnostics, not service: a node that cannot bind it still serves users.
+		if err := internal.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("internal endpoints: %v", err)
+		}
+	}()
+	defer internal.Close()
+	log.Println("internal endpoints on", internal.Addr)
 
 	httpSrv := srv.httpServer(":8080")
 
