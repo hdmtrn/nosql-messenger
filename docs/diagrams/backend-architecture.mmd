@@ -27,7 +27,7 @@ flowchart LR
     hfr["handleSendFriendRequest,<br/>handleListFriendRequests,<br/>handleAcceptFriendRequest,<br/>handleDeclineFriendRequest,<br/>handleListFriends"]
     hmedia["handleUploadMedia,<br/>handleGetMedia, saveUpload"]
     hpres["handlePresence<br/>visibleTo"]
-    hhealth["handleHealth — mongo.Ping"]
+    hhealth["handleHealthz — liveness"]
     hweb["serveWeb — SPA fallback"]
   end
 

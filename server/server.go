@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/redis/go-redis/v9"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
@@ -24,7 +25,10 @@ func serveWeb(w http.ResponseWriter, r *http.Request) {
 }
 
 type server struct {
-	mongo *mongo.Client
+	// What readyz touches: the one document it rewrites, and Redis to ping.
+	health *mongo.Collection
+	redis  *redis.Client
+
 	// hub delivers to the sockets of this process, bus to every instance.
 	// Handlers broadcast and route sockets through bus, never through hub.
 	hub      *Hub
@@ -47,7 +51,7 @@ type server struct {
 func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("GET /health", s.handleHealth)
+	mux.HandleFunc("GET /healthz", handleHealthz)
 
 	mux.HandleFunc("POST /auth/register", s.auth.handleRegister)
 	mux.HandleFunc("POST /auth/login", s.auth.handleLogin)

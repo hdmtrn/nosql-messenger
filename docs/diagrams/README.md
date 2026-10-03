@@ -177,8 +177,10 @@ flowchart LR
   everything to `:8080` only (`web/vite.config.js`).
 - Both instances talk to the same `redis.Client` config; `presence` is constructed with
   `bus.rdb`, so the bus and the presence store share one connection pool.
-- `GET /health` pings MongoDB and nothing else, so a node whose Redis is gone — no
-  fan-out, no presence — still reports `{"status":"ok"}`.
+- `GET /healthz` answers whether the process serves and touches no database: the load
+  balancer replaces a node that fails it, which a database hiccup must not cause.
+  Readiness is `GET /readyz` on the internal listener (`127.0.0.1:9090`): a journaled
+  write to MongoDB and a Redis ping, 503 naming whichever failed.
 
 **Based on:** `docker-compose.yml`, `Dockerfile`, `server/main.go`, `server/server.go`, `server/bus.go`, `server/presence.go`, `server/health.go`, `web/src/api.js`, `web/src/socket.js`, `web/vite.config.js`
 
@@ -219,7 +221,7 @@ flowchart LR
     hfr["handleSendFriendRequest,<br/>handleListFriendRequests,<br/>handleAcceptFriendRequest,<br/>handleDeclineFriendRequest,<br/>handleListFriends"]
     hmedia["handleUploadMedia,<br/>handleGetMedia, saveUpload"]
     hpres["handlePresence<br/>visibleTo"]
-    hhealth["handleHealth — mongo.Ping"]
+    hhealth["handleHealthz — liveness"]
     hweb["serveWeb — SPA fallback"]
   end
 
@@ -317,7 +319,7 @@ flowchart LR
   fan-out for the Redis bus touched one file.
 - `*bus` and `*Hub` both satisfy `publisher`. Tests use `*Hub`, which reaches this process
   only, so they need neither Redis nor a second instance.
-- `requireAuth` wraps every route except `GET /health`, `GET /ws` and `GET /`. `/ws` is
+- `requireAuth` wraps every route except `GET /healthz`, `GET /ws` and `GET /`. `/ws` is
   outside on purpose — see `seq-ws-connect.mmd`.
 - The layering here is by file, not by package: there is only one package (see
   `packages.mmd`).

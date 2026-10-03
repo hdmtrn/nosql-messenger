@@ -111,7 +111,8 @@ func run(ctx context.Context) error {
 	log.Println("connected to Redis")
 
 	srv := &server{
-		mongo:    mongoClient,
+		health:   db.Collection("health"),
+		redis:    bus.rdb,
 		hub:      hub,
 		bus:      bus,
 		presence: newPresence(bus.rdb),
@@ -130,7 +131,7 @@ func run(ctx context.Context) error {
 	go srv.runFileSweep(ctx)
 
 	// Closed rather than drained at shutdown: nobody waits for a profile.
-	internal := internalServer()
+	internal := srv.internalServer()
 	go func() {
 		// Diagnostics, not service: a node that cannot bind it still serves users.
 		if err := internal.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

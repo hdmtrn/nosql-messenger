@@ -77,7 +77,7 @@ is exactly the kind of bug that reading the code does not find.
 CI runs four independent jobs on every push: `go vet` plus a `gofmt` check, the short test
 run, the full run against a real MongoDB and Redis, and a throwaway Docker image build.
 
-## Profiling
+## Profiling and readiness
 
 Each node serves `net/http/pprof` on `127.0.0.1:9090`, reachable only from inside its own
 container: compose publishes nothing for it. Take a profile there and read it on the host:
@@ -91,6 +91,13 @@ go tool pprof -top heap.pb.gz
 ```
 
 A CPU profile is `/debug/pprof/profile?seconds=30`; `--index 2` picks the other node.
+
+The same listener answers `/readyz`: whether the node can write to MongoDB and reach Redis,
+with the error of whichever cannot. The public `/healthz` only says the process serves.
+
+```bash
+docker compose exec --index 1 app wget -qO- 127.0.0.1:9090/readyz
+```
 
 ## Layout
 
