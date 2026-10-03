@@ -101,6 +101,8 @@ func run(ctx context.Context) error {
 	}
 
 	go srv.runPresence(ctx)
+	go srv.runPurge(ctx)
+	go srv.runFileSweep(ctx)
 
 	httpSrv := &http.Server{
 		Addr:              ":8080",

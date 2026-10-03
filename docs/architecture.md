@@ -48,11 +48,31 @@ serves the descending sort as a backward scan (IXSCAN backward, no SORT stage). 
 is cursor-based on `before` rather than `skip`, and the cursor is `_id` rather than a
 timestamp: a measurement found up to 4173 documents sharing the same `created_at`.
 
-## MongoDB runs as a replica set
+## MongoDB runs standalone
 
-`--replSet rs0` from the first commit, even for a single node. Change streams and
-transactions are only available in that mode, and the measurements that go into the thesis
-have to be taken on the configuration that is actually shipped.
+One `mongod`, no replica set, and no transactions. The only operation that spans collections
+is removing a channel its last member has left, and it is split in two. Leaving is one write
+that takes the member out and, when nobody is left, marks the channel `deleted_at`; the mark
+is the commit point, and joining refuses a marked channel, so no one gets into a channel whose
+history is going. A purge job then removes the messages, invites, pictures and finally the
+channel itself. The channel goes last because its mark is the record of what is left to do: a
+purge cut short anywhere is picked up again from it, and nothing is ever inferred from a
+channel being absent. The job waits ten minutes after the mark, so a message that passed its
+membership check just before it is purged with the rest.
+
+The job runs on every node. A node claims one marked channel at a time with a single write
+that checks the claim is free and takes it until a time; a claim that runs out lets another
+node finish what a dead one started, and only the node still holding the claim may delete the
+channel. Stored files no record names, which a crash inside an upload can leave, are the one
+thing found by absence; that sweep takes one node per round through a Redis key and deletes
+nothing when more than a hundred files look unreferenced at once.
+
+Writes are acknowledged with `j: true`: a standalone `mongod` would otherwise acknowledge
+before the journal, and a message is announced to the other nodes right after its
+acknowledgement. The driver retries writes only on a replica set, so here a network error
+between the application and MongoDB reaches the caller; for a message that means the client
+sends it again under the same `client_msg_id`. Turning this into a replica set later is a
+restart with `--replSet` and one `rs.initiate()`; the data stays where it is.
 
 ## One WebSocket connection per user
 

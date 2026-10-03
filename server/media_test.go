@@ -621,7 +621,7 @@ func TestOnlyUnsentPicturesExpire(t *testing.T) {
 	}
 }
 
-func TestDiscardKeepsFilesThatForwardedCopiesStillUse(t *testing.T) {
+func TestPurgeKeepsFilesThatForwardedCopiesStillUse(t *testing.T) {
 	ctx := context.Background()
 	db := testDB(t)
 	channels, messages := newMessageTestStores(t, db)
@@ -652,9 +652,11 @@ func TestDiscardKeepsFilesThatForwardedCopiesStillUse(t *testing.T) {
 	}
 	avatar := save(mediaKindAvatar, &doomed.ID)
 
-	if err := channels.Leave(ctx, messages, invites, media, doomed.ID, alice.UserID); err != nil {
+	if err := channels.Leave(ctx, invites, doomed.ID, alice.UserID); err != nil {
 		t.Fatalf("leaving: %v", err)
 	}
+	s := &server{channels: channels, messages: messages, invites: invites, media: media}
+	purgeMarked(t, s, doomed.ID)
 
 	fileExists := func(id bson.ObjectID) bool {
 		t.Helper()
@@ -674,7 +676,6 @@ func TestDiscardKeepsFilesThatForwardedCopiesStillUse(t *testing.T) {
 		t.Fatalf("the file behind a forwarded copy was deleted with the original's channel")
 	}
 
-	s := &server{channels: channels, media: media}
 	if code, _ := getMedia(s, copies[0].ID.Hex(), alice); code != http.StatusOK {
 		t.Fatalf("reading the forwarded copy: got %d, want 200", code)
 	}

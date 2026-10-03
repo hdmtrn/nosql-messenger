@@ -18,11 +18,10 @@ cost; `docs/diagrams/` shows the same system as diagrams derived from the code.
 docker compose up -d --build
 ```
 
-Compose brings up MongoDB as a single-node replica set, a one-shot container that initiates
-it, Redis without persistence, and **two** application replicas on ports 8080 and 8081. Two
-replicas are deliberate: anything that only works inside one process fails here rather than
-in production. There is no load balancer in front of them on purpose — two browsers on two
-ports make it obvious which node answered.
+Compose brings up a standalone MongoDB, Redis without persistence, and **two** application
+replicas on ports 8080 and 8081. Two replicas are deliberate: anything that only works inside
+one process fails here rather than in production. There is no load balancer in front of them
+on purpose — two browsers on two ports make it obvious which node answered.
 
 The frontend in dev mode:
 
@@ -34,9 +33,27 @@ Vite serves the page on 5173 and proxies the API. It rewrites `Host`, so the Web
 origin check refuses the socket unless 5173 is listed in `WS_ALLOWED_ORIGINS` — REST keeps
 working while realtime events silently do not.
 
-Connecting to MongoDB from the host needs `?directConnection=true`. The replica set is
-initiated as `mongo:27017`, and without the flag the driver follows the advertised topology,
-fails to resolve that name and hangs until the server selection timeout.
+### A volume from the replica-set days
+
+MongoDB used to run as a single-node replica set with a one-shot `mongo-init` container. A
+data volume created then still starts, but mongod keeps the TTL monitor off for it, so expired
+sessions are never removed, and nothing reports it. Bring the stack up without the old
+container, then clear the leftover configuration once:
+
+```bash
+docker compose up -d --build --remove-orphans
+```
+
+```bash
+docker compose exec mongo mongosh --quiet --eval 'db.getSiblingDB("local").dropDatabase()'
+```
+
+```bash
+docker compose restart mongo
+```
+
+Rebuild before running the tests against an old stack: a replica set advertises itself as
+`mongo:27017`, which does not resolve from the host, so the tests cannot reach it and skip.
 
 ## Tests
 
@@ -45,12 +62,10 @@ go test -race -short ./...   # everything that needs no database
 go test -race ./...          # the full run, with MONGO_URI and REDIS_ADDR set
 ```
 
-The database-backed tests need an **initiated** replica set rather than a standalone
-`mongod`, because the code uses transactions. Start it the way CI does:
+The database-backed tests need MongoDB and Redis. Start them the way CI does:
 
 ```bash
 docker compose up -d --wait mongo redis
-docker compose run --rm mongo-init
 ```
 
 `CI=true` makes those tests fail when the database is unreachable instead of skipping —
@@ -58,7 +73,7 @@ a skipped test looks like a passed one. `-race` matters for the hub: concurrent 
 is exactly the kind of bug that reading the code does not find.
 
 CI runs four independent jobs on every push: `go vet` plus a `gofmt` check, the short test
-run, the full run against a real replica set, and a throwaway Docker image build.
+run, the full run against a real MongoDB and Redis, and a throwaway Docker image build.
 
 ## Layout
 

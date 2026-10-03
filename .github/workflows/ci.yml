@@ -56,15 +56,11 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # The tests in invites_test.go need an INITIATED replica set: channels.go
-      # opens a transaction, and transactions do not work on a standalone
-      # mongod. Hence not a services: block but the same docker compose as on
-      # the dev machine — one description of the database instead of two that
-      # will inevitably drift apart.
-      - name: Start MongoDB as a replica set, and Redis
-        run: |
-          docker compose up -d --wait mongo redis
-          docker compose run --rm mongo-init
+      # Not a services: block but the same docker compose as on the dev machine
+      # — one description of the database instead of two that will inevitably
+      # drift apart.
+      - name: Start MongoDB and Redis
+        run: docker compose up -d --wait mongo redis
 
       # Runs the unit tests again as well; they take milliseconds, and keeping
       # them in makes this job a complete run on its own.
@@ -75,7 +71,7 @@ jobs:
         run: go test -race ./...
         env:
           CI: "true"
-          MONGO_URI: mongodb://127.0.0.1:27017/?directConnection=true
+          MONGO_URI: mongodb://127.0.0.1:27017
           # 127.0.0.1 rather than localhost for the same reason as above: compose
           # publishes both ports on the IPv4 loopback only, and on the runner
           # "localhost" resolves to ::1 first — which is exactly how this job

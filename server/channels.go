@@ -48,6 +48,10 @@ type Channel struct {
 	// DirectKey is the sorted pair of participants, which makes "the conversation
 	// between these two" a value the database can enforce as unique.
 	DirectKey string `bson:"direct_key,omitempty" json:"-"`
+
+	// DeletedAt is set by the last member leaving; the purge job removes the
+	// channel and its data once the mark is old enough.
+	DeletedAt *time.Time `bson:"deleted_at,omitempty" json:"-"`
 }
 
 var (
@@ -74,6 +78,11 @@ func (s *channelStore) ensureIndexes(ctx context.Context) error {
 		{
 			Keys:    bson.D{{Key: "direct_key", Value: 1}},
 			Options: options.Index().SetUnique(true).SetSparse(true),
+		},
+		// Serves the purge job's claim; only marked channels are in it.
+		{
+			Keys:    bson.D{{Key: "deleted_at", Value: 1}},
+			Options: options.Index().SetSparse(true),
 		},
 	})
 	return err
@@ -198,6 +207,7 @@ func (s *channelStore) AddMember(ctx context.Context, channelID bson.ObjectID, u
 			"_id":             channelID,
 			"kind":            channelKindNamed,
 			"members.user_id": bson.M{"$ne": u.UserID},
+			"deleted_at":      bson.M{"$exists": false},
 		},
 		bson.M{"$push": bson.M{"members": ChannelMember{
 			UserID:   u.UserID,
@@ -221,9 +231,9 @@ func (s *channelStore) AddMember(ctx context.Context, channelID bson.ObjectID, u
 func (s *channelStore) whyNotAdded(ctx context.Context, channelID, userID bson.ObjectID) error {
 	var ch Channel
 	err := s.col.FindOne(ctx, bson.M{"_id": channelID},
-		options.FindOne().SetProjection(bson.M{"kind": 1, "members.user_id": 1}),
+		options.FindOne().SetProjection(bson.M{"kind": 1, "members.user_id": 1, "deleted_at": 1}),
 	).Decode(&ch)
-	if errors.Is(err, mongo.ErrNoDocuments) {
+	if errors.Is(err, mongo.ErrNoDocuments) || (err == nil && ch.DeletedAt != nil) {
 		return errChannelNotFound
 	}
 	if err != nil {
@@ -298,14 +308,27 @@ func (s *channelStore) whyNotOwner(ctx context.Context, channelID, userID bson.O
 	return errNotOwner
 }
 
-// Leave pulls the member out and keeps the channel coherent afterwards: an
-// owner who leaves hands the role to the earliest remaining member, and a
-// channel nobody is left in goes away together with its messages.
-func (s *channelStore) Leave(ctx context.Context, messages *messageStore, invites *inviteStore, media *mediaStore, channelID, userID bson.ObjectID) error {
+// Leave takes the member out with the same write that decides the channel's
+// fate: the last one out marks it deleted. Nothing is deleted here; the purge
+// job does that once the mark is old enough. The mark has to come with the
+// emptying write, not after it, since it is what AddMember refuses.
+func (s *channelStore) Leave(ctx context.Context, invites *inviteStore, channelID, userID bson.ObjectID) error {
+	empty := bson.M{"$eq": bson.A{bson.M{"$size": "$members"}, 0}}
 	var ch Channel
 	err := s.col.FindOneAndUpdate(ctx,
 		bson.M{"_id": channelID, "members.user_id": userID},
-		bson.M{"$pull": bson.M{"members": bson.M{"user_id": userID}}},
+		mongo.Pipeline{
+			{{Key: "$set", Value: bson.M{"members": bson.M{"$filter": bson.M{
+				"input": "$members",
+				"cond":  bson.M{"$ne": bson.A{"$$this.user_id", userID}},
+			}}}}},
+			// An emptied conversation gives up its direct_key, so the same two
+			// people can open a new one while this one waits for the purge.
+			{{Key: "$set", Value: bson.M{
+				"deleted_at": bson.M{"$cond": bson.A{empty, time.Now(), "$$REMOVE"}},
+				"direct_key": bson.M{"$cond": bson.A{empty, "$$REMOVE", "$direct_key"}},
+			}}},
+		},
 		options.FindOneAndUpdate().SetReturnDocument(options.After),
 	).Decode(&ch)
 
@@ -316,18 +339,29 @@ func (s *channelStore) Leave(ctx context.Context, messages *messageStore, invite
 		return fmt.Errorf("leaving channel: %w", err)
 	}
 
-	if len(ch.Members) == 0 {
-		return s.discard(ctx, messages, invites, media, channelID)
+	if ch.DeletedAt == nil {
+		return s.ensureOwner(ctx, channelID)
 	}
+	// So that a link answers "not found" at once. Joining is refused either
+	// way, and the purge job deletes whatever is left.
+	if _, err := invites.col.DeleteMany(ctx, bson.M{"channel_id": channelID}); err != nil {
+		log.Printf("leaving channel %s: deleting invites: %v", channelID.Hex(), err)
+	}
+	return nil
+}
 
-	for _, m := range ch.Members {
-		if m.Role == roleOwner {
-			return nil
-		}
-	}
-	_, err = s.col.UpdateOne(ctx,
-		bson.M{"_id": channelID, "members.user_id": ch.Members[0].UserID},
-		bson.M{"$set": bson.M{"members.$.role": roleOwner}},
+// ensureOwner hands the role to the earliest member when nobody holds it.
+// The check is the filter rather than the member list Leave got back: that
+// list is stale by the time the update runs, and the member it names may
+// have left in between.
+func (s *channelStore) ensureOwner(ctx context.Context, channelID bson.ObjectID) error {
+	_, err := s.col.UpdateOne(ctx,
+		bson.M{
+			"_id":          channelID,
+			"members.0":    bson.M{"$exists": true},
+			"members.role": bson.M{"$ne": roleOwner},
+		},
+		bson.M{"$set": bson.M{"members.0.role": roleOwner}},
 	)
 	if err != nil {
 		return fmt.Errorf("promoting owner: %w", err)
@@ -335,47 +369,62 @@ func (s *channelStore) Leave(ctx context.Context, messages *messageStore, invite
 	return nil
 }
 
-// discard drops a channel and everything that belongs to it together. The
-// collections must go or stay as one, which is what the replica set buys us
-// besides change streams.
-//
-// The picture files are the exception: they are deleted only after the commit,
-// and only those nothing else points at. A crash in between leaves an unused
-// file behind, which is harmless; the other order could leave a forwarded copy
-// pointing at deleted bytes.
-func (s *channelStore) discard(ctx context.Context, messages *messageStore, invites *inviteStore, media *mediaStore, channelID bson.ObjectID) error {
-	sess, err := s.col.Database().Client().StartSession()
-	if err != nil {
-		return fmt.Errorf("starting session: %w", err)
+// claimDiscarded hands owner one marked channel old enough to purge, until
+// the claim runs out. Checking that the claim is free and taking it is one
+// write, so two nodes never get the same channel; a claim that runs out lets
+// another node finish what a dead one started.
+func (s *channelStore) claimDiscarded(ctx context.Context, owner string, now time.Time) (bson.ObjectID, bool, error) {
+	var ch struct {
+		ID bson.ObjectID `bson:"_id"`
 	}
-	defer sess.EndSession(ctx)
+	err := s.col.FindOneAndUpdate(ctx,
+		bson.M{
+			"deleted_at": bson.M{"$lte": now.Add(-purgeGrace)},
+			"$or": bson.A{
+				bson.M{"purge_until": bson.M{"$exists": false}},
+				bson.M{"purge_until": bson.M{"$lte": now}},
+			},
+		},
+		bson.M{"$set": bson.M{"purge_owner": owner, "purge_until": now.Add(purgeLease)}},
+		options.FindOneAndUpdate().
+			SetSort(bson.D{{Key: "deleted_at", Value: 1}}).
+			SetProjection(bson.M{"_id": 1}),
+	).Decode(&ch)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return bson.ObjectID{}, false, nil
+	}
+	if err != nil {
+		return bson.ObjectID{}, false, fmt.Errorf("claiming a discarded channel: %w", err)
+	}
+	return ch.ID, true, nil
+}
 
-	// WithTransaction may run the function more than once, so the file list is
-	// whatever the last, committed attempt found.
-	var files []bson.ObjectID
-	_, err = sess.WithTransaction(ctx, func(ctx context.Context) (any, error) {
-		if _, err := s.col.DeleteOne(ctx, bson.M{"_id": channelID}); err != nil {
-			return nil, err
-		}
-		if _, err := messages.col.DeleteMany(ctx, bson.M{"channel_id": channelID}); err != nil {
-			return nil, err
-		}
-		if _, err := invites.col.DeleteMany(ctx, bson.M{"channel_id": channelID}); err != nil {
-			return nil, err
-		}
-		var err error
-		files, err = media.deleteForChannel(ctx, channelID)
-		return nil, err
+// renewClaim extends owner's claim, and reports false once another node has
+// taken the channel over.
+func (s *channelStore) renewClaim(ctx context.Context, channelID bson.ObjectID, owner string, now time.Time) (bool, error) {
+	res, err := s.col.UpdateOne(ctx,
+		bson.M{"_id": channelID, "purge_owner": owner},
+		bson.M{"$set": bson.M{"purge_until": now.Add(purgeLease)}},
+	)
+	if err != nil {
+		return false, fmt.Errorf("renewing the purge claim: %w", err)
+	}
+	return res.MatchedCount == 1, nil
+}
+
+// dropDiscarded deletes the marked channel itself, the last step of a purge,
+// and only for the node still holding the claim: one whose claim ran out must
+// not remove the record of work another node is still doing.
+func (s *channelStore) dropDiscarded(ctx context.Context, channelID bson.ObjectID, owner string) (bool, error) {
+	res, err := s.col.DeleteOne(ctx, bson.M{
+		"_id":         channelID,
+		"purge_owner": owner,
+		"deleted_at":  bson.M{"$exists": true},
 	})
 	if err != nil {
-		return fmt.Errorf("discarding empty channel: %w", err)
+		return false, fmt.Errorf("deleting the discarded channel: %w", err)
 	}
-
-	if err := media.DeleteUnreferencedFiles(ctx, files); err != nil {
-		// The channel is gone either way; what is left is unused bytes.
-		log.Printf("discarding channel %s: %v", channelID.Hex(), err)
-	}
-	return nil
+	return res.DeletedCount == 1, nil
 }
 
 func directKey(a, b bson.ObjectID) string {
