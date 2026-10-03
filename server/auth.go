@@ -133,8 +133,7 @@ func validatePassword(s string) error {
 
 func (a *auth) handleRegister(w http.ResponseWriter, r *http.Request) {
 	var req authRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "malformed JSON")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	if err := validateUsername(req.Username); err != nil {
@@ -181,8 +180,7 @@ func (a *auth) handleRegister(w http.ResponseWriter, r *http.Request) {
 
 func (a *auth) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req authRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "malformed JSON")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 
@@ -234,6 +232,30 @@ func (a *auth) respondWithToken(w http.ResponseWriter, r *http.Request, code int
 	resp.User.ID = u.ID.Hex()
 	resp.User.Username = u.Username
 	writeJSON(w, code, resp)
+}
+
+// jsonBodyMax caps a JSON request body. The largest legitimate one is a
+// message of 4000 characters, which even escaped as \uXXXX pairs comes to
+// about 48 KB. Without a cap, a client could make the decoder hold as much as
+// it cared to send.
+const jsonBodyMax = 64 << 10
+
+// decodeJSON reads the request body into v, and answers the request itself
+// when it cannot: 413 for a body over jsonBodyMax, 400 for anything malformed.
+// The cap is set here, where the body is read, as saveUpload sets its own for
+// pictures: a cap in front of the router could not know which one a route needs.
+func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, jsonBodyMax)).Decode(v)
+	var tooLarge *http.MaxBytesError
+	switch {
+	case err == nil:
+		return true
+	case errors.As(err, &tooLarge):
+		writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+	default:
+		writeError(w, http.StatusBadRequest, "malformed JSON")
+	}
+	return false
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -25,8 +24,7 @@ func validateChannelName(s string) error {
 
 func (s *server) handleCreateChannel(w http.ResponseWriter, r *http.Request, sess Session) {
 	var req createChannelRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "malformed JSON")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	if err := validateChannelName(req.Name); err != nil {
@@ -125,8 +123,7 @@ type directChannelRequest struct {
 
 func (s *server) handleOpenDirect(w http.ResponseWriter, r *http.Request, sess Session) {
 	var req directChannelRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "malformed JSON")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -32,8 +31,7 @@ func (s *server) announceFriends(ids ...bson.ObjectID) {
 
 func (s *server) handleSendFriendRequest(w http.ResponseWriter, r *http.Request, sess Session) {
 	var body friendRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "malformed JSON")
+	if !decodeJSON(w, r, &body) {
 		return
 	}
 
