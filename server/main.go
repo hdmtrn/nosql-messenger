@@ -101,6 +101,7 @@ func run(ctx context.Context) error {
 	}
 
 	go srv.runPresence(ctx)
+	go srv.runOrphanSweep(ctx)
 
 	httpSrv := &http.Server{
 		Addr:              ":8080",

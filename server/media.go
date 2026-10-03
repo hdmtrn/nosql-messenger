@@ -284,6 +284,43 @@ func (s *mediaStore) DeleteUnreferencedFiles(ctx context.Context, fileIDs []bson
 	return nil
 }
 
+// deleteUnreferencedBefore deletes the stored files uploaded before cutoff that
+// no media record names: a record went and its file stayed. Save uploads the
+// file before inserting its record, so cutoff has to leave uploads in progress
+// alone.
+func (s *mediaStore) deleteUnreferencedBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	cur, err := s.db.Collection("fs.files").Aggregate(ctx, mongo.Pipeline{
+		{{Key: "$match", Value: bson.M{"uploadDate": bson.M{"$lt": cutoff}}}},
+		{{Key: "$lookup", Value: bson.M{
+			"from": s.col.Name(), "localField": "_id", "foreignField": "file_id", "as": "refs",
+		}}},
+		{{Key: "$match", Value: bson.M{"refs": bson.M{"$size": 0}}}},
+		{{Key: "$project", Value: bson.M{"_id": 1}}},
+	})
+	if err != nil {
+		return 0, fmt.Errorf("finding unreferenced files: %w", err)
+	}
+	var files []struct {
+		ID bson.ObjectID `bson:"_id"`
+	}
+	if err := cur.All(ctx, &files); err != nil {
+		return 0, fmt.Errorf("decoding unreferenced files: %w", err)
+	}
+
+	deleted := 0
+	for _, f := range files {
+		err := s.files.Delete(ctx, f.ID)
+		if errors.Is(err, mongo.ErrFileNotFound) {
+			continue
+		}
+		if err != nil {
+			return deleted, fmt.Errorf("deleting file %s: %w", f.ID.Hex(), err)
+		}
+		deleted++
+	}
+	return deleted, nil
+}
+
 func (s *mediaStore) DeleteExpired(ctx context.Context, now time.Time) (int, error) {
 	cur, err := s.col.Find(ctx,
 		bson.M{"expires_at": bson.M{"$lte": now}},

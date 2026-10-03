@@ -54,11 +54,15 @@ One `mongod`, no replica set. The only operation that spans collections, discard
 its last member has left, needs no transaction: deleting the channel document is the commit
 point, and it happens only while the channel is still empty, so someone who joined in the
 meantime keeps it. Past that point the messages, invites and media records are unreachable,
-and a failure halfway leaves garbage rather than a broken channel. Writes are acknowledged
-with `j: true`: a standalone `mongod` would otherwise acknowledge before the journal, and a
-message is announced to the other nodes right after its acknowledgement. Turning this into a
-replica set later is a restart with `--replSet` and one `rs.initiate()`; the data stays where
-it is.
+and a failure halfway leaves garbage rather than a broken channel. An hourly sweep collects
+whatever names a channel that no longer exists, which also covers a message that passed its
+membership check just before the channel went. One node takes each round through a Redis
+key; the sweep is idempotent, so with Redis down every node sweeps rather than none.
+
+Writes are acknowledged with `j: true`: a standalone `mongod` would otherwise acknowledge
+before the journal, and a message is announced to the other nodes right after its
+acknowledgement. Turning this into a replica set later is a restart with `--replSet` and one
+`rs.initiate()`; the data stays where it is.
 
 ## One WebSocket connection per user
 

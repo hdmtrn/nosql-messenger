@@ -338,7 +338,8 @@ func (s *channelStore) Leave(ctx context.Context, messages *messageStore, invite
 // discard drops a channel nobody is left in, with everything that belongs to it.
 // Deleting the channel document is the commit point, and only while it is still
 // empty: someone may have joined since Leave saw it empty. Past that point the
-// rest is unreachable, so a failure leaves garbage rather than a broken channel.
+// rest is unreachable, so a failure leaves garbage rather than a broken channel,
+// and the orphan sweep collects it.
 //
 // The picture files go last, and only those nothing else points at: a forwarded
 // copy may still name the same bytes.
@@ -351,21 +352,65 @@ func (s *channelStore) discard(ctx context.Context, messages *messageStore, invi
 		return nil
 	}
 
-	if _, err := messages.col.DeleteMany(ctx, bson.M{"channel_id": channelID}); err != nil {
-		log.Printf("discarding channel %s: messages: %v", channelID.Hex(), err)
-	}
-	if _, err := invites.col.DeleteMany(ctx, bson.M{"channel_id": channelID}); err != nil {
-		log.Printf("discarding channel %s: invites: %v", channelID.Hex(), err)
-	}
-	files, err := media.deleteForChannel(ctx, channelID)
-	if err != nil {
-		log.Printf("discarding channel %s: %v", channelID.Hex(), err)
-		return nil
-	}
-	if err := media.DeleteUnreferencedFiles(ctx, files); err != nil {
+	// The client leaving must not stop the cleanup halfway: the decision is made.
+	if err := s.purge(context.WithoutCancel(ctx), messages, invites, media, channelID); err != nil {
 		log.Printf("discarding channel %s: %v", channelID.Hex(), err)
 	}
 	return nil
+}
+
+// purge deletes what belongs to a channel that is already gone. Every step can
+// be repeated, so the orphan sweep can finish what a broken discard began.
+func (s *channelStore) purge(ctx context.Context, messages *messageStore, invites *inviteStore, media *mediaStore, channelID bson.ObjectID) error {
+	var errs []error
+	if _, err := messages.col.DeleteMany(ctx, bson.M{"channel_id": channelID}); err != nil {
+		errs = append(errs, fmt.Errorf("messages: %w", err))
+	}
+	if _, err := invites.col.DeleteMany(ctx, bson.M{"channel_id": channelID}); err != nil {
+		errs = append(errs, fmt.Errorf("invites: %w", err))
+	}
+	files, err := media.deleteForChannel(ctx, channelID)
+	if err != nil {
+		return errors.Join(append(errs, err)...)
+	}
+	if err := media.DeleteUnreferencedFiles(ctx, files); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
+
+// missingFrom returns the channel ids col still refers to that no channel has.
+func (s *channelStore) missingFrom(ctx context.Context, col *mongo.Collection) ([]bson.ObjectID, error) {
+	var ids []bson.ObjectID
+	if err := col.Distinct(ctx, "channel_id", bson.M{"channel_id": bson.M{"$ne": nil}}).Decode(&ids); err != nil {
+		return nil, fmt.Errorf("listing channels named in %s: %w", col.Name(), err)
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	cur, err := s.col.Find(ctx, bson.M{"_id": bson.M{"$in": ids}}, options.Find().SetProjection(bson.M{"_id": 1}))
+	if err != nil {
+		return nil, fmt.Errorf("finding channels: %w", err)
+	}
+	var found []struct {
+		ID bson.ObjectID `bson:"_id"`
+	}
+	if err := cur.All(ctx, &found); err != nil {
+		return nil, fmt.Errorf("decoding channels: %w", err)
+	}
+
+	exists := make(map[bson.ObjectID]bool, len(found))
+	for _, f := range found {
+		exists[f.ID] = true
+	}
+	var missing []bson.ObjectID
+	for _, id := range ids {
+		if !exists[id] {
+			missing = append(missing, id)
+		}
+	}
+	return missing, nil
 }
 
 func directKey(a, b bson.ObjectID) string {
