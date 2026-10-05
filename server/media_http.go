@@ -23,6 +23,10 @@ func extendDeadlines(w http.ResponseWriter) {
 }
 
 func (s *server) saveUpload(w http.ResponseWriter, r *http.Request, owner bson.ObjectID, kind string, channel *bson.ObjectID, limit int64) (Media, bool) {
+	// Pictures and both kinds of avatar share one count: it is the same disk.
+	if !s.limits.allow(w, r, limitUploads, owner.Hex()) {
+		return Media{}, false
+	}
 	extendDeadlines(w)
 	body := http.MaxBytesReader(w, r.Body, limit)
 

@@ -105,6 +105,25 @@ with the error of whichever cannot. The public `/healthz` only says the process 
 docker compose exec --index 1 app wget -qO- 127.0.0.1:9090/readyz
 ```
 
+## Rate limits
+
+Counted in Redis, so both nodes share them; a 429 says in `Retry-After` when to come back,
+and the client waits that long and sends again.
+
+| What | Limit |
+|---|---|
+| login, per address | 20 attempts a minute |
+| login, per account and address | 10 failures an hour; logging in clears it |
+| login, per account | 100 failures an hour, from all addresses together |
+| registration, per address | 10 an hour |
+| messages, per user | 30 in 10 seconds, forwards included |
+| uploads, per user | 20 a minute, avatars included |
+
+The address is the connection's. Behind a load balancer set `TRUST_PROXY=true`, and the
+last `X-Forwarded-For` entry is used instead: the balancer appends the address that
+connected to it, and anything before that comes from the client. With Redis down the
+limits let everything through.
+
 ## Layout
 
 | Path | What is in it |

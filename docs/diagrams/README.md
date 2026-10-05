@@ -93,12 +93,32 @@ node wins `presence:sweeper`, claims the dead node with `SREM presence:nodes` (R
 single-threaded, so exactly one caller sees it removed), and closes its orphaned sockets
 the way their own node would have.
 
+### 3. Redis as the rate limit counter
+
+`server/ratelimit.go`. A fixed window per key: `INCR`, `EXPIRE NX` and `PTTL` in one
+`MULTI`, so the nodes share one count and the window starts at the first hit and does not
+move. A 429 carries `Retry-After`, the key's remaining TTL.
+
+| Key | Window | Limit | Counts |
+|---|---|---|---|
+| `rl:login-ip:{ip}` | 1 min | 20 | every login attempt from the address |
+| `rl:login-pair:{username}@{ip}` | 1 h | 10 | failed logins for the account from the address; a success deletes it |
+| `rl:login-user:{username}` | 1 h | 100 | failed logins for the account from anywhere |
+| `rl:register-ip:{ip}` | 1 h | 10 | registrations from the address |
+| `rl:messages:{userID}` | 10 s | 30 | sends and forwards |
+| `rl:uploads:{userID}` | 1 min | 20 | pictures and both kinds of avatar |
+
+The address is the connection's, or the last `X-Forwarded-For` entry with `TRUST_PROXY=true`.
+With Redis unreachable the limits let requests through; the limiter's own client gives up
+after 250 ms, so that costs a request a moment, not the default dial and retries.
+
 ### What Redis is not used for
 
 Sessions live in MongoDB with a per-process in-memory cache — Redis only carries the
-invalidation. There is no rate limiting in Redis (the typing limits are counters on the
-connection struct), and no cache of MongoDB documents. This is a rule rather than an accident:
-nothing durable goes into Redis, which runs with `--save '' --appendonly no`.
+invalidation. There is no cache of MongoDB documents, and the typing limits are counters on
+the connection struct. This is a rule rather than an accident: nothing durable goes into
+Redis, which runs with `--save '' --appendonly no`. The rate limit counts are not durable
+either: a Redis restart forgives everyone, which costs nothing.
 
 ---
 
@@ -513,7 +533,7 @@ cluster state, the JSON events that travel Pub/Sub, and the Redis keys.
 %% Key and index detail is in the README tables. Placeholders such as
 %% ch:CHANNEL_ID stand for ch:{channelID} — Mermaid rejects braces in a member.
 %% Sources: server/users.go, sessions.go, channels.go, messages.go, friends.go,
-%% media.go, hub.go, bus.go, presence.go, typing.go, users_http.go
+%% media.go, hub.go, bus.go, presence.go, typing.go, users_http.go, ratelimit.go
 classDiagram
   direction LR
 
@@ -734,6 +754,16 @@ classDiagram
     presence:epoch SETNX millis
   }
 
+  class RedisLimitKeys {
+    <<plain keys>>
+    rl:login-ip:IP 1 min
+    rl:login-pair:USERNAME@IP 1 h
+    rl:login-user:USERNAME 1 h
+    rl:register-ip:IP 1 h
+    rl:messages:USER_ID 10 s
+    rl:uploads:USER_ID 1 min
+  }
+
   class subscriptionChange {
     +string UserID
     +string ChID
@@ -819,7 +849,7 @@ Indexes, from the `ensureIndexes` method of each store:
   record over the same `FileID`, which is why `DeleteUnreferencedFiles` counts references
   before deleting bytes.
 
-**Based on:** `server/users.go`, `sessions.go`, `channels.go`, `messages.go`, `friends.go`, `media.go`, `hub.go`, `bus.go`, `presence.go`, `typing.go`, `users_http.go`
+**Based on:** `server/users.go`, `sessions.go`, `channels.go`, `messages.go`, `friends.go`, `media.go`, `hub.go`, `bus.go`, `presence.go`, `typing.go`, `users_http.go`, `ratelimit.go`
 
 ---
 

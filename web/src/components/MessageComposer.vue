@@ -1,6 +1,6 @@
 <script setup>
 import { computed, reactive, ref } from 'vue'
-import { api } from '../api'
+import { api, patiently } from '../api'
 import { prepareForSending } from '../images'
 import SendFilesDialog from './SendFilesDialog.vue'
 
@@ -100,7 +100,7 @@ async function upload(item, file) {
     return
   }
   try {
-    item.att = await api.uploadMedia(blob)
+    item.att = await patiently(() => api.uploadMedia(blob))
     item.status = 'done'
   } catch (e) {
     Object.assign(item, { status: 'failed', error: e.message })

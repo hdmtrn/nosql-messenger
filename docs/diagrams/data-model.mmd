@@ -3,7 +3,7 @@
 %% Key and index detail is in the README tables. Placeholders such as
 %% ch:CHANNEL_ID stand for ch:{channelID} — Mermaid rejects braces in a member.
 %% Sources: server/users.go, sessions.go, channels.go, messages.go, friends.go,
-%% media.go, hub.go, bus.go, presence.go, typing.go, users_http.go
+%% media.go, hub.go, bus.go, presence.go, typing.go, users_http.go, ratelimit.go
 classDiagram
   direction LR
 
@@ -222,6 +222,16 @@ classDiagram
     presence:nodes SET
     presence:sweeper SETNX 10s
     presence:epoch SETNX millis
+  }
+
+  class RedisLimitKeys {
+    <<plain keys>>
+    rl:login-ip:IP 1 min
+    rl:login-pair:USERNAME@IP 1 h
+    rl:login-user:USERNAME 1 h
+    rl:register-ip:IP 1 h
+    rl:messages:USER_ID 10 s
+    rl:uploads:USER_ID 1 min
   }
 
   class subscriptionChange {
