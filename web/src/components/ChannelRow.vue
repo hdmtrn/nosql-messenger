@@ -75,9 +75,7 @@ const MARK = 24
   white-space: nowrap;
 }
 .badge {
-  font: var(--text-machine);
-  text-transform: uppercase;
-  letter-spacing: var(--mono-tracking);
+  font: var(--text-label);
   background: #fff;
   color: var(--blue);
   border-radius: var(--radius-pill);

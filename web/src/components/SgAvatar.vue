@@ -37,11 +37,10 @@ watch(() => props.src, () => { failed.value = false })
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font: var(--text-machine-11);
-  text-transform: uppercase;
-  letter-spacing: var(--mono-tracking);
+  /* sized for the avatar rather than the text scale: 11px on a mark, 10px on the smallest */
+  font: var(--weight-medium) var(--size-11)/1.2 var(--font-ui);
 }
-.sg-avatar--initials.sg-avatar--small { font: var(--text-machine); }
+.sg-avatar--initials.sg-avatar--small { font-size: var(--size-10); }
 
 .sg-avatar--initials.sg-avatar--blue { background: var(--surface-accent); color: #fff; }
 .sg-avatar--initials.sg-avatar--sending,

@@ -174,8 +174,6 @@ async function submit() {
 }
 .switch {
   font: var(--text-meta);
-  text-transform: uppercase;
-  letter-spacing: var(--mono-tracking);
   color: var(--grey);
 }
 .link { color: var(--blue); }

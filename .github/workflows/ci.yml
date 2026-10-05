@@ -34,8 +34,9 @@ jobs:
             exit 1
           fi
 
-      # Styles live in classes; a :style binding may carry --custom properties
-      # only. Plain node, which the runner has, so no setup and no npm install.
+      # Styles live in classes, a :style binding carries --custom properties only,
+      # and no text is set in capitals. Plain node, which the runner has, so no
+      # setup and no npm install.
       - name: Check the client's styles
         run: node web/scripts/check-styles.mjs
 

@@ -237,7 +237,6 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
       :title="direct() ? displayName(title) : title"
       :subtitle="typingLine || presenceLine || (direct() ? '@' + title
                           : channel.member_count + (channel.member_count === 1 ? ' member' : ' members'))"
-      :subtitle-upper="!direct() && !typingLine && !presenceLine"
       :subtitle-accent="!!typingLine || presence?.online === true"
       :open="infoOpen"
       @info="emit('info')"
@@ -249,7 +248,7 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
     </PaneHeader>
 
     <div ref="feed" class="feed" @scroll="onScroll">
-      <p v-if="!messages.length" class="sg-mono empty">
+      <p v-if="!messages.length" class="empty">
         No messages yet
       </p>
 
@@ -337,6 +336,7 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
 }
 .empty {
   margin: auto;
+  font: var(--text-meta);
   color: var(--text-muted);
 }
 .feed {

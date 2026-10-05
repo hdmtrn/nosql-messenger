@@ -123,7 +123,7 @@ const bubbleVars = computed(() =>
       <div v-if="showHeader" class="header">
         <component :is="own ? 'span' : 'button'" v-if="head && author" :type="own ? undefined : 'button'"
                    class="who name" @click="own || $emit('author')">{{ author }}</component>
-        <span v-if="stateLabel" class="mono state" :class="status">{{ stateLabel }}</span>
+        <span v-if="stateLabel" class="meta state" :class="status">{{ stateLabel }}</span>
       </div>
 
       <div class="bubble" :class="bubbleClass" :style="bubbleVars">
@@ -156,11 +156,11 @@ const bubbleVars = computed(() =>
         </div>
         <slot />
         <template v-if="showStamp">
-          <span aria-hidden="true" class="mono stamp-room">
+          <span aria-hidden="true" class="meta stamp-room">
             <SgSpinner v-if="status === 'sending'" />
             <template v-else>{{ time }}</template>
           </span>
-          <span class="mono stamp">
+          <span class="meta stamp">
             <SgSpinner v-if="status === 'sending'" />
             <template v-else>{{ time }}</template>
           </span>
@@ -200,11 +200,7 @@ const bubbleVars = computed(() =>
   gap: 8px;
   align-items: baseline;
 }
-.mono {
-  font: var(--text-meta);
-  text-transform: uppercase;
-  letter-spacing: var(--mono-tracking);
-}
+.meta { font: var(--text-meta); }
 .state { color: var(--text-muted); }
 .state.failed { color: var(--status-error); }
 .bubble {

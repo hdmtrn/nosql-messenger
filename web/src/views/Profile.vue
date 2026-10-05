@@ -105,7 +105,7 @@ toggleSessions()
           <SgButton variant="outline" size="sm" :disabled="uploading" @click="picker.click()">
             {{ uploading ? 'Uploading' : 'Edit' }}
           </SgButton>
-          <button v-if="me.avatar_id" type="button" class="mono remove"
+          <button v-if="me.avatar_id" type="button" class="label remove"
                   @click="removeAvatar">Remove</button>
           <input ref="picker" type="file" accept="image/*" hidden @change="changeAvatar">
         </div>
@@ -132,7 +132,7 @@ toggleSessions()
           {{ justSaved ? 'Saved' : 'Save' }}
         </SgButton>
       </div>
-      <span v-if="error" class="mono error">{{ error }}</span>
+      <span v-if="error" class="label error">{{ error }}</span>
 
       <div class="panel list">
         <div class="row">
@@ -143,7 +143,7 @@ toggleSessions()
 
         <button type="button" class="row clickable" @click="toggleSessions">
           <span class="grow">Sessions</span>
-          <span class="mono">{{ sessions.length }} devices</span>
+          <span class="label">{{ sessions.length }} devices</span>
         </button>
 
         <template v-if="sessionsOpen">
@@ -152,7 +152,7 @@ toggleSessions()
               <div class="device">
                 {{ s.user_agent || 'Unknown device' }}
               </div>
-              <div class="mono">
+              <div class="label">
                 {{ s.current ? 'This device' : 'Last active ' + when(s.last_activity_at) }}
               </div>
             </div>
@@ -232,15 +232,12 @@ toggleSessions()
   font: var(--text-body);
   color: var(--grey);
 }
-.mono {
-  font: var(--text-machine);
-  text-transform: uppercase;
-  letter-spacing: var(--mono-tracking);
+.label {
+  font: var(--text-label);
   color: var(--grey);
 }
 .handle {
-  font: var(--text-machine-11);
-  letter-spacing: var(--mono-tracking);
+  font: var(--text-meta);
   color: var(--grey);
 }
 .error {

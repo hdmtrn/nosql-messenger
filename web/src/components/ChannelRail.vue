@@ -273,9 +273,7 @@ const isPending = (username) => props.sentTo.includes(username)
   gap: 2px;
 }
 .label {
-  font: var(--text-machine);
-  text-transform: uppercase;
-  letter-spacing: var(--mono-tracking);
+  font: var(--text-label);
   color: var(--text-on-blue-muted);
 }
 .note {

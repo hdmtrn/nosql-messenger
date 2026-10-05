@@ -2,8 +2,6 @@
 defineProps({
   title: String,
   subtitle: String,
-  // A handle reads as it is stored; a count is machine voice and shouts.
-  subtitleUpper: { type: Boolean, default: true },
   // Something happening now (typing) reads in the accent colour, as in Telegram.
   subtitleAccent: Boolean,
   // The info panel is open: the arrow turns back towards the feed, like the rail's ‹ ›.
@@ -29,7 +27,7 @@ defineEmits(['info'])
         <span
           v-if="subtitle"
           class="subtitle"
-          :class="{ upper: subtitleUpper, accent: subtitleAccent }"
+          :class="{ accent: subtitleAccent }"
         >{{ subtitle }}</span>
       </span>
     </button>
@@ -82,13 +80,8 @@ defineEmits(['info'])
 }
 .arrow.open { transform: rotate(180deg); }
 .subtitle {
-  font: var(--text-machine-11);
-  letter-spacing: var(--mono-tracking);
+  font: var(--text-meta);
   color: var(--grey);
-}
-.subtitle.upper {
-  font: var(--text-machine);
-  text-transform: uppercase;
 }
 .subtitle.accent { color: var(--blue); }
 .actions {

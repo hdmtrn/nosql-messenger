@@ -68,7 +68,7 @@ watch(() => props.username, load, { immediate: true })
 
       <p v-if="person && person.bio" class="bio">{{ person.bio }}</p>
 
-      <p v-if="missing" class="mono note">User not found</p>
+      <p v-if="missing" class="label note">User not found</p>
 
       <template v-else>
         <SgButton v-if="relation === 'friend'" variant="primary"
@@ -82,7 +82,7 @@ watch(() => props.username, load, { immediate: true })
     </div>
 
     <template v-if="!missing">
-      <span class="mono section">Channels in common</span>
+      <span class="label section">Channels in common</span>
       <div class="card list">
         <p v-if="!common.length" class="row none">None</p>
         <button v-for="c in common" :key="c.id" type="button" class="row channel"
@@ -140,8 +140,7 @@ watch(() => props.username, load, { immediate: true })
 }
 .handle {
   margin-top: 4px;
-  font: var(--text-machine-11);
-  letter-spacing: var(--mono-tracking);
+  font: var(--text-meta);
   color: var(--grey);
 }
 .bio {
@@ -149,10 +148,8 @@ watch(() => props.username, load, { immediate: true })
   font: var(--text-body);
   color: var(--text-muted);
 }
-.mono {
-  font: var(--text-machine);
-  text-transform: uppercase;
-  letter-spacing: var(--mono-tracking);
+.label {
+  font: var(--text-label);
   color: var(--grey);
 }
 .note { margin: 0; }

@@ -4,7 +4,6 @@ defineProps({
   size: { type: String, default: 'md' },
   disabled: Boolean,
   fullWidth: Boolean,
-  mono: { type: Boolean, default: true },
   onBlue: Boolean,
   type: { type: String, default: 'button' },
 })
@@ -13,7 +12,7 @@ defineProps({
 <template>
   <button :type="type" :disabled="disabled" class="sg-button"
           :class="[`sg-button--${size}`, `sg-button--${variant}`,
-                   { 'sg-button--mono': mono, 'sg-button--on-blue': onBlue, 'sg-button--full': fullWidth }]"><slot /></button>
+                   { 'sg-button--on-blue': onBlue, 'sg-button--full': fullWidth }]"><slot /></button>
 </template>
 
 <style scoped>
@@ -27,17 +26,10 @@ defineProps({
   border: none;
   border-radius: var(--radius-pill);
   cursor: pointer;
-  font: var(--text-ui);
-  letter-spacing: 0;
+  font: var(--text-label);
   white-space: nowrap;
 }
 .sg-button:disabled { cursor: not-allowed; }
-.sg-button--mono {
-  font: var(--text-label);
-  text-transform: uppercase;
-  letter-spacing: var(--mono-tracking);
-}
-.sg-button--mono.sg-button--sm { font: var(--text-machine); }
 .sg-button--full { width: 100%; }
 
 .sg-button--sm { height: 26px; padding: 0 12px; }

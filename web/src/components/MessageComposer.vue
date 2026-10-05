@@ -245,9 +245,7 @@ function send() {
   border-radius: var(--radius-pill);
   background: var(--surface-accent);
   color: #fff;
-  font: var(--text-machine-11);
-  text-transform: uppercase;
-  letter-spacing: var(--mono-tracking);
+  font: var(--text-label);
   cursor: pointer;
 }
 .send.blocked { cursor: not-allowed; }

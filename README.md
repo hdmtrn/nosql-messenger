@@ -75,7 +75,7 @@ a skipped test looks like a passed one. `-race` matters for the hub: concurrent 
 is exactly the kind of bug that reading the code does not find.
 
 CI runs four independent jobs on every push: `go vet`, a `gofmt` check and a check that the
-client styles nothing inline (`web/scripts/check-styles.mjs`), the short test run, the full
+client styles nothing inline and sets nothing in capitals (`web/scripts/check-styles.mjs`), the short test run, the full
 run against a real MongoDB and Redis, and a throwaway Docker image build.
 
 ## Profiling and readiness

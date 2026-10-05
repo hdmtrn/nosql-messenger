@@ -147,11 +147,11 @@ async function removeAvatar() {
           <SgButton variant="outline" size="sm" :disabled="uploading" @click="picker.click()">
             {{ uploading ? 'Uploading' : 'Edit' }}
           </SgButton>
-          <button v-if="channel.avatar_id" type="button" class="mono remove"
+          <button v-if="channel.avatar_id" type="button" class="label remove"
                   @click="removeAvatar">Remove</button>
           <input ref="picker" type="file" accept="image/*" hidden @change="changeAvatar">
         </div>
-        <p v-if="avatarError" class="mono note error">{{ avatarError }}</p>
+        <p v-if="avatarError" class="label note error">{{ avatarError }}</p>
         <MediaViewer v-if="viewing && channel.avatar_id"
                      :pictures="[{ key: channel.avatar_id, url: channelAvatarUrl(channel) }]"
                      @close="viewing = false" />
@@ -161,7 +161,7 @@ async function removeAvatar() {
         <!-- The title of a direct channel is the other person's handle; what is read is their name. -->
         <div class="name">{{ direct() ? displayName(title) : title }}</div>
         <div v-if="direct()" class="handle below">@{{ title }}</div>
-        <div v-else class="mono below">{{ channel.member_count }} members</div>
+        <div v-else class="label below">{{ channel.member_count }} members</div>
       </div>
 
       <p v-if="direct() && person && person.bio" class="bio">{{ person.bio }}</p>
@@ -169,7 +169,7 @@ async function removeAvatar() {
     </div>
 
     <template v-if="direct()">
-      <span class="mono section">Channels in common</span>
+      <span class="label section">Channels in common</span>
       <div class="card list">
         <p v-if="!common.length" class="row muted">None</p>
         <button v-for="c in common" :key="c.id" type="button" class="row clickable body"
@@ -182,24 +182,24 @@ async function removeAvatar() {
 
     <template v-else>
       <div class="section-row">
-        <span class="mono grow-only">Invites</span>
+        <span class="label grow-only">Invites</span>
         <SgButton variant="outline" size="sm" @click="newInvite">New</SgButton>
       </div>
       <div class="card invites">
-        <p v-if="inviteError" class="mono note error">
+        <p v-if="inviteError" class="label note error">
           {{ inviteError }}
         </p>
-        <p v-if="!invites.length" class="mono note">None</p>
+        <p v-if="!invites.length" class="label note">None</p>
         <div v-for="i in invites" :key="i.code" class="invite">
           <SgButton variant="outline" size="sm" @click="copy(i.code)">
             {{ copiedCode === i.code ? 'Copied' : 'Copy invite link' }}
           </SgButton>
-          <span class="mono grow-only">{{ made(i.created_at) }}</span>
+          <span class="label grow-only">{{ made(i.created_at) }}</span>
           <SgButton variant="mutedText" @click="revoke(i.code)">Revoke</SgButton>
         </div>
       </div>
 
-      <span class="mono section">Members</span>
+      <span class="label section">Members</span>
       <div class="card list">
         <component :is="m.user_id === me.id ? 'div' : 'button'" v-for="m in members" :key="m.user_id"
                    :type="m.user_id === me.id ? undefined : 'button'"
@@ -207,7 +207,7 @@ async function removeAvatar() {
                    @click="m.user_id === me.id || emit('person', m.username)">
           <SgAvatar :initials="initials(displayName(m.username))" :src="avatarUrl(m.username)" :size="28" />
           <span class="grow body">{{ displayName(m.username) }}</span>
-          <span class="mono">{{ m.user_id === me.id ? 'You' : m.role === 'owner' ? 'Owner' : '' }}</span>
+          <span class="label">{{ m.user_id === me.id ? 'You' : m.role === 'owner' ? 'Owner' : '' }}</span>
         </component>
       </div>
 
@@ -256,8 +256,7 @@ async function removeAvatar() {
 }
 .name { font: 600 20px/1.2 var(--font-ui); }
 .handle {
-  font: var(--text-machine-11);
-  letter-spacing: var(--mono-tracking);
+  font: var(--text-meta);
   color: var(--grey);
 }
 .below { margin-top: 4px; }
@@ -266,10 +265,8 @@ async function removeAvatar() {
   font: var(--text-body);
   color: var(--text-muted);
 }
-.mono {
-  font: var(--text-machine);
-  text-transform: uppercase;
-  letter-spacing: var(--mono-tracking);
+.label {
+  font: var(--text-label);
   color: var(--grey);
 }
 .note { margin: 0; }

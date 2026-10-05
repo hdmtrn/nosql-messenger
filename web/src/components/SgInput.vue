@@ -8,7 +8,6 @@ defineProps({
   error: String,
   action: String,
   type: { type: String, default: 'text' },
-  mono: Boolean,
   size: { type: String, default: 'md' },
   disabled: Boolean,
 })
@@ -20,7 +19,7 @@ const focused = ref(false)
 
 <template>
   <div class="sg-input">
-    <label v-if="label" :for="inputId" class="mono-line label">
+    <label v-if="label" :for="inputId" class="label">
       {{ label }}
     </label>
 
@@ -31,7 +30,6 @@ const focused = ref(false)
         :disabled="disabled"
         :value="modelValue"
         class="input"
-        :class="{ mono }"
         @input="emit('update:modelValue', $event.target.value)"
         @focus="focused = true"
         @blur="focused = false"
@@ -39,13 +37,13 @@ const focused = ref(false)
       <button
         v-if="action"
         type="button"
-        class="mono-line action"
+        class="meta action"
         @click="emit('action')"
       >{{ action }}</button>
     </div>
 
-    <span v-if="error" class="mono-line error">{{ error }}</span>
-    <span v-else-if="hint" class="mono-line hint">{{ hint }}</span>
+    <span v-if="error" class="meta error">{{ error }}</span>
+    <span v-else-if="hint" class="meta hint">{{ hint }}</span>
   </div>
 </template>
 
@@ -55,11 +53,7 @@ const focused = ref(false)
   flex-direction: column;
   gap: 8px;
 }
-.mono-line {
-  font: var(--text-meta);
-  text-transform: uppercase;
-  letter-spacing: var(--mono-tracking);
-}
+.meta { font: var(--text-meta); }
 .label {
   font: var(--text-label);
   color: var(--text-primary);
@@ -86,12 +80,6 @@ const focused = ref(false)
   background: transparent;
   color: var(--text-primary);
   font: var(--text-body);
-  letter-spacing: 0;
-}
-.input.mono {
-  font: var(--text-machine-11);
-  text-transform: uppercase;
-  letter-spacing: var(--mono-tracking);
 }
 .action {
   background: none;

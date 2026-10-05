@@ -652,7 +652,7 @@ onUnmounted(() => {
         @person="openPerson"
       />
 
-      <p v-else class="sg-mono empty">
+      <p v-else class="empty">
         {{ channels.length ? 'Pick a channel or a conversation' : 'Create a channel or join one by code' }}
       </p>
 
@@ -728,6 +728,7 @@ onUnmounted(() => {
 }
 .empty {
   margin: auto;
+  font: var(--text-meta);
   color: var(--text-muted);
 }
 .dialog-text {
