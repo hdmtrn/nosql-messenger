@@ -26,16 +26,16 @@ type rateLimit struct {
 
 var (
 	// Every attempt from one address: one password tried across many accounts.
-	limitLoginIP = rateLimit{"login-ip", 20, time.Minute}
+	limitLoginIP = rateLimit{"login-ip", 100, time.Minute}
 	// Failures for one account from one address. A stranger elsewhere runs
 	// into a count of their own, not the owner's.
-	limitLoginPair = rateLimit{"login-pair", 10, time.Hour}
+	limitLoginPair = rateLimit{"login-pair", 10, 15 * time.Minute}
 	// Failures for one account from everywhere: the ceiling for a guess spread
 	// over many addresses.
 	limitLoginUser  = rateLimit{"login-user", 100, time.Hour}
-	limitRegisterIP = rateLimit{"register-ip", 10, time.Hour}
+	limitRegisterIP = rateLimit{"register-ip", 50, time.Hour}
 	limitMessages   = rateLimit{"messages", 30, 10 * time.Second}
-	limitUploads    = rateLimit{"uploads", 20, time.Minute}
+	limitUploads    = rateLimit{"uploads", 60, time.Minute}
 )
 
 // limiter keeps the counts in Redis, so that the nodes share them: a count

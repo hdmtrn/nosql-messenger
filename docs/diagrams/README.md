@@ -101,12 +101,12 @@ move. A 429 carries `Retry-After`, the key's remaining TTL.
 
 | Key | Window | Limit | Counts |
 |---|---|---|---|
-| `rl:login-ip:{ip}` | 1 min | 20 | every login attempt from the address |
-| `rl:login-pair:{username}@{ip}` | 1 h | 10 | failed logins for the account from the address; a success deletes it |
+| `rl:login-ip:{ip}` | 1 min | 100 | every login attempt from the address |
+| `rl:login-pair:{username}@{ip}` | 15 min | 10 | failed logins for the account from the address; a success deletes it |
 | `rl:login-user:{username}` | 1 h | 100 | failed logins for the account from anywhere |
-| `rl:register-ip:{ip}` | 1 h | 10 | registrations from the address |
+| `rl:register-ip:{ip}` | 1 h | 50 | registrations from the address |
 | `rl:messages:{userID}` | 10 s | 30 | sends and forwards |
-| `rl:uploads:{userID}` | 1 min | 20 | pictures and both kinds of avatar |
+| `rl:uploads:{userID}` | 1 min | 60 | pictures and both kinds of avatar |
 
 The address is the connection's, or the last `X-Forwarded-For` entry with `TRUST_PROXY=true`.
 With Redis unreachable the limits let requests through; the limiter's own client gives up
@@ -757,7 +757,7 @@ classDiagram
   class RedisLimitKeys {
     <<plain keys>>
     rl:login-ip:IP 1 min
-    rl:login-pair:USERNAME@IP 1 h
+    rl:login-pair:USERNAME@IP 15 min
     rl:login-user:USERNAME 1 h
     rl:register-ip:IP 1 h
     rl:messages:USER_ID 10 s

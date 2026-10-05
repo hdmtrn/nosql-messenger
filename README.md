@@ -112,12 +112,12 @@ and the client waits that long and sends again.
 
 | What | Limit |
 |---|---|
-| login, per address | 20 attempts a minute |
-| login, per account and address | 10 failures an hour; logging in clears it |
+| login, per address | 100 attempts a minute |
+| login, per account and address | 10 failures in 15 minutes; logging in clears it |
 | login, per account | 100 failures an hour, from all addresses together |
-| registration, per address | 10 an hour |
+| registration, per address | 50 an hour |
 | messages, per user | 30 in 10 seconds, forwards included |
-| uploads, per user | 20 a minute, avatars included |
+| uploads, per user | 60 a minute, avatars included |
 
 The address is the connection's. Behind a load balancer set `TRUST_PROXY=true`, and the
 last `X-Forwarded-For` entry is used instead: the balancer appends the address that

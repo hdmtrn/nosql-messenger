@@ -54,6 +54,12 @@ func preset(t *testing.T, l *limiter, lim rateLimit, key string, n int) {
 	}
 }
 
+// fill puts a key at its limit, so the next request is the first one over.
+func fill(t *testing.T, l *limiter, lim rateLimit, key string) {
+	t.Helper()
+	preset(t, l, lim, key, int(lim.n))
+}
+
 func counted(t *testing.T, l *limiter, lim rateLimit, key string) int {
 	t.Helper()
 	n, err := l.rdb.Get(context.Background(), l.key(lim, key)).Int()
@@ -276,7 +282,7 @@ func authCall(h http.HandlerFunc, ip, name, password string) int {
 // handler that got as far as the hash would answer 503 after its wait.
 func TestLoginRefusesAnAddressBeforeTheHash(t *testing.T) {
 	f := newLoginFixture(t)
-	preset(t, f.l, limitLoginIP, "198.51.100.7", 20)
+	fill(t, f.l, limitLoginIP, "198.51.100.7")
 	f.a.sem = make(chan struct{})
 
 	if code := f.login("198.51.100.7", "alice", alicePassword); code != http.StatusTooManyRequests {
@@ -309,7 +315,7 @@ func TestAFailedLoginCountsForTheAddressAndTheAccount(t *testing.T) {
 // still gets in from their own.
 func TestAGuessFromOneAddressLeavesTheOwnerIn(t *testing.T) {
 	f := newLoginFixture(t)
-	preset(t, f.l, limitLoginPair, "alice@203.0.113.66", 10)
+	fill(t, f.l, limitLoginPair, "alice@203.0.113.66")
 
 	if code := f.login("203.0.113.66", "alice", alicePassword); code != http.StatusTooManyRequests {
 		t.Fatalf("the guessing address got %d, want 429", code)
@@ -321,7 +327,7 @@ func TestAGuessFromOneAddressLeavesTheOwnerIn(t *testing.T) {
 
 func TestTheAccountCeilingHoldsEveryAddress(t *testing.T) {
 	f := newLoginFixture(t)
-	preset(t, f.l, limitLoginUser, "alice", 100)
+	fill(t, f.l, limitLoginUser, "alice")
 
 	if code := f.login("192.0.2.200", "alice", alicePassword); code != http.StatusTooManyRequests {
 		t.Fatalf("a fresh address got %d with the account at its ceiling, want 429", code)
@@ -358,7 +364,7 @@ func TestANameThatCannotExistIsNotCounted(t *testing.T) {
 
 func TestRegistrationStopsAtTheAddressLimit(t *testing.T) {
 	f := newLoginFixture(t)
-	preset(t, f.l, limitRegisterIP, "198.51.100.7", 10)
+	fill(t, f.l, limitRegisterIP, "198.51.100.7")
 
 	if code := authCall(f.a.handleRegister, "198.51.100.7", "newcomer", alicePassword); code != http.StatusTooManyRequests {
 		t.Fatalf("got %d, want 429", code)
@@ -379,7 +385,7 @@ func TestSendingStopsAtTheLimitAndStoresNothing(t *testing.T) {
 	ch := createChannel(t, channels, "room", owner)
 	h := NewHub()
 	s := &server{channels: channels, messages: messages, hub: h, bus: h, limits: l}
-	preset(t, l, limitMessages, owner.UserID.Hex(), 30)
+	fill(t, l, limitMessages, owner.UserID.Hex())
 
 	send := map[string]string{"channel_id": ch.ID.Hex(), "text": "one too many", "client_msg_id": "c1"}
 	if code, body := callMessageHandler(t, s.handleSendMessage, "", send, owner); code != http.StatusTooManyRequests {
@@ -408,7 +414,7 @@ func TestUploadsStopAtTheLimitAndStoreNothing(t *testing.T) {
 	media := newMediaStore(db)
 	s := &server{media: media, limits: l}
 	alice := person("alice")
-	preset(t, l, limitUploads, alice.UserID.Hex(), 20)
+	fill(t, l, limitUploads, alice.UserID.Hex())
 
 	if code, body := uploadMedia(s, testPNG(t, 2, 2), alice); code != http.StatusTooManyRequests {
 		t.Fatalf("picture got %d %s, want 429", code, body)
