@@ -78,11 +78,6 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("creating friend request indexes: %w", err)
 	}
 
-	invites := newInviteStore(db)
-	if err := invites.ensureIndexes(ctx); err != nil {
-		return fmt.Errorf("creating invite indexes: %w", err)
-	}
-
 	media := newMediaStore(db)
 	if err := media.ensureIndexes(ctx); err != nil {
 		return fmt.Errorf("creating media indexes: %w", err)
@@ -122,7 +117,6 @@ func run(ctx context.Context) error {
 		channels: channels,
 		messages: messages,
 		friends:  friends,
-		invites:  invites,
 		media:    media,
 	}
 

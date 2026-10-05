@@ -52,5 +52,5 @@ flowchart LR
   pres1 <-->|"presence:* keys<br/>sockets, node, version<br/>alive, nodes, sweeper, epoch"| redis
   pres2 <--> redis
 
-  st1 -->|"users, sessions, channels,<br/>messages, friend_requests,<br/>invites, media, GridFS"| mongo
+  st1 -->|"users, sessions, channels,<br/>messages, friend_requests,<br/>media, GridFS"| mongo
   st2 --> mongo

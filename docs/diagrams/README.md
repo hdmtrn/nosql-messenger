@@ -163,7 +163,7 @@ flowchart LR
   pres1 <-->|"presence:* keys<br/>sockets, node, version<br/>alive, nodes, sweeper, epoch"| redis
   pres2 <--> redis
 
-  st1 -->|"users, sessions, channels,<br/>messages, friend_requests,<br/>invites, media, GridFS"| mongo
+  st1 -->|"users, sessions, channels,<br/>messages, friend_requests,<br/>media, GridFS"| mongo
   st2 --> mongo
 ```
 
@@ -196,7 +196,7 @@ WebSocket hub and the Redis bus, the two services, the seven stores, and the two
 %% Sources: server/main.go, server/server.go, server/middleware.go, server/auth.go,
 %% server/ws.go, server/hub.go, server/bus.go, server/typing.go, server/presence.go,
 %% server/presence_nodes.go, server/*_http.go, server/users.go, server/sessions.go,
-%% server/channels.go, server/messages.go, server/friends.go, server/invites.go,
+%% server/channels.go, server/messages.go, server/friends.go, server/invites_http.go,
 %% server/media.go, server/mongo.go
 flowchart LR
   subgraph entry["Entry — main.go, server.go, middleware.go"]
@@ -216,7 +216,7 @@ flowchart LR
     husers["handleSearchUsers, handleGetUser,<br/>handleUpdateProfile, handleSetAvatar,<br/>handleDeleteAvatar, announceProfile"]
     hsess["handleListSessions<br/>handleRevokeSession"]
     hch["handleCreateChannel, handleListChannels,<br/>handleGetChannel, handleOpenDirect,<br/>handleLeaveChannel,<br/>handleChannelsInCommon,<br/>handleSetChannelAvatar"]
-    hinv["handleCreateInvite, handleListInvites,<br/>handleRevokeInvite, handleFollowInvite"]
+    hinv["handleGetInvite, handleResetInvite,<br/>handleFollowInvite"]
     hmsg["handleSendMessage,<br/>handleForwardMessage,<br/>handleListMessages,<br/>deliverMessage"]
     hfr["handleSendFriendRequest,<br/>handleListFriendRequests,<br/>handleAcceptFriendRequest,<br/>handleDeclineFriendRequest,<br/>handleListFriends"]
     hmedia["handleUploadMedia,<br/>handleGetMedia, saveUpload"]
@@ -257,7 +257,6 @@ flowchart LR
     cstore["channelStore — channels"]
     mstore["messageStore — messages"]
     fstore["friendStore — friend_requests"]
-    istore["inviteStore — invites"]
     mdstore["mediaStore — media, GridFS"]
   end
 
@@ -281,7 +280,6 @@ flowchart LR
   hsess --> sstore
   hch --> cstore
   hch -->|"Subscribe / Unsubscribe"| pubif
-  hinv --> istore
   hinv --> cstore
   hinv -->|"Subscribe"| pubif
   hmsg --> mstore
@@ -304,7 +302,7 @@ flowchart LR
   wire --> hub
   sstore -->|"onRevoked → PublishRevoked"| busrun
 
-  ustore & sstore & cstore & mstore & fstore & istore & mdstore --> mgo
+  ustore & sstore & cstore & mstore & fstore & mdstore --> mgo
   busrun --> rdb
   pres --> rdb
   mgo --> mongo
@@ -327,7 +325,7 @@ flowchart LR
   "may this caller ask?" — `visibleTo` unions `channelStore.SharingAChannelWith` and
   `friendStore.FriendsAmong` before anything is read from Redis.
 
-**Based on:** `server/main.go`, `server.go`, `middleware.go`, `auth.go`, `ws.go`, `hub.go`, `bus.go`, `typing.go`, `presence.go`, `presence_nodes.go`, `*_http.go`, `users.go`, `sessions.go`, `channels.go`, `messages.go`, `friends.go`, `invites.go`, `media.go`, `mongo.go`, `health.go`
+**Based on:** `server/main.go`, `server.go`, `middleware.go`, `auth.go`, `ws.go`, `hub.go`, `bus.go`, `typing.go`, `presence.go`, `presence_nodes.go`, `*_http.go`, `users.go`, `sessions.go`, `channels.go`, `messages.go`, `friends.go`, `media.go`, `mongo.go`, `health.go`
 
 ---
 
@@ -401,7 +399,7 @@ flowchart TD
 
   subgraph views["views/"]
     conv["Conversation.vue<br/>feed, scroll anchoring"]
-    info["InfoPanel.vue<br/>channel info, invites"]
+    info["InfoPanel.vue<br/>channel info, invite link"]
     profile["Profile.vue<br/>own profile, devices"]
     userp["UserPanel.vue<br/>another person"]
   end
@@ -442,7 +440,7 @@ flowchart TD
   bubble --> prims
 
   messenger -->|"/channels, /messages,<br/>/presence, /friends,<br/>/invites/{code}"| apijs
-  info -->|"/channels/{id},<br/>/channels/{id}/invites,<br/>/channels/{id}/avatar"| apijs
+  info -->|"/channels/{id},<br/>/channels/{id}/invite,<br/>/channels/{id}/avatar"| apijs
   profile -->|"/auth/me/profile,<br/>/auth/me/avatar,<br/>/auth/sessions"| apijs
   userp -->|"/users/{username}"| apijs
   rail -->|"/users?q="| apijs
@@ -493,7 +491,7 @@ Which module calls what:
 | `App.vue` | `me`, `logout` |
 | `views/SignIn.vue` | `login`, `register`, `me` |
 | `views/Messenger.vue` | `channels`, `createChannel`, `openDirect`, `leaveChannel`, `followInvite`, `messages`, `messagesByIds`, `send`, `forward`, `presence`, `friends`, `friendRequests`, `sendFriendRequest`, `acceptFriendRequest`, `declineFriendRequest` |
-| `views/InfoPanel.vue` | `channel`, `channelsInCommon`, `invites`, `createInvite`, `revokeInvite`, `setChannelAvatar`, `removeChannelAvatar`, `user` |
+| `views/InfoPanel.vue` | `channel`, `channelsInCommon`, `invite`, `resetInvite`, `setChannelAvatar`, `removeChannelAvatar`, `user` |
 | `views/Profile.vue` | `updateProfile`, `setAvatar`, `removeAvatar`, `sessions`, `revokeSession` |
 | `views/UserPanel.vue` | `user`, `channelsInCommon` |
 | `components/ChannelRail.vue` | `searchUsers` |
@@ -515,7 +513,7 @@ cluster state, the JSON events that travel Pub/Sub, and the Redis keys.
 %% Key and index detail is in the README tables. Placeholders such as
 %% ch:CHANNEL_ID stand for ch:{channelID} — Mermaid rejects braces in a member.
 %% Sources: server/users.go, sessions.go, channels.go, messages.go, friends.go,
-%% invites.go, media.go, hub.go, bus.go, presence.go, typing.go, users_http.go
+%% media.go, hub.go, bus.go, presence.go, typing.go, users_http.go
 classDiagram
   direction LR
 
@@ -555,6 +553,7 @@ classDiagram
     +ObjectID AvatarID
     +int MemberCount
     +string DirectKey
+    +string InviteCode
   }
 
   class ChannelMember {
@@ -636,18 +635,9 @@ classDiagram
     +string Username
   }
 
-  class Invite {
-    <<collection invites>>
-    +string Code
-    +ObjectID ChannelID
-    +ObjectID CreatedBy
-    +time_Time CreatedAt
-  }
-
   User "1" --> "0..*" Session : user_id
   Channel *-- ChannelMember : members
   Channel "1" --> "0..*" Message : channel_id
-  Channel "1" --> "0..*" Invite : channel_id
   Message *-- MessageAuthor : author
   Message o-- ForwardedFrom : forwarded
   Message *-- Attachment : attachments
@@ -798,10 +788,9 @@ Indexes, from the `ensureIndexes` method of each store:
 |---|---|
 | `users` | unique `username` |
 | `sessions` | unique `token`; TTL on `expires_at` (`expireAfterSeconds: 0`); `user_id + _id` |
-| `channels` | `members.user_id + _id` (multikey); unique sparse `direct_key` |
+| `channels` | `members.user_id + _id` (multikey); unique sparse `direct_key`; unique sparse `invite_code` |
 | `messages` | `channel_id + _id`; unique `channel_id + client_msg_id`, partial on `client_msg_id` existing |
 | `friend_requests` | `to.id + status + _id`; `from.id + status + _id`; unique `from.id + to.id`, partial on `status: 'pending'` |
-| `invites` | `channel_id + created_at desc`; the code is `_id`, so uniqueness is free |
 | `media` | partial on `expires_at`; `channel_id`; `file_id` |
 
 - **Denormalisation is one-directional.** `ChannelMember`, `MessageAuthor` and
@@ -830,7 +819,7 @@ Indexes, from the `ensureIndexes` method of each store:
   record over the same `FileID`, which is why `DeleteUnreferencedFiles` counts references
   before deleting bytes.
 
-**Based on:** `server/users.go`, `sessions.go`, `channels.go`, `messages.go`, `friends.go`, `invites.go`, `media.go`, `hub.go`, `bus.go`, `presence.go`, `typing.go`, `users_http.go`
+**Based on:** `server/users.go`, `sessions.go`, `channels.go`, `messages.go`, `friends.go`, `media.go`, `hub.go`, `bus.go`, `presence.go`, `typing.go`, `users_http.go`
 
 ---
 

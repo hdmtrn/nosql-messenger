@@ -54,7 +54,7 @@ One `mongod`, no replica set, and no transactions. The only operation that spans
 is removing a channel its last member has left, and it is split in two. Leaving is one write
 that takes the member out and, when nobody is left, marks the channel `deleted_at`; the mark
 is the commit point, and joining refuses a marked channel, so no one gets into a channel whose
-history is going. A purge job then removes the messages, invites, pictures and finally the
+history is going. A purge job then removes the messages, pictures and finally the
 channel itself. The channel goes last because its mark is the record of what is left to do: a
 purge cut short anywhere is picked up again from it, and nothing is ever inferred from a
 channel being absent. The job waits ten minutes after the mark, so a message that passed its

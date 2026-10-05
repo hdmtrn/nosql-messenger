@@ -8,92 +8,62 @@ import (
 	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
-// invitableChannel is channelForMember plus the rule that only a named channel
-// has invites. Without it a participant of a direct conversation could mint a
-// link into it and hand a third person the whole private history — membership
-// alone was never the right question to ask here.
-func (s *server) invitableChannel(w http.ResponseWriter, r *http.Request, sess Session) (bson.ObjectID, bool) {
+type inviteLink struct {
+	Code string `json:"code"`
+}
+
+// handleGetInvite gives any member of a named channel its link. Without the
+// kind check a participant of a direct conversation could hand a third person
+// the whole private history; membership alone was never the right question.
+func (s *server) handleGetInvite(w http.ResponseWriter, r *http.Request, sess Session) {
 	id, err := bson.ObjectIDFromHex(r.PathValue("id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "malformed channel id")
-		return bson.ObjectID{}, false
+		return
 	}
 
-	kind, err := s.channels.KindForMember(r.Context(), id, sess.UserID)
-	if errors.Is(err, errNotMember) {
+	code, err := s.channels.InviteCode(r.Context(), id, sess.UserID)
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, inviteLink{Code: code})
+	case errors.Is(err, errNotMember), errors.Is(err, errChannelNotFound):
 		writeError(w, http.StatusNotFound, "channel not found")
-		return bson.ObjectID{}, false
-	}
-	if err != nil {
-		log.Printf("reading channel kind: %v", err)
+	case errors.Is(err, errNotJoinable):
+		writeError(w, http.StatusBadRequest, "a direct conversation has no invite link")
+	default:
+		log.Printf("reading invite code: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
-		return bson.ObjectID{}, false
 	}
-	if kind != channelKindNamed {
-		writeError(w, http.StatusBadRequest, "a direct conversation has no invites")
-		return bson.ObjectID{}, false
-	}
-	return id, true
 }
 
-func (s *server) handleCreateInvite(w http.ResponseWriter, r *http.Request, sess Session) {
-	id, ok := s.invitableChannel(w, r, sess)
-	if !ok {
-		return
-	}
-
-	inv, err := s.invites.Create(r.Context(), id, sess.UserID)
-	if errors.Is(err, errTooManyInvites) {
-		writeError(w, http.StatusConflict, "revoke an invite before making another")
-		return
-	}
+// handleResetInvite is the only way to take a link back: the old code stops
+// leading anywhere, and the new one is the answer.
+func (s *server) handleResetInvite(w http.ResponseWriter, r *http.Request, sess Session) {
+	id, err := bson.ObjectIDFromHex(r.PathValue("id"))
 	if err != nil {
-		log.Printf("creating invite: %v", err)
+		writeError(w, http.StatusBadRequest, "malformed channel id")
+		return
+	}
+
+	code, err := s.channels.ResetInviteCode(r.Context(), id, sess.UserID)
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, inviteLink{Code: code})
+	case errors.Is(err, errNotMember):
+		writeError(w, http.StatusNotFound, "channel not found")
+	case errors.Is(err, errNotOwner):
+		writeError(w, http.StatusForbidden, err.Error())
+	default:
+		log.Printf("resetting invite code: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
-		return
 	}
-	writeJSON(w, http.StatusCreated, inv)
-}
-
-func (s *server) handleListInvites(w http.ResponseWriter, r *http.Request, sess Session) {
-	id, ok := s.invitableChannel(w, r, sess)
-	if !ok {
-		return
-	}
-
-	list, err := s.invites.ForChannel(r.Context(), id)
-	if err != nil {
-		log.Printf("listing invites: %v", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	writeJSON(w, http.StatusOK, list)
-}
-
-func (s *server) handleRevokeInvite(w http.ResponseWriter, r *http.Request, sess Session) {
-	id, ok := s.invitableChannel(w, r, sess)
-	if !ok {
-		return
-	}
-
-	err := s.invites.Revoke(r.Context(), id, r.PathValue("code"))
-	if errors.Is(err, errInviteNotFound) {
-		writeError(w, http.StatusNotFound, "invite not found")
-		return
-	}
-	if err != nil {
-		log.Printf("revoking invite: %v", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
 }
 
 // handleFollowInvite joins whatever the code points at. An unknown code and a
-// revoked one are the same answer, because both mean the code leads nowhere.
+// reset one are the same answer, because both mean the code leads nowhere.
 func (s *server) handleFollowInvite(w http.ResponseWriter, r *http.Request, sess Session) {
-	inv, err := s.invites.ByCode(r.Context(), r.PathValue("code"))
-	if errors.Is(err, errInviteNotFound) {
+	channelID, err := s.channels.ByInviteCode(r.Context(), r.PathValue("code"))
+	if errors.Is(err, errChannelNotFound) {
 		writeError(w, http.StatusNotFound, "invite not found")
 		return
 	}
@@ -108,14 +78,12 @@ func (s *server) handleFollowInvite(w http.ResponseWriter, r *http.Request, sess
 	// an error would be wrong — and it would leave the client with no channel to
 	// open, dropping the person into whichever conversation happened to be first.
 	status := "joined"
-	switch err := s.channels.AddMember(r.Context(), inv.ChannelID, sess); {
+	switch err := s.channels.AddMember(r.Context(), channelID, sess); {
 	case err == nil:
 	case errors.Is(err, errAlreadyMember):
 		status = "member"
-	case errors.Is(err, errChannelNotFound), errors.Is(err, errNotJoinable):
-		// errNotJoinable can only come from an invite made before direct
-		// conversations were excluded. The code leads nowhere now, and that is
-		// exactly what "not found" says.
+	case errors.Is(err, errChannelNotFound):
+		// The last member left and the channel waits for the purge.
 		writeError(w, http.StatusNotFound, "invite not found")
 		return
 	default:
@@ -124,9 +92,9 @@ func (s *server) handleFollowInvite(w http.ResponseWriter, r *http.Request, sess
 		return
 	}
 
-	s.bus.Subscribe(sess.UserID.Hex(), inv.ChannelID.Hex())
+	s.bus.Subscribe(sess.UserID.Hex(), channelID.Hex())
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":     status,
-		"channel_id": inv.ChannelID.Hex(),
+		"channel_id": channelID.Hex(),
 	})
 }

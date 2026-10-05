@@ -39,12 +39,6 @@ func (s *server) handleCreateChannel(w http.ResponseWriter, r *http.Request, ses
 		return
 	}
 
-	// A channel nobody can be invited to is not much of a channel, so it opens
-	// with one invite already made.
-	if _, err := s.invites.Create(r.Context(), ch.ID, sess.UserID); err != nil {
-		log.Printf("creating first invite: %v", err)
-	}
-
 	s.bus.Subscribe(sess.UserID.Hex(), ch.ID.Hex())
 	writeJSON(w, http.StatusCreated, ch)
 }
@@ -174,7 +168,7 @@ func (s *server) handleLeaveChannel(w http.ResponseWriter, r *http.Request, sess
 		return
 	}
 
-	err = s.channels.Leave(r.Context(), s.invites, id, sess.UserID)
+	err = s.channels.Leave(r.Context(), id, sess.UserID)
 	if errors.Is(err, errNotMember) {
 		writeError(w, http.StatusNotFound, "channel not found")
 		return

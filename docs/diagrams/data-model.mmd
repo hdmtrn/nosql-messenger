@@ -3,7 +3,7 @@
 %% Key and index detail is in the README tables. Placeholders such as
 %% ch:CHANNEL_ID stand for ch:{channelID} — Mermaid rejects braces in a member.
 %% Sources: server/users.go, sessions.go, channels.go, messages.go, friends.go,
-%% invites.go, media.go, hub.go, bus.go, presence.go, typing.go, users_http.go
+%% media.go, hub.go, bus.go, presence.go, typing.go, users_http.go
 classDiagram
   direction LR
 
@@ -43,6 +43,7 @@ classDiagram
     +ObjectID AvatarID
     +int MemberCount
     +string DirectKey
+    +string InviteCode
   }
 
   class ChannelMember {
@@ -124,18 +125,9 @@ classDiagram
     +string Username
   }
 
-  class Invite {
-    <<collection invites>>
-    +string Code
-    +ObjectID ChannelID
-    +ObjectID CreatedBy
-    +time_Time CreatedAt
-  }
-
   User "1" --> "0..*" Session : user_id
   Channel *-- ChannelMember : members
   Channel "1" --> "0..*" Message : channel_id
-  Channel "1" --> "0..*" Invite : channel_id
   Message *-- MessageAuthor : author
   Message o-- ForwardedFrom : forwarded
   Message *-- Attachment : attachments
