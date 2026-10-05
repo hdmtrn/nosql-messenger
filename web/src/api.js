@@ -32,6 +32,11 @@ async function parse(res) {
   return data
 }
 
+// How long a 429 asks to wait, as a person reads it.
+export function waitText(seconds) {
+  return seconds < 60 ? `${seconds} s` : `${Math.ceil(seconds / 60)} min`
+}
+
 // A send or an upload refused for coming too fast waits out the limit and goes
 // again: the message stays "Sending" rather than failing over a pause the server
 // itself names. A wait longer than a person would sit through fails as usual.
@@ -51,6 +56,7 @@ export const api = {
   login: (username, password) => request('POST', '/auth/login', { username, password }),
   register: (username, password) => request('POST', '/auth/register', { username, password }),
   logout: () => request('POST', '/auth/logout'),
+  deleteAccount: (password) => request('DELETE', '/auth/me', { password }),
 
   channels: (params) => request('GET', '/channels' + qs(params)),
   createChannel: (name) => request('POST', '/channels', { name }),

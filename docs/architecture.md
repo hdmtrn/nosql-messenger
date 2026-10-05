@@ -50,8 +50,8 @@ timestamp: a measurement found up to 4173 documents sharing the same `created_at
 
 ## MongoDB runs standalone
 
-One `mongod`, no replica set, and no transactions. The only operation that spans collections
-is removing a channel its last member has left, and it is split in two. Leaving is one write
+One `mongod`, no replica set, and no transactions. Two operations span collections, and both
+are split the same way. The first is removing a channel its last member has left. Leaving is one write
 that takes the member out and, when nobody is left, marks the channel `deleted_at`; the mark
 is the commit point, and joining refuses a marked channel, so no one gets into a channel whose
 history is going. A purge job then removes the messages, pictures and finally the
@@ -66,6 +66,15 @@ node finish what a dead one started, and only the node still holding the claim m
 channel. Stored files no record names, which a crash inside an upload can leave, are the one
 thing found by absence; that sweep takes one node per round through a Redis key and deletes
 nothing when more than a hundred files look unreferenced at once.
+
+The second is deleting an account, which its owner does from the profile with the password.
+One write marks the user `deleted_at` and erases the password hash, the name shown and the
+bio; from then on the account cannot log in and is not found. The rest can be repeated: every
+session is revoked, the account leaves every channel the way anyone leaves, its friend
+requests and picture go, and its messages, which stay because replies quote them by id, are
+renamed to `deleted-{id}`. The username itself goes last, after the messages, so that nobody
+registering the freed name is ever shown as their author. The mark carries a claim for the
+node that made it; the purge loop finishes an erasure whose claim ran out.
 
 Writes are acknowledged with `j: true`: a standalone `mongod` would otherwise acknowledge
 before the journal, and a message is announced to the other nodes right after its

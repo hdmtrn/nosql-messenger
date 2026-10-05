@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -29,7 +30,23 @@ type User struct {
 	// Never encoded here: the profile is public so that search can find a
 	// stranger, and GET /presence is where this is answered, to those who may ask.
 	LastSeenAt *time.Time `bson:"last_seen_at,omitempty" json:"-"`
+
+	// DeletedAt marks an account its owner deleted. The document stays, under
+	// a name nobody can register, so that messages left in shared chats still
+	// lead to an author; everything personal in it is gone.
+	DeletedAt *time.Time `bson:"deleted_at,omitempty" json:"-"`
 }
+
+// deletedNamePrefix starts the name a deleted account ends up with. Nobody can
+// register it, or a name taken in advance would stop a deletion halfway.
+const deletedNamePrefix = "deleted-"
+
+func tombName(id bson.ObjectID) string {
+	return deletedNamePrefix + id.Hex()
+}
+
+// alive is the filter clause for an account that has not been deleted.
+var alive = bson.M{"$exists": false}
 
 // normaliseUsername folds the handle so that Mara and mara cannot be two people,
 // and so that a search need not ask for a case-insensitive match.
@@ -51,9 +68,16 @@ func newUserStore(db *mongo.Database) *userStore {
 }
 
 func (s *userStore) ensureIndexes(ctx context.Context) error {
-	_, err := s.col.Indexes().CreateOne(ctx, mongo.IndexModel{
-		Keys:    bson.D{{Key: "username", Value: 1}},
-		Options: options.Index().SetUnique(true),
+	_, err := s.col.Indexes().CreateMany(ctx, []mongo.IndexModel{
+		{
+			Keys:    bson.D{{Key: "username", Value: 1}},
+			Options: options.Index().SetUnique(true),
+		},
+		// Serves the erasure claim; only accounts still being erased are in it.
+		{
+			Keys:    bson.D{{Key: "erase_until", Value: 1}},
+			Options: options.Index().SetSparse(true),
+		},
 	})
 	return err
 }
@@ -72,9 +96,11 @@ func (s *userStore) Create(ctx context.Context, u *User) error {
 	return nil
 }
 
+// GetByUsername finds a live account. A deleted one is not found: it cannot log
+// in, be messaged, or be sent a friend request.
 func (s *userStore) GetByUsername(ctx context.Context, name string) (*User, error) {
 	var u User
-	err := s.col.FindOne(ctx, bson.M{"username": normaliseUsername(name)}).Decode(&u)
+	err := s.col.FindOne(ctx, bson.M{"username": normaliseUsername(name), "deleted_at": alive}).Decode(&u)
 	if errors.Is(err, mongo.ErrNoDocuments) {
 		return nil, errUserNotFound
 	}
@@ -88,6 +114,22 @@ func (s *userStore) GetByUsername(ctx context.Context, name string) (*User, erro
 // without an anchor has no range to seek to. Both Mattermost and Rocket.Chat scan
 // here too — the user collection is orders of magnitude smaller than messages, and
 // the limit bounds the work. The same query over messages would not be defensible.
+// ProfileByUsername is GetByUsername with deleted accounts included, for the one
+// place that has to answer for them: a message's author.
+func (s *userStore) ProfileByUsername(ctx context.Context, name string) (*User, error) {
+	var u User
+	err := s.col.FindOne(ctx, bson.M{"username": normaliseUsername(name)},
+		options.FindOne().SetProjection(bson.M{"password_hash": 0}),
+	).Decode(&u)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, errUserNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
 func (s *userStore) Search(ctx context.Context, term string) ([]User, error) {
 	term = strings.TrimPrefix(strings.TrimSpace(term), "@")
 	if term == "" {
@@ -96,10 +138,13 @@ func (s *userStore) Search(ctx context.Context, term string) ([]User, error) {
 
 	pattern := regexp.QuoteMeta(term)
 	cur, err := s.col.Find(ctx,
-		bson.M{"$or": []bson.M{
-			{"username": bson.M{"$regex": strings.ToLower(pattern)}},
-			{"display_name": bson.M{"$regex": pattern, "$options": "i"}},
-		}},
+		bson.M{
+			"$or": []bson.M{
+				{"username": bson.M{"$regex": strings.ToLower(pattern)}},
+				{"display_name": bson.M{"$regex": pattern, "$options": "i"}},
+			},
+			"deleted_at": alive,
+		},
 		options.Find().
 			SetProjection(bson.M{"password_hash": 0}).
 			SetSort(bson.D{{Key: "username", Value: 1}}).
@@ -116,9 +161,12 @@ func (s *userStore) Search(ctx context.Context, term string) ([]User, error) {
 	return users, nil
 }
 
+// UpdateProfile, SetLastSeen and SetAvatar leave a deleted account alone: a
+// request that was already under way, or the socket closing because of the
+// deletion itself, must not write back what the deletion erased.
 func (s *userStore) UpdateProfile(ctx context.Context, id bson.ObjectID, displayName, bio string) error {
 	_, err := s.col.UpdateOne(ctx,
-		bson.M{"_id": id},
+		bson.M{"_id": id, "deleted_at": alive},
 		bson.M{"$set": bson.M{"display_name": displayName, "bio": bio}},
 	)
 	return err
@@ -126,7 +174,7 @@ func (s *userStore) UpdateProfile(ctx context.Context, id bson.ObjectID, display
 
 func (s *userStore) SetLastSeen(ctx context.Context, id bson.ObjectID, at time.Time) error {
 	_, err := s.col.UpdateOne(ctx,
-		bson.M{"_id": id},
+		bson.M{"_id": id, "deleted_at": alive},
 		bson.M{"$set": bson.M{"last_seen_at": at}},
 	)
 	return err
@@ -168,7 +216,7 @@ func (s *userStore) SetAvatar(ctx context.Context, id bson.ObjectID, avatar *bso
 	}
 
 	var before User
-	err := s.col.FindOneAndUpdate(ctx, bson.M{"_id": id}, update,
+	err := s.col.FindOneAndUpdate(ctx, bson.M{"_id": id, "deleted_at": alive}, update,
 		options.FindOneAndUpdate().
 			SetReturnDocument(options.Before).
 			SetProjection(bson.M{"avatar_id": 1}),
@@ -180,4 +228,84 @@ func (s *userStore) SetAvatar(ctx context.Context, id bson.ObjectID, avatar *bso
 		return nil, err
 	}
 	return before.AvatarID, nil
+}
+
+// markDeleted is the commit point of a deletion, one write: the account can no
+// longer log in, is no longer found, and holds nothing personal but the name and
+// the picture, which the rest of the erasure takes away. The claim comes with
+// the mark, so the request that made it finishes the job, and the purge loop
+// only takes over once the claim runs out. False means it was deleted already.
+func (s *userStore) markDeleted(ctx context.Context, id bson.ObjectID, owner string, now time.Time) (bool, error) {
+	res, err := s.col.UpdateOne(ctx,
+		bson.M{"_id": id, "deleted_at": alive},
+		bson.M{
+			"$set": bson.M{
+				"deleted_at":   now,
+				"display_name": "",
+				"erase_owner":  owner,
+				"erase_until":  now.Add(eraseLease),
+			},
+			"$unset": bson.M{"password_hash": "", "bio": "", "last_seen_at": ""},
+		},
+	)
+	if err != nil {
+		return false, fmt.Errorf("marking the account deleted: %w", err)
+	}
+	return res.MatchedCount == 1, nil
+}
+
+// claimErasure hands owner one account whose erasure was left unfinished, the
+// way claimDiscarded hands out channels: taking a claim that has run out is one
+// write, so two nodes never erase the same account at once.
+func (s *userStore) claimErasure(ctx context.Context, owner string, now time.Time) (bson.ObjectID, bool, error) {
+	var u struct {
+		ID bson.ObjectID `bson:"_id"`
+	}
+	err := s.col.FindOneAndUpdate(ctx,
+		bson.M{"erase_until": bson.M{"$lte": now}},
+		bson.M{"$set": bson.M{"erase_owner": owner, "erase_until": now.Add(eraseLease)}},
+		options.FindOneAndUpdate().
+			SetSort(bson.D{{Key: "erase_until", Value: 1}}).
+			SetProjection(bson.M{"_id": 1}),
+	).Decode(&u)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return bson.ObjectID{}, false, nil
+	}
+	if err != nil {
+		return bson.ObjectID{}, false, fmt.Errorf("claiming an erasure: %w", err)
+	}
+	return u.ID, true, nil
+}
+
+// erasing reads what the erasure still needs from a deleted account: the name
+// it had, for the event that tells the chats, and its picture.
+func (s *userStore) erasing(ctx context.Context, id bson.ObjectID) (User, error) {
+	var u User
+	err := s.col.FindOne(ctx,
+		bson.M{"_id": id, "deleted_at": bson.M{"$exists": true}},
+		options.FindOne().SetProjection(bson.M{"username": 1, "avatar_id": 1}),
+	).Decode(&u)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return User{}, errUserNotFound
+	}
+	return u, err
+}
+
+// finishErasure is the last write: the name goes to its tomb form, which lets
+// the unique index give the old one to whoever asks next, and the claim is
+// dropped with it. Only the node still holding the claim may do it. The name
+// goes last because until every message carries the tomb name, a newcomer
+// under the old one would be shown as their author.
+func (s *userStore) finishErasure(ctx context.Context, id bson.ObjectID, owner string) (bool, error) {
+	res, err := s.col.UpdateOne(ctx,
+		bson.M{"_id": id, "erase_owner": owner},
+		bson.M{
+			"$set":   bson.M{"username": tombName(id)},
+			"$unset": bson.M{"erase_owner": "", "erase_until": "", "avatar_id": ""},
+		},
+	)
+	if err != nil {
+		return false, fmt.Errorf("finishing the erasure: %w", err)
+	}
+	return res.MatchedCount == 1, nil
 }

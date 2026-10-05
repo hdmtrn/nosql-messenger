@@ -120,6 +120,9 @@ func validateUsername(s string) error {
 			return errors.New("username may contain only latin letters, digits, underscore and hyphen")
 		}
 	}
+	if strings.HasPrefix(strings.ToLower(s), deletedNamePrefix) {
+		return errors.New("username may not start with " + deletedNamePrefix)
+	}
 	return nil
 }
 
@@ -189,16 +192,25 @@ func (a *auth) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	if u := a.checkPassword(w, r, req.Username, req.Password); u != nil {
+		a.respondWithToken(w, r, http.StatusOK, u)
+	}
+}
 
+// checkPassword is the guard on a name and a password, for logging in and for
+// anything a signed-in person must confirm with the password, so that a stolen
+// session cannot become a way to guess it. It answers the request itself
+// whenever it returns nil.
+func (a *auth) checkPassword(w http.ResponseWriter, r *http.Request, username, password string) *User {
 	// All three are settled before the password hash is, so a flood costs a
 	// Redis round trip and not the CPU of argon2.
 	ip := a.limits.clientIP(r)
 	if !a.limits.allow(w, r, limitLoginIP, ip) {
-		return
+		return nil
 	}
 	// Only a name that could exist is counted: any other string would be a key
 	// nobody can log in as, and a way to fill Redis with garbage.
-	name := normaliseUsername(req.Username)
+	name := normaliseUsername(username)
 	counted := validateUsername(name) == nil
 	pair := name + "@" + ip
 	if counted {
@@ -208,35 +220,35 @@ func (a *auth) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}{{limitLoginPair, pair}, {limitLoginUser, name}} {
 			if wait, ok := a.limits.check(r.Context(), c.lim, c.key); !ok {
 				writeTooMany(w, wait)
-				return
+				return nil
 			}
 		}
 	}
 
-	u, err := a.users.GetByUsername(r.Context(), req.Username)
+	u, err := a.users.GetByUsername(r.Context(), username)
 	if err != nil && !errors.Is(err, errUserNotFound) {
 		log.Printf("looking up user: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
-		return
+		return nil
 	}
 
 	release, ok := a.acquire()
 	if !ok {
 		writeError(w, http.StatusServiceUnavailable, "server is overloaded, try again later")
-		return
+		return nil
 	}
 
 	stored := a.dummyHash
 	if u != nil {
 		stored = u.PasswordHash
 	}
-	match, verr := verifyPassword(req.Password, stored)
+	match, verr := verifyPassword(password, stored)
 	release()
 
 	if verr != nil {
 		log.Printf("verifying password: %v", verr)
 		writeError(w, http.StatusInternalServerError, "internal error")
-		return
+		return nil
 	}
 
 	if u == nil || !match {
@@ -245,13 +257,13 @@ func (a *auth) handleLogin(w http.ResponseWriter, r *http.Request) {
 			a.limits.hit(r.Context(), limitLoginUser, name)
 		}
 		writeError(w, http.StatusUnauthorized, "invalid username or password")
-		return
+		return nil
 	}
 
 	// The owner got in from here, so the mistakes made here are forgiven. The
 	// count for the account stays: it is what holds a spread-out guess back.
 	a.limits.clear(r.Context(), limitLoginPair, pair)
-	a.respondWithToken(w, r, http.StatusOK, u)
+	return u
 }
 
 func (a *auth) respondWithToken(w http.ResponseWriter, r *http.Request, code int, u *User) {

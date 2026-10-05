@@ -1,11 +1,11 @@
 <script setup>
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { api } from '../api'
 import ChannelGlyph from '../components/ChannelGlyph.vue'
 import SgAvatar from '../components/SgAvatar.vue'
 import SgButton from '../components/SgButton.vue'
 import MediaViewer from '../components/MediaViewer.vue'
-import { avatarUrl, channelAvatarUrl, initials } from '../naming'
+import { DELETED_NAME, avatarUrl, channelAvatarUrl, initials } from '../naming'
 
 const props = defineProps({
   username: { type: String, required: true },
@@ -42,6 +42,10 @@ async function load() {
 
 watch(() => props.username, load, { immediate: true })
 
+// The author of messages whose account is gone: nothing to show, nothing to offer.
+const gone = computed(() => !!person.value?.deleted)
+const name = computed(() => (gone.value ? DELETED_NAME : person.value ? person.value.display_name : props.username))
+
 </script>
 
 <template>
@@ -56,19 +60,20 @@ watch(() => props.username, load, { immediate: true })
       <div class="identity">
         <button type="button" class="avatar" :disabled="!avatarUrl(username)"
                 :aria-label="avatarUrl(username) ? 'Open photo' : undefined" @click="viewing = true">
-          <SgAvatar :initials="initials(person ? person.display_name : username)" :src="avatarUrl(username)" :size="56" />
+          <SgAvatar :initials="initials(name)" :src="avatarUrl(username)" :size="56" />
         </button>
         <MediaViewer v-if="viewing && avatarUrl(username)" :pictures="[{ key: username, url: avatarUrl(username) }]"
                      @close="viewing = false" />
         <div class="names">
-          <div class="name">{{ person ? person.display_name : username }}</div>
-          <div class="handle">@{{ username }}</div>
+          <div class="name">{{ name }}</div>
+          <div v-if="!gone" class="handle">@{{ username }}</div>
         </div>
       </div>
 
       <p v-if="person && person.bio" class="bio">{{ person.bio }}</p>
 
       <p v-if="missing" class="label note">User not found</p>
+      <p v-else-if="gone" class="label note">This account was deleted</p>
 
       <template v-else>
         <SgButton v-if="relation === 'friend'" variant="primary"

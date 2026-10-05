@@ -32,6 +32,7 @@ type profileView struct {
 	Username    string         `json:"username"`
 	DisplayName string         `json:"display_name"`
 	AvatarID    *bson.ObjectID `json:"avatar_id,omitempty"`
+	Deleted     bool           `json:"deleted,omitempty"`
 }
 
 // announceProfile reads the user back rather than assembling the event from
@@ -77,8 +78,10 @@ func (s *server) handleSearchUsers(w http.ResponseWriter, r *http.Request, _ Ses
 	writeJSON(w, http.StatusOK, users)
 }
 
+// handleGetUser answers for deleted accounts too, since their messages stay:
+// with that they are gone and nothing more.
 func (s *server) handleGetUser(w http.ResponseWriter, r *http.Request, _ Session) {
-	u, err := s.users.GetByUsername(r.Context(), r.PathValue("username"))
+	u, err := s.users.ProfileByUsername(r.Context(), r.PathValue("username"))
 	if errors.Is(err, errUserNotFound) {
 		writeError(w, http.StatusNotFound, "user not found")
 		return
@@ -86,6 +89,10 @@ func (s *server) handleGetUser(w http.ResponseWriter, r *http.Request, _ Session
 	if err != nil {
 		log.Printf("loading user: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if u.DeletedAt != nil {
+		writeJSON(w, http.StatusOK, profileView{ID: u.ID.Hex(), Username: u.Username, Deleted: true})
 		return
 	}
 	writeJSON(w, http.StatusOK, u)

@@ -1,14 +1,16 @@
 <script setup>
 import { computed, ref } from 'vue'
-import { api } from '../api'
+import { api, waitText } from '../api'
 import SgAvatar from '../components/SgAvatar.vue'
 import SgButton from '../components/SgButton.vue'
+import SgDialog from '../components/SgDialog.vue'
+import SgInput from '../components/SgInput.vue'
 import MediaViewer from '../components/MediaViewer.vue'
 import { avatarUrl, initials } from '../naming'
 import { toJpeg } from '../images'
 
 const props = defineProps({ me: { type: Object, required: true } })
-const emit = defineEmits(['saved', 'log-out'])
+const emit = defineEmits(['saved', 'log-out', 'deleted'])
 
 const displayName = ref(props.me.display_name)
 const bio = ref(props.me.bio || '')
@@ -85,6 +87,34 @@ function when(iso) {
 }
 
 toggleSessions()
+
+// Deleting asks for the password again: a session left open on someone else's
+// screen must not be enough to throw the account away.
+const confirmDelete = ref(false)
+const deletePassword = ref('')
+const deleteError = ref('')
+const deleting = ref(false)
+
+function openDelete() {
+  deletePassword.value = ''
+  deleteError.value = ''
+  confirmDelete.value = true
+}
+
+async function deleteAccount() {
+  deleteError.value = ''
+  deleting.value = true
+  try {
+    await api.deleteAccount(deletePassword.value)
+    emit('deleted')
+  } catch (e) {
+    if (e.status === 401) deleteError.value = 'Wrong password'
+    else if (e.status === 429) deleteError.value = `Too many attempts, try again in ${waitText(e.retryAfter)}`
+    else deleteError.value = `${e.message} (${e.status})`
+  } finally {
+    deleting.value = false
+  }
+}
 </script>
 
 <template>
@@ -164,7 +194,28 @@ toggleSessions()
         <button type="button" class="row clickable log-out" @click="emit('log-out')">
           <span class="grow">Log out</span>
         </button>
+        <div class="divider"></div>
+        <button type="button" class="row clickable log-out" @click="openDelete">
+          <span class="grow">Delete account</span>
+        </button>
       </div>
+
+      <!-- The stage is a size container, which would pin a fixed dialog to it. -->
+      <Teleport to="body">
+        <SgDialog v-if="confirmDelete" title="Delete your account?" @close="confirmDelete = false">
+          <p class="dialog-text">
+            Your profile, picture, friends and sessions are erased and you leave every chat.
+            Messages you sent stay where they are, signed as Deleted Account. This cannot be undone.
+          </p>
+          <SgInput v-model="deletePassword" type="password" label="Password" :error="deleteError" />
+          <div class="dialog-actions">
+            <SgButton variant="danger" :disabled="!deletePassword || deleting" @click="deleteAccount">
+              {{ deleting ? 'Deleting' : 'Delete account' }}
+            </SgButton>
+            <SgButton variant="outline" @click="confirmDelete = false">Cancel</SgButton>
+          </div>
+        </SgDialog>
+      </Teleport>
 
     </div>
   </section>
@@ -262,6 +313,15 @@ toggleSessions()
   text-align: left;
 }
 .log-out { color: var(--red); }
+.dialog-text {
+  margin: 0;
+  font: var(--text-body);
+  color: var(--text-muted);
+}
+.dialog-actions {
+  display: flex;
+  gap: 12px;
+}
 .grow { flex: 1; }
 .divider {
   height: 1px;
