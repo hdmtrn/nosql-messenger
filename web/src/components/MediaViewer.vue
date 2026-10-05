@@ -82,8 +82,7 @@ function touchEnd(e) {
 }
 .count {
   flex: 1;
-  font: var(--text-machine-11);
-  letter-spacing: var(--mono-tracking);
+  font: var(--text-meta);
   opacity: 0.8;
 }
 .round {

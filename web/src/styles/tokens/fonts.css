@@ -1,12 +1,9 @@
-/* Signage webfonts, served from our own origin. Loading them from Google Fonts
-   sent every visitor's address to Google without consent. The @fontsource
-   packages carry the same OFL files; Vite copies the ones these rules point at
-   into the build, and the browser fetches only the subsets a page uses. The
-   weights are those the Google URL asked for. */
+/* The client's one font, served from our own origin: loading it from Google
+   Fonts sent every visitor's address to Google without consent. The
+   @fontsource package carries the same OFL files; Vite copies the ones these
+   rules point at into the build, and the browser fetches only the subsets a
+   page uses. */
 @import "@fontsource/archivo/400.css";
 @import "@fontsource/archivo/500.css";
 @import "@fontsource/archivo/600.css";
 @import "@fontsource/archivo/700.css";
-@import "@fontsource/jetbrains-mono/400.css";
-@import "@fontsource/jetbrains-mono/500.css";
-@import "@fontsource/jetbrains-mono/700.css";
