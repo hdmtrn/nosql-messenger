@@ -21,13 +21,6 @@ const passwordError = ref('')
 
 const registering = computed(() => mode.value === 'register')
 
-const mono = {
-  font: 'var(--text-meta)',
-  textTransform: 'uppercase',
-  letterSpacing: 'var(--mono-tracking)',
-  color: 'var(--grey)',
-}
-
 function switchTo(next) {
   mode.value = next
   usernameError.value = ''
@@ -65,29 +58,22 @@ async function submit() {
 </script>
 
 <template>
-  <div style="height:100vh;display:flex;gap:16px;padding:16px;
-              background:var(--surface-page);box-sizing:border-box">
+  <div class="screen">
 
-    <section style="flex:0 0 44%;background:var(--surface-accent);
-                    border-radius:var(--radius-panel);padding:32px;
-                    display:flex;flex-direction:column">
+    <section class="brand">
       <!-- the brand is a mark, not a heading: it must not compete with "Sign in" -->
-      <span style="font:var(--weight-bold) var(--size-20)/var(--leading-tight) var(--font-ui);
-                   letter-spacing:-0.01em;color:#fff">
+      <span class="brand-name">
         Messenger
       </span>
-      <div style="flex:1;display:grid;place-items:center">
+      <div class="brand-mark">
         <ChannelGlyph :size="190" tone="onBlue" />
       </div>
     </section>
 
-    <section style="flex:1;background:var(--surface-panel);
-                    border-radius:var(--radius-panel);display:grid;
-                    place-items:center;padding:32px">
-      <form style="width:min(380px, 100%);display:flex;flex-direction:column;gap:24px"
-            @submit.prevent="submit">
+    <section class="pane">
+      <form class="form" @submit.prevent="submit">
         <!-- 24px gap + 8px margin: the title sits further from the form than the fields sit from each other -->
-        <h1 style="margin:0 0 8px;font:var(--text-display);letter-spacing:-0.01em">
+        <h1 class="heading">
           {{ registering ? 'Register' : 'Sign in' }}
         </h1>
 
@@ -113,19 +99,19 @@ async function submit() {
 
         <SgInput v-if="registering" v-model="repeat" size="lg" label="Repeat password" type="password" />
 
-        <div style="display:flex;flex-direction:column;gap:16px;margin-top:8px">
+        <div class="submit">
           <SgButton variant="primary" size="lg" type="submit" :disabled="busy">
             {{ registering ? 'Register' : 'Sign in' }}
           </SgButton>
 
-          <span :style="mono">
+          <span class="switch">
             <template v-if="registering">
               Have an account?
-              <a href="#" style="color:var(--blue)" @click.prevent="switchTo('sign-in')">Sign in</a>
+              <a href="#" class="link" @click.prevent="switchTo('sign-in')">Sign in</a>
             </template>
             <template v-else>
               No account?
-              <a href="#" style="color:var(--blue)" @click.prevent="switchTo('register')">Register</a>
+              <a href="#" class="link" @click.prevent="switchTo('register')">Register</a>
             </template>
           </span>
         </div>
@@ -133,3 +119,64 @@ async function submit() {
     </section>
   </div>
 </template>
+
+<style scoped>
+.screen {
+  height: 100vh;
+  display: flex;
+  gap: 16px;
+  padding: 16px;
+  background: var(--surface-page);
+  box-sizing: border-box;
+}
+.brand {
+  flex: 0 0 44%;
+  background: var(--surface-accent);
+  border-radius: var(--radius-panel);
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+}
+.brand-name {
+  font: var(--weight-bold) var(--size-20)/var(--leading-tight) var(--font-ui);
+  letter-spacing: -0.01em;
+  color: #fff;
+}
+.brand-mark {
+  flex: 1;
+  display: grid;
+  place-items: center;
+}
+.pane {
+  flex: 1;
+  background: var(--surface-panel);
+  border-radius: var(--radius-panel);
+  display: grid;
+  place-items: center;
+  padding: 32px;
+}
+.form {
+  width: min(380px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+.heading {
+  margin: 0 0 8px;
+  font: var(--text-display);
+  letter-spacing: -0.01em;
+}
+.submit {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 8px;
+}
+.switch {
+  font: var(--text-meta);
+  text-transform: uppercase;
+  letter-spacing: var(--mono-tracking);
+  color: var(--grey);
+}
+.link { color: var(--blue); }
+</style>

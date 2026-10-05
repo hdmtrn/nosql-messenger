@@ -42,45 +42,33 @@ async function load() {
 
 watch(() => props.username, load, { immediate: true })
 
-const mono = {
-  font: 'var(--text-machine)',
-  textTransform: 'uppercase',
-  letterSpacing: 'var(--mono-tracking)',
-  color: 'var(--grey)',
-}
-const handle = { font: 'var(--text-machine-11)', letterSpacing: 'var(--mono-tracking)', color: 'var(--grey)' }
-const panel = { background: 'var(--surface-panel)', borderRadius: 'var(--radius-panel)' }
-const row = { display: 'flex', alignItems: 'center', gap: '12px', padding: '0 24px', height: '52px' }
 </script>
 
 <template>
-  <aside style="flex:0 0 340px;display:flex;flex-direction:column;gap:16px;overflow-y:auto">
-    <div style="display:flex;align-items:center;gap:12px">
-      <h2 style="margin:0;flex:1;font:600 20px/1.2 var(--font-ui)">About</h2>
+  <aside class="user-panel">
+    <div class="top">
+      <h2 class="heading">About</h2>
       <SgButton variant="outline" size="sm" @click="emit('close')">Close</SgButton>
     </div>
 
     <!-- laid out like your own profile card: avatar on the left, everything flush left -->
-    <div :style="panel" style="padding:24px;display:flex;flex-direction:column;
-                               align-items:flex-start;gap:16px">
-      <div style="display:flex;align-items:center;gap:16px;min-width:0;max-width:100%">
+    <div class="card person">
+      <div class="identity">
         <button type="button" class="avatar" :disabled="!avatarUrl(username)"
                 :aria-label="avatarUrl(username) ? 'Open photo' : undefined" @click="viewing = true">
           <SgAvatar :initials="initials(person ? person.display_name : username)" :src="avatarUrl(username)" :size="56" />
         </button>
         <MediaViewer v-if="viewing && avatarUrl(username)" :pictures="[{ key: username, url: avatarUrl(username) }]"
                      @close="viewing = false" />
-        <div style="min-width:0">
-          <div style="font:600 20px/1.2 var(--font-ui);overflow:hidden;text-overflow:ellipsis;
-                      white-space:nowrap">{{ person ? person.display_name : username }}</div>
-          <div :style="handle" style="margin-top:4px">@{{ username }}</div>
+        <div class="names">
+          <div class="name">{{ person ? person.display_name : username }}</div>
+          <div class="handle">@{{ username }}</div>
         </div>
       </div>
 
-      <p v-if="person && person.bio"
-         style="margin:0;font:var(--text-body);color:var(--text-muted)">{{ person.bio }}</p>
+      <p v-if="person && person.bio" class="bio">{{ person.bio }}</p>
 
-      <p v-if="missing" :style="mono" style="margin:0">User not found</p>
+      <p v-if="missing" class="mono note">User not found</p>
 
       <template v-else>
         <SgButton v-if="relation === 'friend'" variant="primary"
@@ -94,15 +82,13 @@ const row = { display: 'flex', alignItems: 'center', gap: '12px', padding: '0 24
     </div>
 
     <template v-if="!missing">
-      <span :style="mono" style="padding:0 24px">Channels in common</span>
-      <div :style="panel" style="padding:4px 0">
-        <p v-if="!common.length" :style="row" style="margin:0;color:var(--text-muted)">None</p>
-        <button v-for="c in common" :key="c.id" type="button"
-                :style="{ ...row, width: '100%', border: 'none', background: 'none',
-                          cursor: 'pointer', font: 'var(--text-body)' }"
+      <span class="mono section">Channels in common</span>
+      <div class="card list">
+        <p v-if="!common.length" class="row none">None</p>
+        <button v-for="c in common" :key="c.id" type="button" class="row channel"
                 @click="emit('select', c.id)">
           <ChannelGlyph :src="channelAvatarUrl(c)" :size="22" tone="blue" />
-          <span style="flex:1;text-align:left">{{ c.name }}</span>
+          <span class="channel-name">{{ c.name }}</span>
         </button>
       </div>
     </template>
@@ -110,6 +96,90 @@ const row = { display: 'flex', alignItems: 'center', gap: '12px', padding: '0 24
 </template>
 
 <style scoped>
+.user-panel {
+  flex: 0 0 340px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+}
+.top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.heading {
+  margin: 0;
+  flex: 1;
+  font: 600 20px/1.2 var(--font-ui);
+}
+.card {
+  background: var(--surface-panel);
+  border-radius: var(--radius-panel);
+}
+.person {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+}
+.identity {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+  max-width: 100%;
+}
+.names { min-width: 0; }
+.name {
+  font: 600 20px/1.2 var(--font-ui);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.handle {
+  margin-top: 4px;
+  font: var(--text-machine-11);
+  letter-spacing: var(--mono-tracking);
+  color: var(--grey);
+}
+.bio {
+  margin: 0;
+  font: var(--text-body);
+  color: var(--text-muted);
+}
+.mono {
+  font: var(--text-machine);
+  text-transform: uppercase;
+  letter-spacing: var(--mono-tracking);
+  color: var(--grey);
+}
+.note { margin: 0; }
+.section { padding: 0 24px; }
+.list { padding: 4px 0; }
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 24px;
+  height: 52px;
+}
+.none {
+  margin: 0;
+  color: var(--text-muted);
+}
+.channel {
+  width: 100%;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font: var(--text-body);
+}
+.channel-name {
+  flex: 1;
+  text-align: left;
+}
 .avatar {
   flex: none;
   padding: 0;

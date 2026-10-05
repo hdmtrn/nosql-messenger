@@ -30,26 +30,39 @@ const dots = computed(() => {
   }
   return out
 })
-
-const color = computed(() => (props.tone === 'blue' ? 'var(--blue)' : '#fff'))
 </script>
 
 <template>
-  <img v-if="src && !failed" :src="src" alt="" @error="failed = true"
-       :style="{ display: 'block', flex: 'none', width: size + 'px', height: size + 'px',
-                 borderRadius: 'var(--radius-pill)', objectFit: 'cover' }">
-  <span
-    v-else
-    aria-hidden="true"
-    :style="{ position: 'relative', display: 'block', flex: 'none',
-              width: size + 'px', height: size + 'px' }"
-  >
-    <span
-      v-for="d in dots"
-      :key="d.key"
-      :style="{ position: 'absolute', left: d.left + 'px', top: d.top + 'px',
-                width: d.d + 'px', height: d.d + 'px',
-                borderRadius: 'var(--radius-pill)', background: color }"
-    />
+  <img v-if="src && !failed" :src="src" alt="" class="channel-glyph channel-glyph--picture" :style="{ '--size': size + 'px' }"
+       @error="failed = true">
+  <span v-else aria-hidden="true" class="channel-glyph channel-glyph--dots" :class="{ 'channel-glyph--blue': tone === 'blue' }"
+        :style="{ '--size': size + 'px' }">
+    <span v-for="d in dots" :key="d.key" class="dot"
+          :style="{ '--x': d.left + 'px', '--y': d.top + 'px', '--d': d.d + 'px' }" />
   </span>
 </template>
+
+<style scoped>
+/* The root's classes carry the component's name: the parent's scoped styles reach it. */
+.channel-glyph {
+  display: block;
+  flex: none;
+  width: var(--size);
+  height: var(--size);
+}
+.channel-glyph--picture {
+  border-radius: var(--radius-pill);
+  object-fit: cover;
+}
+.channel-glyph--dots { position: relative; }
+.dot {
+  position: absolute;
+  left: var(--x);
+  top: var(--y);
+  width: var(--d);
+  height: var(--d);
+  border-radius: var(--radius-pill);
+  background: #fff;
+}
+.channel-glyph--blue .dot { background: var(--blue); }
+</style>

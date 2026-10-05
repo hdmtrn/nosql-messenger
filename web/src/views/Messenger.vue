@@ -593,9 +593,8 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div style="position:relative;height:100vh;display:flex;flex-direction:column;background:var(--paper);
-              padding:16px;box-sizing:border-box">
-    <div style="flex:1;min-height:0;display:flex;gap:16px">
+  <div class="screen">
+    <div class="columns">
 
       <ChannelRail
         :me="me"
@@ -653,7 +652,7 @@ onUnmounted(() => {
         @person="openPerson"
       />
 
-      <p v-else class="sg-mono" style="margin:auto;color:var(--text-muted)">
+      <p v-else class="sg-mono empty">
         {{ channels.length ? 'Pick a channel or a conversation' : 'Create a channel or join one by code' }}
       </p>
 
@@ -691,10 +690,10 @@ onUnmounted(() => {
     </div>
 
     <SgDialog v-if="confirmLeave" :title="`Leave #${active?.name}?`" @close="confirmLeave = false">
-      <p style="margin:0;font:var(--text-body);color:var(--text-muted)">
+      <p class="dialog-text">
         You stop receiving messages from this channel. Rejoin any time with the invite code.
       </p>
-      <div style="display:flex;gap:12px">
+      <div class="dialog-actions">
         <SgButton variant="danger" @click="confirmLeave = false; leaveChannel()">Leave</SgButton>
         <SgButton variant="outline" @click="confirmLeave = false">Cancel</SgButton>
       </div>
@@ -702,7 +701,7 @@ onUnmounted(() => {
 
     <SgDialog v-if="dialog === 'create'" title="New channel" @close="dialog = null">
       <SgInput v-model="draftName" label="Name" hint="1-64 characters" :error="dialogError" />
-      <div style="display:flex;gap:12px">
+      <div class="dialog-actions">
         <SgButton variant="primary" @click="createChannel">Create</SgButton>
         <SgButton variant="outline" @click="dialog = null">Cancel</SgButton>
       </div>
@@ -712,6 +711,34 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.screen {
+  position: relative;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  padding: 16px;
+  box-sizing: border-box;
+}
+.columns {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 16px;
+}
+.empty {
+  margin: auto;
+  color: var(--text-muted);
+}
+.dialog-text {
+  margin: 0;
+  font: var(--text-body);
+  color: var(--text-muted);
+}
+.dialog-actions {
+  display: flex;
+  gap: 12px;
+}
 .stage {
   flex: 1;
   min-width: 0;

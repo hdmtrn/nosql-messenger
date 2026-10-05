@@ -1,7 +1,5 @@
 <script setup>
-import { computed } from 'vue'
-
-const props = defineProps({
+defineProps({
   variant: { type: String, default: 'primary' },
   size: { type: String, default: 'md' },
   disabled: Boolean,
@@ -10,52 +8,54 @@ const props = defineProps({
   onBlue: Boolean,
   type: { type: String, default: 'button' },
 })
-
-const H = { sm: '26px', md: '36px', lg: '48px' }
-const PAD = { sm: '0 12px', md: '0 18px', lg: '0 26px' }
-
-const variants = computed(() => ({
-  primary: { background: 'var(--surface-accent)', color: '#fff' },
-  outline: {
-    background: 'transparent',
-    color: props.onBlue ? '#fff' : 'var(--text-primary)',
-    boxShadow: `inset 0 0 0 1px ${props.onBlue ? 'rgba(255,255,255,0.7)' : 'var(--ink)'}`,
-  },
-  ghost: { background: 'transparent', color: props.onBlue ? '#fff' : 'var(--text-primary)' },
-  danger: { background: 'var(--status-error)', color: '#fff' },
-  mutedText: { background: 'transparent', color: 'var(--text-muted)', padding: 0, height: 'auto' },
-}))
-
-const style = computed(() => {
-  const base = {
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '8px',
-    height: H[props.size],
-    padding: PAD[props.size],
-    borderRadius: 'var(--radius-pill)',
-    cursor: props.disabled ? 'not-allowed' : 'pointer',
-    font: props.mono
-      ? props.size === 'sm' ? 'var(--text-machine)' : 'var(--text-label)'
-      : 'var(--text-ui)',
-    textTransform: props.mono ? 'uppercase' : 'none',
-    letterSpacing: props.mono ? 'var(--mono-tracking)' : '0',
-    border: 'none',
-    width: props.fullWidth ? '100%' : undefined,
-    whiteSpace: 'nowrap',
-  }
-  const off = props.disabled
-    ? {
-        background: ['primary', 'danger'].includes(props.variant) ? 'var(--text-muted)' : 'transparent',
-        color: ['primary', 'danger'].includes(props.variant) ? '#fff' : 'var(--text-disabled)',
-        boxShadow: props.variant === 'outline' ? 'inset 0 0 0 1px var(--border-muted)' : 'none',
-      }
-    : null
-  return { ...base, ...variants.value[props.variant], ...off }
-})
 </script>
 
 <template>
-  <button :type="type" :disabled="disabled" :style="style"><slot /></button>
+  <button :type="type" :disabled="disabled" class="sg-button"
+          :class="[`sg-button--${size}`, `sg-button--${variant}`,
+                   { 'sg-button--mono': mono, 'sg-button--on-blue': onBlue, 'sg-button--full': fullWidth }]"><slot /></button>
 </template>
+
+<style scoped>
+/* Every class here sits on the root, which the parent's scoped styles reach too,
+   so they all carry the component's name. */
+.sg-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: none;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  font: var(--text-ui);
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+.sg-button:disabled { cursor: not-allowed; }
+.sg-button--mono {
+  font: var(--text-label);
+  text-transform: uppercase;
+  letter-spacing: var(--mono-tracking);
+}
+.sg-button--mono.sg-button--sm { font: var(--text-machine); }
+.sg-button--full { width: 100%; }
+
+.sg-button--sm { height: 26px; padding: 0 12px; }
+.sg-button--md { height: 36px; padding: 0 18px; }
+.sg-button--lg { height: 48px; padding: 0 26px; }
+
+.sg-button--primary { background: var(--surface-accent); color: #fff; }
+.sg-button--outline { background: transparent; color: var(--text-primary); box-shadow: inset 0 0 0 1px var(--ink); }
+.sg-button--outline.sg-button--on-blue { color: #fff; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.7); }
+.sg-button--ghost { background: transparent; color: var(--text-primary); }
+.sg-button--ghost.sg-button--on-blue { color: #fff; }
+.sg-button--danger { background: var(--status-error); color: #fff; }
+.sg-button.sg-button--mutedText { background: transparent; color: var(--text-muted); padding: 0; height: auto; }
+
+.sg-button--primary:disabled,
+.sg-button--danger:disabled { background: var(--text-muted); color: #fff; box-shadow: none; }
+.sg-button--outline:disabled,
+.sg-button--ghost:disabled,
+.sg-button.sg-button--mutedText:disabled { background: transparent; color: var(--text-disabled); box-shadow: none; }
+.sg-button--outline:disabled { box-shadow: inset 0 0 0 1px var(--border-muted); }
+</style>

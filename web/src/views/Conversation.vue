@@ -232,8 +232,7 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
 </script>
 
 <template>
-  <section style="flex:1;min-width:0;background:var(--surface-panel);border-radius:var(--radius-panel);
-                  display:flex;flex-direction:column;overflow:hidden">
+  <section class="conversation">
     <PaneHeader
       :title="direct() ? displayName(title) : title"
       :subtitle="typingLine || presenceLine || (direct() ? '@' + title
@@ -250,7 +249,7 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
     </PaneHeader>
 
     <div ref="feed" class="feed" @scroll="onScroll">
-      <p v-if="!messages.length" class="sg-mono" style="margin:auto;color:var(--text-muted)">
+      <p v-if="!messages.length" class="sg-mono empty">
         No messages yet
       </p>
 
@@ -269,12 +268,11 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
         :ring="!!person && m.author.username === person"
         :forwarded="m.forwarded ? displayName(m.forwarded.author.username) : ''"
         :quote="quote"
-        :style="head && i > 0 ? { marginTop: direct() ? '10px' : '18px' } : null"
         @retry="emit('retry', m)"
         @discard="emit('discard', m)"
         :tabindex="m.id ? 0 : undefined"
         class="message"
-        :class="{ lit: lit && lit === m.id }"
+        :class="{ lit: lit && lit === m.id, 'run-start': head && i > 0, tight: direct() }"
         :data-id="m.id"
         @contextmenu.prevent="openMenu(m, $event.clientX, $event.clientY)"
         @keydown.enter.self="openMenuAtBubble(m, $event)"
@@ -313,7 +311,7 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
       <!-- a reply still needs its own text; a forward can go on its own -->
       <div v-if="pending" class="pending">
         <span class="bar" />
-        <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
+        <div class="pending-body">
           <span class="pending-label">
             {{ pending.kind === 'reply' ? 'Reply to' : 'Forward from' }} {{ pendingAuthor }}
           </span>
@@ -328,6 +326,19 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
 </template>
 
 <style scoped>
+.conversation {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface-panel);
+  border-radius: var(--radius-panel);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.empty {
+  margin: auto;
+  color: var(--text-muted);
+}
 .feed {
   flex: 1;
   overflow-y: auto;
@@ -340,6 +351,10 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
 /* short conversations hug the bottom; long ones still scroll from the top */
 .feed > :first-child { margin-top: auto; }
 .message { border-radius: var(--radius-bubble); }
+/* the first bubble of a run stands apart from the run above it, less so in a
+   direct conversation, where the side already says who is speaking */
+.message.run-start { margin-top: 18px; }
+.message.run-start.tight { margin-top: 10px; }
 /* The band a quote leads to spans the whole pane, past the feed's 28px padding,
    with room above and below. As in Telegram it lies over the message, a see-through
    wash of the accent, so a blue bubble is lit too; clicks go through it. */
@@ -370,6 +385,13 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
   width: 2px;
   background: var(--blue);
   border-radius: 2px;
+}
+.pending-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 .pending-label { font: 500 13px/1.3 var(--font-ui); color: var(--blue); }
 .pending-text {

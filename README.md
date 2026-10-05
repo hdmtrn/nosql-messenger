@@ -74,8 +74,9 @@ docker compose up -d --wait mongo redis
 a skipped test looks like a passed one. `-race` matters for the hub: concurrent access to it
 is exactly the kind of bug that reading the code does not find.
 
-CI runs four independent jobs on every push: `go vet` plus a `gofmt` check, the short test
-run, the full run against a real MongoDB and Redis, and a throwaway Docker image build.
+CI runs four independent jobs on every push: `go vet`, a `gofmt` check and a check that the
+client styles nothing inline (`web/scripts/check-styles.mjs`), the short test run, the full
+run against a real MongoDB and Redis, and a throwaway Docker image build.
 
 ## Profiling and readiness
 
