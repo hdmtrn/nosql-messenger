@@ -155,8 +155,12 @@ func (s *server) handleOpenDirect(w http.ResponseWriter, r *http.Request, sess S
 	}
 
 	// Both sides may already hold a socket, and neither reconnects for this.
-	s.bus.Subscribe(sess.UserID.Hex(), ch.ID.Hex())
-	s.bus.Subscribe(other.ID.Hex(), ch.ID.Hex())
+	// Members only: one who left before leaving was refused is not routed to it.
+	for _, id := range []bson.ObjectID{sess.UserID, other.ID} {
+		if memberRole(ch, id) != "" {
+			s.bus.Subscribe(id.Hex(), ch.ID.Hex())
+		}
+	}
 
 	writeJSON(w, http.StatusOK, ch)
 }
@@ -165,6 +169,23 @@ func (s *server) handleLeaveChannel(w http.ResponseWriter, r *http.Request, sess
 	id, err := bson.ObjectIDFromHex(r.PathValue("id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "malformed channel id")
+		return
+	}
+
+	// A direct conversation is not left: the one who stays keeps its key, and
+	// reopening it would find it without the one who left.
+	kind, err := s.channels.kindFor(r.Context(), id, sess.UserID)
+	if errors.Is(err, errNotMember) {
+		writeError(w, http.StatusNotFound, "channel not found")
+		return
+	}
+	if err != nil {
+		log.Printf("leaving channel: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if kind != channelKindNamed {
+		writeError(w, http.StatusBadRequest, "a direct conversation cannot be left")
 		return
 	}
 

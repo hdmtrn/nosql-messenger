@@ -435,7 +435,10 @@ func (s *channelStore) Leave(ctx context.Context, channelID, userID bson.ObjectI
 func (s *channelStore) ensureOwner(ctx context.Context, channelID bson.ObjectID) error {
 	_, err := s.col.UpdateOne(ctx,
 		bson.M{
-			"_id":          channelID,
+			"_id": channelID,
+			// A direct conversation has no owner; one would be allowed to give
+			// it an invite code.
+			"kind":         channelKindNamed,
 			"members.0":    bson.M{"$exists": true},
 			"members.role": bson.M{"$ne": roleOwner},
 		},
@@ -623,4 +626,21 @@ func (s *channelStore) memberOf(ctx context.Context, userID bson.ObjectID) ([]bs
 		ids[i] = row.ID
 	}
 	return ids, nil
+}
+
+// kindFor answers for a member only, so an outsider cannot tell a direct
+// conversation from a channel they are not in.
+func (s *channelStore) kindFor(ctx context.Context, channelID, userID bson.ObjectID) (string, error) {
+	var ch Channel
+	err := s.col.FindOne(ctx,
+		bson.M{"_id": channelID, "members.user_id": userID},
+		options.FindOne().SetProjection(bson.M{"kind": 1}),
+	).Decode(&ch)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return "", errNotMember
+	}
+	if err != nil {
+		return "", fmt.Errorf("reading channel kind: %w", err)
+	}
+	return ch.Kind, nil
 }

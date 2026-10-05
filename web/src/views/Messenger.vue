@@ -100,7 +100,10 @@ async function selectChannel(id) {
   activeId.value = id
   unread.value = { ...unread.value, [id]: 0 }
   hasOlder.value = true
-  messages.value = (await api.messages({ channel_id: id })).reverse()
+  const page = (await api.messages({ channel_id: id })).reverse()
+  // Clicked elsewhere while this was loading: the answer belongs to another chat.
+  if (activeId.value !== id) return
+  messages.value = page
   conversation.value?.toBottom()
 }
 
@@ -144,10 +147,15 @@ async function loadOlder() {
   if (loadingOlder.value || !hasOlder.value || !messages.value.length) return
   loadingOlder.value = true
 
+  const channelId = activeId.value
   const older = (await api.messages({
-    channel_id: activeId.value,
+    channel_id: channelId,
     before: messages.value[0].id,
   })).reverse()
+  if (activeId.value !== channelId) {
+    loadingOlder.value = false
+    return
+  }
 
   if (!older.length) hasOlder.value = false
   else {
@@ -177,8 +185,9 @@ async function findMessage(id) {
 async function deliver(entry) {
   entry.status = 'sending'
   try {
-    // A repeat carries the same client_msg_id, so it cannot store the message twice.
-    const channelId = activeId.value
+    // The chat it was written in, not the one open now. A repeat carries the
+    // same client_msg_id, so it cannot store the message twice.
+    const channelId = entry.channel_id
     const saved = await patiently(() => entry.sourceId
       ? api.forward(entry.sourceId, channelId, entry.client_msg_id)
       : api.send({
@@ -206,6 +215,9 @@ const PICTURES_PER_MESSAGE = 10
 // store them the other way round.
 async function send(text, attachments = []) {
   rearmTyping()
+  // Every part goes to the chat it was written in, even if another is opened
+  // while the earlier parts are still going out.
+  const channelId = activeId.value
   const action = pendingAction.value && pendingAction.value.channelId === activeId.value ? pendingAction.value : null
   if (action) pendingAction.value = null
   const forwarding = action && action.kind === 'forward'
@@ -218,6 +230,7 @@ async function send(text, attachments = []) {
 
   const entries = groups.map((group, i) => ({
     client_msg_id: crypto.randomUUID(),
+    channel_id: channelId,
     text: i === groups.length - 1 ? text : '',
     attachments: group,
     author: { id: props.me.id, username: props.me.username },
@@ -235,8 +248,8 @@ async function send(text, attachments = []) {
   for (const entry of queued) await deliver(entry)
 
   if (forwarding) {
-    queueForward(action.message)
-    conversation.value?.toBottom()
+    queueForward(action.message, channelId)
+    if (activeId.value === channelId) conversation.value?.toBottom()
   }
 }
 
@@ -278,9 +291,10 @@ async function pickForward(message, channelId) {
 // Goes through deliver() like any typed message, so it shows Sending and gets
 // Retry and Discard. The snapshot is filled in ahead so the bubble already reads
 // "Forwarded from"; the server's answer replaces it.
-function queueForward(message) {
-  messages.value = [...messages.value, {
+function queueForward(message, channelId) {
+  const entry = {
     client_msg_id: crypto.randomUUID(),
+    channel_id: channelId,
     sourceId: message.id,
     text: message.text,
     attachments: message.attachments,
@@ -288,7 +302,10 @@ function queueForward(message) {
     forwarded: message.forwarded || { author: message.author },
     created_at: new Date().toISOString(),
     status: 'sending',
-  }]
+  }
+  // Another chat is open by now: the forward still goes, just not on this screen.
+  if (activeId.value !== channelId) return deliver(entry)
+  messages.value = [...messages.value, entry]
   deliver(messages.value[messages.value.length - 1])
 }
 
@@ -503,7 +520,9 @@ const activePresence = computed(() => {
 
 // A socket that was down missed messages; the REST history is what fills the gap.
 async function backfill() {
-  const latest = await api.messages({ channel_id: activeId.value })
+  const channelId = activeId.value
+  const latest = await api.messages({ channel_id: channelId })
+  if (activeId.value !== channelId) return
   const have = new Set(messages.value.map((m) => m.id))
   const missing = latest.reverse().filter((m) => !have.has(m.id))
   if (missing.length) {
