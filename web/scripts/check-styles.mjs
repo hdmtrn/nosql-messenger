@@ -19,7 +19,7 @@ function files(dir, ext) {
 // Capitals by CSS or script, and the monospace voice that came with them.
 const banned = [
   [/uppercase|small-caps|toUpperCase/g, 'sets text in capitals; write it as it should read'],
-  [/--font-mono|--mono-tracking/g, 'uses the retired monospace tokens; the client sets everything in Archivo'],
+  [/--font-mono|--mono-tracking|JetBrains|jetbrains-mono/g, 'brings back the retired monospace font; the client sets everything in Archivo'],
 ]
 for (const file of files(src, ['.vue', '.css', '.js'])) {
   const text = readFileSync(file, 'utf8')
