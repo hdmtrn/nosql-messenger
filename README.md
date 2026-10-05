@@ -74,9 +74,14 @@ docker compose up -d --wait mongo redis
 a skipped test looks like a passed one. `-race` matters for the hub: concurrent access to it
 is exactly the kind of bug that reading the code does not find.
 
-CI runs four independent jobs on every push: `go vet`, a `gofmt` check and a check that the
-client styles nothing inline and sets nothing in capitals (`web/scripts/check-styles.mjs`), the short test run, the full
-run against a real MongoDB and Redis, and a throwaway Docker image build.
+Locally MongoDB and Redis run without passwords. CI sets `MONGO_ROOT_USERNAME`,
+`MONGO_ROOT_PASSWORD`, `MONGO_USERNAME`, `MONGO_PASSWORD` and `REDIS_PASSWORD`, and the same
+compose file then starts both with a login, the way production runs. Set them only for a
+fresh data volume: on an existing one the mongo image turns `--auth` on but creates no user,
+and nothing can log in.
+
+CI runs four independent jobs on every push: `go vet` plus a `gofmt` check, the short test
+run, the full run against a real MongoDB and Redis, and a throwaway Docker image build.
 
 ## Profiling and readiness
 

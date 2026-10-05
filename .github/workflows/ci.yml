@@ -58,6 +58,16 @@ jobs:
 
   integration:
     runs-on: ubuntu-latest
+    # Throwaway values for a throwaway database. With them both compose and the
+    # tests go through a login to MongoDB and a password to Redis, as in
+    # production, while locally both stay empty. root, because the tests create
+    # a database of their own each.
+    env:
+      MONGO_ROOT_USERNAME: root
+      MONGO_ROOT_PASSWORD: ci-mongo-root
+      MONGO_USERNAME: root
+      MONGO_PASSWORD: ci-mongo-root
+      REDIS_PASSWORD: ci-redis
     steps:
       - uses: actions/checkout@v4
 

@@ -25,7 +25,8 @@ func testPresence(t *testing.T) (*presence, string) {
 	}
 
 	ctx := context.Background()
-	rdb := redis.NewClient(&redis.Options{Addr: redisAddr()})
+	// The same options as the bus, so a password set for the run reaches here too.
+	rdb := redis.NewClient(redisOptions())
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		rdb.Close()
 		if os.Getenv("CI") != "" {
