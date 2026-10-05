@@ -30,10 +30,18 @@ function switchTo(next) {
 
 // Route by status, not by wording: "invalid username or password" names both
 // fields and belongs to neither in particular — it is the credential that failed.
-function place(message, status) {
+function place(message, status, retryAfter) {
+  if (status === 429) {
+    passwordError.value = `Too many attempts, try again in ${waitText(retryAfter)}`
+    return
+  }
   const text = `${message} (${status})`
   if (status === 409 || /^username/i.test(message)) usernameError.value = text
   else passwordError.value = text
+}
+
+function waitText(seconds) {
+  return seconds < 60 ? `${seconds} s` : `${Math.ceil(seconds / 60)} min`
 }
 
 async function submit() {
@@ -50,7 +58,7 @@ async function submit() {
     await api[registering.value ? 'register' : 'login'](username.value, password.value)
     emit('signed-in', await api.me())
   } catch (e) {
-    place(e.message, e.status)
+    place(e.message, e.status, e.retryAfter)
   } finally {
     busy.value = false
   }

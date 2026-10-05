@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { api } from '../api'
+import { api, patiently } from '../api'
 import { createSocket } from '../socket'
 import { avatarUrl, channelAvatarUrl, channelTitle, displayName, initials, rememberUser } from '../naming'
 import { takePendingInvite } from '../pending'
@@ -177,15 +177,17 @@ async function findMessage(id) {
 async function deliver(entry) {
   entry.status = 'sending'
   try {
-    const saved = entry.sourceId
-      ? await api.forward(entry.sourceId, activeId.value, entry.client_msg_id)
-      : await api.send({
-        channel_id: activeId.value,
+    // A repeat carries the same client_msg_id, so it cannot store the message twice.
+    const channelId = activeId.value
+    const saved = await patiently(() => entry.sourceId
+      ? api.forward(entry.sourceId, channelId, entry.client_msg_id)
+      : api.send({
+        channel_id: channelId,
         text: entry.text,
         client_msg_id: entry.client_msg_id,
         reply_to: entry.reply_to,
         attachments: (entry.attachments || []).map((a) => a.id),
-      })
+      }))
     Object.assign(entry, saved, { status: 'delivered' })
   } catch {
     entry.status = 'failed'

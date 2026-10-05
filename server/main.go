@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -84,7 +85,11 @@ func run(ctx context.Context) error {
 	}
 	go media.sweepExpired(ctx)
 
-	authSvc, err := newAuth(users, sessions)
+	// Behind the ALB only; see clientIP.
+	limits := newLimiter(os.Getenv("TRUST_PROXY") == "true")
+	defer limits.Close()
+
+	authSvc, err := newAuth(users, sessions, limits)
 	if err != nil {
 		return fmt.Errorf("initializing auth: %w", err)
 	}
@@ -118,6 +123,7 @@ func run(ctx context.Context) error {
 		messages: messages,
 		friends:  friends,
 		media:    media,
+		limits:   limits,
 	}
 
 	go srv.runPresence(ctx)
@@ -138,6 +144,7 @@ func run(ctx context.Context) error {
 	httpSrv := srv.httpServer(":8080")
 
 	log.Printf("cookies: Secure=%v (set COOKIE_SECURE=false for plain http)", secureCookies)
+	log.Printf("rate limits: TRUST_PROXY=%v (true only behind the ALB)", limits.trustProxy)
 	log.Println("listening on", httpSrv.Addr)
 
 	served := make(chan error, 1)

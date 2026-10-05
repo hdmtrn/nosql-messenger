@@ -41,6 +41,7 @@ type server struct {
 	messages *messageStore
 	friends  *friendStore
 	media    *mediaStore
+	limits   *limiter
 
 	// The socket handlers still running. Shutdown waits for them before it
 	// closes Redis and MongoDB, which they use until they return.

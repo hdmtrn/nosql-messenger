@@ -25,9 +25,25 @@ async function parse(res) {
   if (!res.ok) {
     throw Object.assign(new Error((data && data.error) || res.statusText), {
       status: res.status,
+      // Seconds until a 429 lifts, from the header the server sets with it.
+      retryAfter: Number(res.headers.get('Retry-After')) || 0,
     })
   }
   return data
+}
+
+// A send or an upload refused for coming too fast waits out the limit and goes
+// again: the message stays "Sending" rather than failing over a pause the server
+// itself names. A wait longer than a person would sit through fails as usual.
+export async function patiently(call, longest = 60) {
+  for (;;) {
+    try {
+      return await call()
+    } catch (e) {
+      if (e.status !== 429 || !e.retryAfter || e.retryAfter > longest) throw e
+      await new Promise((resolve) => setTimeout(resolve, e.retryAfter * 1000))
+    }
+  }
 }
 
 export const api = {

@@ -110,6 +110,9 @@ func (s *server) messageForMember(w http.ResponseWriter, r *http.Request, raw st
 }
 
 func (s *server) handleSendMessage(w http.ResponseWriter, r *http.Request, sess Session) {
+	if !s.limits.allow(w, r, limitMessages, sess.UserID.Hex()) {
+		return
+	}
 	var req sendMessageRequest
 	if !decodeJSON(w, r, &req) {
 		return
@@ -180,6 +183,9 @@ type forwardMessageRequest struct {
 // handleForwardMessage copies a message the caller can read into a channel the
 // caller is in. The text comes from the stored message, not from the request.
 func (s *server) handleForwardMessage(w http.ResponseWriter, r *http.Request, sess Session) {
+	if !s.limits.allow(w, r, limitMessages, sess.UserID.Hex()) {
+		return
+	}
 	var req forwardMessageRequest
 	if !decodeJSON(w, r, &req) {
 		return

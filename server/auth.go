@@ -67,9 +67,11 @@ type auth struct {
 	sem chan struct{}
 
 	dummyHash string
+
+	limits *limiter
 }
 
-func newAuth(users *userStore, sessions *sessionStore) (*auth, error) {
+func newAuth(users *userStore, sessions *sessionStore, limits *limiter) (*auth, error) {
 	dummy, err := hashPassword("placeholder-for-timing-equalization", defaultArgonParams)
 	if err != nil {
 		return nil, err
@@ -80,6 +82,7 @@ func newAuth(users *userStore, sessions *sessionStore) (*auth, error) {
 		params:    defaultArgonParams,
 		sem:       make(chan struct{}, hashConcurrency),
 		dummyHash: dummy,
+		limits:    limits,
 	}, nil
 }
 
@@ -144,6 +147,9 @@ func (a *auth) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if !a.limits.allow(w, r, limitRegisterIP, a.limits.clientIP(r)) {
+		return
+	}
 
 	release, ok := a.acquire()
 	if !ok {
@@ -184,6 +190,29 @@ func (a *auth) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// All three are settled before the password hash is, so a flood costs a
+	// Redis round trip and not the CPU of argon2.
+	ip := a.limits.clientIP(r)
+	if !a.limits.allow(w, r, limitLoginIP, ip) {
+		return
+	}
+	// Only a name that could exist is counted: any other string would be a key
+	// nobody can log in as, and a way to fill Redis with garbage.
+	name := normaliseUsername(req.Username)
+	counted := validateUsername(name) == nil
+	pair := name + "@" + ip
+	if counted {
+		for _, c := range []struct {
+			lim rateLimit
+			key string
+		}{{limitLoginPair, pair}, {limitLoginUser, name}} {
+			if wait, ok := a.limits.check(r.Context(), c.lim, c.key); !ok {
+				writeTooMany(w, wait)
+				return
+			}
+		}
+	}
+
 	u, err := a.users.GetByUsername(r.Context(), req.Username)
 	if err != nil && !errors.Is(err, errUserNotFound) {
 		log.Printf("looking up user: %v", err)
@@ -211,10 +240,17 @@ func (a *auth) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if u == nil || !match {
+		if counted {
+			a.limits.hit(r.Context(), limitLoginPair, pair)
+			a.limits.hit(r.Context(), limitLoginUser, name)
+		}
 		writeError(w, http.StatusUnauthorized, "invalid username or password")
 		return
 	}
 
+	// The owner got in from here, so the mistakes made here are forgiven. The
+	// count for the account stays: it is what holds a spread-out guess back.
+	a.limits.clear(r.Context(), limitLoginPair, pair)
 	a.respondWithToken(w, r, http.StatusOK, u)
 }
 
