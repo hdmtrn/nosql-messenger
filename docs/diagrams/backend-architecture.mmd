@@ -18,7 +18,7 @@ flowchart LR
   end
 
   subgraph handlers["Handlers — *_http.go, auth.go, health.go"]
-    hauth["handleRegister / handleLogin<br/>handleLogout / handleMe"]
+    hauth["handleRegister / handleLogin<br/>handleLogout / handleMe<br/>handleDeleteAccount"]
     husers["handleSearchUsers, handleGetUser,<br/>handleUpdateProfile, handleSetAvatar,<br/>handleDeleteAvatar, announceProfile"]
     hsess["handleListSessions<br/>handleRevokeSession"]
     hch["handleCreateChannel, handleListChannels,<br/>handleGetChannel, handleOpenDirect,<br/>handleLeaveChannel,<br/>handleChannelsInCommon,<br/>handleSetChannelAvatar"]

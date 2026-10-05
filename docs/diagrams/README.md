@@ -232,7 +232,7 @@ flowchart LR
   end
 
   subgraph handlers["Handlers — *_http.go, auth.go, health.go"]
-    hauth["handleRegister / handleLogin<br/>handleLogout / handleMe"]
+    hauth["handleRegister / handleLogin<br/>handleLogout / handleMe<br/>handleDeleteAccount"]
     husers["handleSearchUsers, handleGetUser,<br/>handleUpdateProfile, handleSetAvatar,<br/>handleDeleteAvatar, announceProfile"]
     hsess["handleListSessions<br/>handleRevokeSession"]
     hch["handleCreateChannel, handleListChannels,<br/>handleGetChannel, handleOpenDirect,<br/>handleLeaveChannel,<br/>handleChannelsInCommon,<br/>handleSetChannelAvatar"]
@@ -461,7 +461,7 @@ flowchart TD
 
   messenger -->|"/channels, /messages,<br/>/presence, /friends,<br/>/invites/{code}"| apijs
   info -->|"/channels/{id},<br/>/channels/{id}/invite,<br/>/channels/{id}/avatar"| apijs
-  profile -->|"/auth/me/profile,<br/>/auth/me/avatar,<br/>/auth/sessions"| apijs
+  profile -->|"/auth/me/profile,<br/>/auth/me/avatar,<br/>/auth/sessions,<br/>DELETE /auth/me"| apijs
   userp -->|"/users/{username}"| apijs
   rail -->|"/users?q="| apijs
   composer -->|"POST /media"| apijs
@@ -547,6 +547,7 @@ classDiagram
     +ObjectID AvatarID
     +time_Time CreatedAt
     +time_Time LastSeenAt
+    +time_Time DeletedAt
   }
 
   class Session {
@@ -816,16 +817,22 @@ Indexes, from the `ensureIndexes` method of each store:
 
 | Collection | Indexes |
 |---|---|
-| `users` | unique `username` |
+| `users` | unique `username`; sparse `erase_until` |
 | `sessions` | unique `token`; TTL on `expires_at` (`expireAfterSeconds: 0`); `user_id + _id` |
 | `channels` | `members.user_id + _id` (multikey); unique sparse `direct_key`; unique sparse `invite_code` |
-| `messages` | `channel_id + _id`; unique `channel_id + client_msg_id`, partial on `client_msg_id` existing |
+| `messages` | `channel_id + _id`; unique `channel_id + client_msg_id`, partial on `client_msg_id` existing; `author.id`; sparse `forwarded.author.id` |
 | `friend_requests` | `to.id + status + _id`; `from.id + status + _id`; unique `from.id + to.id`, partial on `status: 'pending'` |
 | `media` | partial on `expires_at`; `channel_id`; `file_id` |
 
 - **Denormalisation is one-directional.** `ChannelMember`, `MessageAuthor` and
-  `FriendParty` embed `username`, which never changes, and never `display_name` or
-  `avatar_id`, which do. That is the whole reason the `profile` event exists.
+  `FriendParty` embed `username`, which changes only once, when the account is deleted, and
+  never `display_name` or `avatar_id`, which do. That is the whole reason the `profile` event
+  exists.
+- `User.DeletedAt` marks a deleted account. The document stays under `deleted-{id}`, a name
+  registration refuses, so the messages it leaves in shared chats still have an author;
+  `renameAuthor` puts that name on them and on forwarded copies, through the `author.id`
+  indexes, before the old name is let go. `erase_until` exists only while an erasure is
+  unfinished, which is what makes its sparse index the purge loop's work list.
 - `Channel.DirectKey` is the sorted pair `"userA:userB"`, which turns "the conversation
   between these two" into a value the unique index can enforce. A direct channel can
   therefore never gain a third member — `AddMember` filters on `kind: 'channel'`.

@@ -52,10 +52,17 @@ export function avatarUrl(username) {
   return id ? `/media/${id}` : ''
 }
 
+export const DELETED_NAME = 'Deleted Account'
+
 // For answers that already carry the user: our own profile, search results.
+// A deleted account keeps its messages, and they read as from no one in particular.
 export function rememberUser(u) {
   if (!u || !u.username) return
   asked.add(u.username)
+  if (u.deleted) {
+    people.set(u.username, { name: DELETED_NAME, avatar: '' })
+    return
+  }
   people.set(u.username, { name: u.display_name || u.username, avatar: u.avatar_id || '' })
 }
 

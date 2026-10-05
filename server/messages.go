@@ -98,6 +98,15 @@ func (s *messageStore) ensureIndexes(ctx context.Context) error {
 		{
 			Keys: bson.D{{Key: "channel_id", Value: 1}, {Key: "_id", Value: 1}},
 		},
+		// Both serve renameAuthor, run once per deleted account. Without them
+		// that would be two scans of every message ever sent.
+		{
+			Keys: bson.D{{Key: "author.id", Value: 1}},
+		},
+		{
+			Keys:    bson.D{{Key: "forwarded.author.id", Value: 1}},
+			Options: options.Index().SetSparse(true),
+		},
 		{
 			// Partial rather than sparse: a sparse compound index takes any
 			// document holding one of its keys, and every message has a
@@ -237,4 +246,19 @@ func (s *messageStore) List(ctx context.Context, channelID bson.ObjectID, before
 		return nil, fmt.Errorf("decoding messages: %w", err)
 	}
 	return messages, nil
+}
+
+// renameAuthor puts a new name on everything a person wrote, forwarded copies
+// included. Messages carry the name rather than a reference, so this is how a
+// deleted account's messages stop pointing at its old name.
+func (s *messageStore) renameAuthor(ctx context.Context, id bson.ObjectID, name string) error {
+	for _, field := range []string{"author", "forwarded.author"} {
+		if _, err := s.col.UpdateMany(ctx,
+			bson.M{field + ".id": id, field + ".username": bson.M{"$ne": name}},
+			bson.M{"$set": bson.M{field + ".username": name}},
+		); err != nil {
+			return fmt.Errorf("renaming %s: %w", field, err)
+		}
+	}
+	return nil
 }

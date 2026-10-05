@@ -624,6 +624,7 @@ onUnmounted(() => {
         :me="me"
         @saved="emit('profile-changed')"
         @log-out="emit('log-out')"
+        @deleted="emit('log-out')"
       />
 
       <Conversation

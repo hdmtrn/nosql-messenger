@@ -600,3 +600,27 @@ func (s *channelStore) SharingAChannelWith(ctx context.Context, userID bson.Obje
 	}
 	return seen, nil
 }
+
+// memberOf lists every channel a person is in, direct conversations included.
+// Unlike channelsOf it reports a failure, since a deletion must not mistake one
+// for having nothing to leave.
+func (s *channelStore) memberOf(ctx context.Context, userID bson.ObjectID) ([]bson.ObjectID, error) {
+	cur, err := s.col.Find(ctx,
+		bson.M{"members.user_id": userID},
+		options.Find().SetProjection(bson.M{"_id": 1}),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("listing channels: %w", err)
+	}
+	var rows []struct {
+		ID bson.ObjectID `bson:"_id"`
+	}
+	if err := cur.All(ctx, &rows); err != nil {
+		return nil, fmt.Errorf("decoding channels: %w", err)
+	}
+	ids := make([]bson.ObjectID, len(rows))
+	for i, row := range rows {
+		ids[i] = row.ID
+	}
+	return ids, nil
+}

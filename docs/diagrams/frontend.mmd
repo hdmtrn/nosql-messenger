@@ -54,7 +54,7 @@ flowchart TD
 
   messenger -->|"/channels, /messages,<br/>/presence, /friends,<br/>/invites/{code}"| apijs
   info -->|"/channels/{id},<br/>/channels/{id}/invite,<br/>/channels/{id}/avatar"| apijs
-  profile -->|"/auth/me/profile,<br/>/auth/me/avatar,<br/>/auth/sessions"| apijs
+  profile -->|"/auth/me/profile,<br/>/auth/me/avatar,<br/>/auth/sessions,<br/>DELETE /auth/me"| apijs
   userp -->|"/users/{username}"| apijs
   rail -->|"/users?q="| apijs
   composer -->|"POST /media"| apijs

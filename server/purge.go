@@ -28,12 +28,16 @@ const (
 
 var errClaimLost = errors.New("another node took the channel over")
 
-// runPurge removes the channels Leave marked. It runs on every node: claims
-// keep two nodes off the same channel, so no round needs a leader.
+// runPurge removes the channels Leave marked and finishes the account erasures
+// a node left unfinished. It runs on every node: claims keep two nodes off the
+// same channel or account, so no round needs a leader.
 func (s *server) runPurge(ctx context.Context) {
 	runEvery(ctx, sweepStart(), purgeEvery, func(time.Time) {
 		if err := s.purgeDiscarded(ctx, s.presence.nodeID, purgeBatch); err != nil {
 			log.Printf("purge: %v", err)
+		}
+		if err := s.finishErasures(ctx, s.presence.nodeID); err != nil {
+			log.Printf("erasure: %v", err)
 		}
 	})
 }

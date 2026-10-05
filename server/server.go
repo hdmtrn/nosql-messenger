@@ -46,6 +46,10 @@ type server struct {
 	// The socket handlers still running. Shutdown waits for them before it
 	// closes Redis and MongoDB, which they use until they return.
 	sockets sync.WaitGroup
+
+	// Runs in an erasure between the first rename and the name going, for
+	// tests that need a send to land exactly there. Nil outside tests.
+	beforeFinishErasure func()
 }
 
 func (s *server) routes() http.Handler {
@@ -57,6 +61,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /auth/login", s.auth.handleLogin)
 	mux.HandleFunc("POST /auth/logout", s.auth.handleLogout)
 	mux.HandleFunc("GET /auth/me", s.auth.handleMe)
+	mux.HandleFunc("DELETE /auth/me", s.requireAuth(s.handleDeleteAccount))
 	mux.HandleFunc("POST /auth/me/profile", s.requireAuth(s.handleUpdateProfile))
 	mux.HandleFunc("POST /auth/me/avatar", s.requireAuth(s.handleSetAvatar))
 	mux.HandleFunc("DELETE /auth/me/avatar", s.requireAuth(s.handleDeleteAvatar))

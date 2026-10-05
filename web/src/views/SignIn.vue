@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref } from 'vue'
-import { api } from '../api'
+import { api, waitText } from '../api'
 import SgButton from '../components/SgButton.vue'
 import SgInput from '../components/SgInput.vue'
 import ChannelGlyph from '../components/ChannelGlyph.vue'
@@ -38,10 +38,6 @@ function place(message, status, retryAfter) {
   const text = `${message} (${status})`
   if (status === 409 || /^username/i.test(message)) usernameError.value = text
   else passwordError.value = text
-}
-
-function waitText(seconds) {
-  return seconds < 60 ? `${seconds} s` : `${Math.ceil(seconds / 60)} min`
 }
 
 async function submit() {

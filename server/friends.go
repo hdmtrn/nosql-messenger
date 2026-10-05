@@ -220,3 +220,16 @@ func (s *friendStore) FriendsAmong(ctx context.Context, userID bson.ObjectID, id
 	}
 	return friends, nil
 }
+
+// deleteAllOf removes every request a person sent or got, and with the accepted
+// ones every friendship: a friendship is an accepted request.
+func (s *friendStore) deleteAllOf(ctx context.Context, id bson.ObjectID) error {
+	_, err := s.col.DeleteMany(ctx, bson.M{"$or": bson.A{
+		bson.M{"from.id": id},
+		bson.M{"to.id": id},
+	}})
+	if err != nil {
+		return fmt.Errorf("deleting friend requests: %w", err)
+	}
+	return nil
+}
