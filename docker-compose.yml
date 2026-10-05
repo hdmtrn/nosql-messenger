@@ -2,6 +2,12 @@ services:
   mongo:
     image: mongo:8.0
     command: ["mongod", "--bind_ip_all"]
+    # Empty locally, so there is no login. CI sets them and runs the tests
+    # through the login production uses. The image creates the user, and turns
+    # --auth on, only on an empty data volume.
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-}
     # Loopback only: the database is not exposed, neither locally nor on the
     # instance. Admin access on the instance goes through an SSH tunnel.
     ports:
@@ -20,13 +26,17 @@ services:
     image: redis:8.0-alpine
     # No volume and no persistence: the bus carries only what may be lost on a
     # restart. Saving it to disk would buy nothing and cost writes.
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    # An empty --requirepass means no password, as locally; CI sets one.
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-}", "--save", "", "--appendonly", "no"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     # Loopback only, like mongo. Nothing outside the instance talks to it.
     ports:
       - "127.0.0.1:6379:6379"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      # -a only when a password is set: an empty one makes redis-cli complain.
+      test: ["CMD-SHELL", 'redis-cli --no-auth-warning $${REDIS_PASSWORD:+-a "$$REDIS_PASSWORD"} ping']
       interval: 5s
       timeout: 3s
       retries: 12
@@ -46,6 +56,9 @@ services:
     environment:
       MONGO_URI: "mongodb://mongo:27017"
       REDIS_ADDR: "redis:6379"
+      MONGO_USERNAME: ${MONGO_USERNAME:-}
+      MONGO_PASSWORD: ${MONGO_PASSWORD:-}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       # The code defaults to true, and the browser will not accept such a cookie
       # over http, so login would not work. On the instance with TLS the
       # variable is not set.

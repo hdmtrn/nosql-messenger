@@ -33,6 +33,12 @@ const (
 	publishTimeout = 2 * time.Second
 )
 
+// redisOptions connects with REDIS_PASSWORD when it is set; empty sends no
+// AUTH, as the local stack runs.
+func redisOptions() *redis.Options {
+	return &redis.Options{Addr: redisAddr(), Password: os.Getenv("REDIS_PASSWORD")}
+}
+
 func redisAddr() string {
 	if addr := os.Getenv("REDIS_ADDR"); addr != "" {
 		return addr
@@ -80,7 +86,7 @@ type bus struct {
 }
 
 func newBus(ctx context.Context, hub *Hub) (*bus, error) {
-	rdb := redis.NewClient(&redis.Options{Addr: redisAddr()})
+	rdb := redis.NewClient(redisOptions())
 
 	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
