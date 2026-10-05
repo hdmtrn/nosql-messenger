@@ -12,7 +12,7 @@ flowchart TD
 
   subgraph views["views/"]
     conv["Conversation.vue<br/>feed, scroll anchoring"]
-    info["InfoPanel.vue<br/>channel info, invites"]
+    info["InfoPanel.vue<br/>channel info, invite link"]
     profile["Profile.vue<br/>own profile, devices"]
     userp["UserPanel.vue<br/>another person"]
   end
@@ -53,7 +53,7 @@ flowchart TD
   bubble --> prims
 
   messenger -->|"/channels, /messages,<br/>/presence, /friends,<br/>/invites/{code}"| apijs
-  info -->|"/channels/{id},<br/>/channels/{id}/invites,<br/>/channels/{id}/avatar"| apijs
+  info -->|"/channels/{id},<br/>/channels/{id}/invite,<br/>/channels/{id}/avatar"| apijs
   profile -->|"/auth/me/profile,<br/>/auth/me/avatar,<br/>/auth/sessions"| apijs
   userp -->|"/users/{username}"| apijs
   rail -->|"/users?q="| apijs

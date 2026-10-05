@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"time"
 
@@ -77,9 +76,6 @@ func (s *server) purgeChannel(ctx context.Context, id bson.ObjectID, owner strin
 		if !held {
 			return errClaimLost
 		}
-	}
-	if _, err := s.invites.col.DeleteMany(ctx, bson.M{"channel_id": id}); err != nil {
-		return fmt.Errorf("deleting invites: %w", err)
 	}
 	if err := s.media.purgeChannel(ctx, id); err != nil {
 		return err

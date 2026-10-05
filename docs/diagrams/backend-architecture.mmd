@@ -2,7 +2,7 @@
 %% Sources: server/main.go, server/server.go, server/middleware.go, server/auth.go,
 %% server/ws.go, server/hub.go, server/bus.go, server/typing.go, server/presence.go,
 %% server/presence_nodes.go, server/*_http.go, server/users.go, server/sessions.go,
-%% server/channels.go, server/messages.go, server/friends.go, server/invites.go,
+%% server/channels.go, server/messages.go, server/friends.go, server/invites_http.go,
 %% server/media.go, server/mongo.go
 flowchart LR
   subgraph entry["Entry — main.go, server.go, middleware.go"]
@@ -22,7 +22,7 @@ flowchart LR
     husers["handleSearchUsers, handleGetUser,<br/>handleUpdateProfile, handleSetAvatar,<br/>handleDeleteAvatar, announceProfile"]
     hsess["handleListSessions<br/>handleRevokeSession"]
     hch["handleCreateChannel, handleListChannels,<br/>handleGetChannel, handleOpenDirect,<br/>handleLeaveChannel,<br/>handleChannelsInCommon,<br/>handleSetChannelAvatar"]
-    hinv["handleCreateInvite, handleListInvites,<br/>handleRevokeInvite, handleFollowInvite"]
+    hinv["handleGetInvite, handleResetInvite,<br/>handleFollowInvite"]
     hmsg["handleSendMessage,<br/>handleForwardMessage,<br/>handleListMessages,<br/>deliverMessage"]
     hfr["handleSendFriendRequest,<br/>handleListFriendRequests,<br/>handleAcceptFriendRequest,<br/>handleDeclineFriendRequest,<br/>handleListFriends"]
     hmedia["handleUploadMedia,<br/>handleGetMedia, saveUpload"]
@@ -63,7 +63,6 @@ flowchart LR
     cstore["channelStore — channels"]
     mstore["messageStore — messages"]
     fstore["friendStore — friend_requests"]
-    istore["inviteStore — invites"]
     mdstore["mediaStore — media, GridFS"]
   end
 
@@ -87,7 +86,6 @@ flowchart LR
   hsess --> sstore
   hch --> cstore
   hch -->|"Subscribe / Unsubscribe"| pubif
-  hinv --> istore
   hinv --> cstore
   hinv -->|"Subscribe"| pubif
   hmsg --> mstore
@@ -110,7 +108,7 @@ flowchart LR
   wire --> hub
   sstore -->|"onRevoked → PublishRevoked"| busrun
 
-  ustore & sstore & cstore & mstore & fstore & istore & mdstore --> mgo
+  ustore & sstore & cstore & mstore & fstore & mdstore --> mgo
   busrun --> rdb
   pres --> rdb
   mgo --> mongo

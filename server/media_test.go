@@ -625,7 +625,7 @@ func TestPurgeKeepsFilesThatForwardedCopiesStillUse(t *testing.T) {
 	ctx := context.Background()
 	db := testDB(t)
 	channels, messages := newMessageTestStores(t, db)
-	invites, media := newInviteStore(db), newMediaStore(db)
+	media := newMediaStore(db)
 	if err := media.ensureIndexes(ctx); err != nil {
 		t.Fatalf("media indexes: %v", err)
 	}
@@ -652,10 +652,10 @@ func TestPurgeKeepsFilesThatForwardedCopiesStillUse(t *testing.T) {
 	}
 	avatar := save(mediaKindAvatar, &doomed.ID)
 
-	if err := channels.Leave(ctx, invites, doomed.ID, alice.UserID); err != nil {
+	if err := channels.Leave(ctx, doomed.ID, alice.UserID); err != nil {
 		t.Fatalf("leaving: %v", err)
 	}
-	s := &server{channels: channels, messages: messages, invites: invites, media: media}
+	s := &server{channels: channels, messages: messages, media: media}
 	purgeMarked(t, s, doomed.ID)
 
 	fileExists := func(id bson.ObjectID) bool {

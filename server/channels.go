@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"log"
@@ -49,6 +50,10 @@ type Channel struct {
 	// between these two" a value the database can enforce as unique.
 	DirectKey string `bson:"direct_key,omitempty" json:"-"`
 
+	// InviteCode is the one link into a named channel. Resetting replaces it,
+	// so the old link stops working the moment the new one exists.
+	InviteCode string `bson:"invite_code,omitempty" json:"-"`
+
 	// DeletedAt is set by the last member leaving; the purge job removes the
 	// channel and its data once the mark is old enough.
 	DeletedAt *time.Time `bson:"deleted_at,omitempty" json:"-"`
@@ -79,6 +84,10 @@ func (s *channelStore) ensureIndexes(ctx context.Context) error {
 			Keys:    bson.D{{Key: "direct_key", Value: 1}},
 			Options: options.Index().SetUnique(true).SetSparse(true),
 		},
+		{
+			Keys:    bson.D{{Key: "invite_code", Value: 1}},
+			Options: options.Index().SetUnique(true).SetSparse(true),
+		},
 		// Serves the purge job's claim; only marked channels are in it.
 		{
 			Keys:    bson.D{{Key: "deleted_at", Value: 1}},
@@ -91,10 +100,11 @@ func (s *channelStore) ensureIndexes(ctx context.Context) error {
 func (s *channelStore) Create(ctx context.Context, name string, creator Session) (Channel, error) {
 	now := time.Now()
 	ch := Channel{
-		Kind:      channelKindNamed,
-		Name:      name,
-		CreatedBy: creator.UserID,
-		CreatedAt: now,
+		Kind:       channelKindNamed,
+		Name:       name,
+		CreatedBy:  creator.UserID,
+		CreatedAt:  now,
+		InviteCode: rand.Text(),
 		Members: []ChannelMember{{
 			UserID:   creator.UserID,
 			Username: creator.Username,
@@ -247,22 +257,93 @@ func (s *channelStore) whyNotAdded(ctx context.Context, channelID, userID bson.O
 	return errAlreadyMember
 }
 
-// KindForMember answers both questions the invite endpoints ask, in one read:
-// whether this person is inside the channel, and whether it is the sort of
-// channel that has invites at all.
-func (s *channelStore) KindForMember(ctx context.Context, channelID, userID bson.ObjectID) (string, error) {
+// InviteCode answers, in one read, the questions the link endpoint asks:
+// whether this person is inside the channel, whether it is the sort of channel
+// that has a link at all, and what the link is. Only a direct conversation is
+// refused: a third person in it would contradict its direct_key.
+func (s *channelStore) InviteCode(ctx context.Context, channelID, userID bson.ObjectID) (string, error) {
 	var ch Channel
 	err := s.col.FindOne(ctx,
 		bson.M{"_id": channelID, "members.user_id": userID},
-		options.FindOne().SetProjection(bson.M{"kind": 1}),
+		options.FindOne().SetProjection(bson.M{"kind": 1, "invite_code": 1}),
 	).Decode(&ch)
 	if errors.Is(err, mongo.ErrNoDocuments) {
 		return "", errNotMember
 	}
 	if err != nil {
-		return "", fmt.Errorf("reading channel kind: %w", err)
+		return "", fmt.Errorf("reading invite code: %w", err)
 	}
-	return ch.Kind, nil
+	if ch.Kind != channelKindNamed {
+		return "", errNotJoinable
+	}
+	if ch.InviteCode != "" {
+		return ch.InviteCode, nil
+	}
+	return s.giveInviteCode(ctx, channelID)
+}
+
+// giveInviteCode is for a channel made before the code lived on the channel.
+// $ifNull keeps a code another request set in the meantime, so two first
+// asks agree on one link instead of the second one silently replacing it.
+func (s *channelStore) giveInviteCode(ctx context.Context, channelID bson.ObjectID) (string, error) {
+	var ch Channel
+	err := s.col.FindOneAndUpdate(ctx,
+		bson.M{"_id": channelID},
+		mongo.Pipeline{{{Key: "$set", Value: bson.M{
+			"invite_code": bson.M{"$ifNull": bson.A{"$invite_code", rand.Text()}},
+		}}}},
+		options.FindOneAndUpdate().
+			SetReturnDocument(options.After).
+			SetProjection(bson.M{"invite_code": 1}),
+	).Decode(&ch)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return "", errChannelNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("giving an invite code: %w", err)
+	}
+	return ch.InviteCode, nil
+}
+
+// ResetInviteCode replaces the link with a new one. The owner check is in the
+// filter, as in SetAvatar, and a direct conversation has no owner, so it never
+// matches.
+func (s *channelStore) ResetInviteCode(ctx context.Context, channelID, ownerID bson.ObjectID) (string, error) {
+	var ch Channel
+	err := s.col.FindOneAndUpdate(ctx,
+		bson.M{
+			"_id":     channelID,
+			"members": bson.M{"$elemMatch": bson.M{"user_id": ownerID, "role": roleOwner}},
+		},
+		bson.M{"$set": bson.M{"invite_code": rand.Text()}},
+		options.FindOneAndUpdate().
+			SetReturnDocument(options.After).
+			SetProjection(bson.M{"invite_code": 1}),
+	).Decode(&ch)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return "", s.whyNotOwner(ctx, channelID, ownerID)
+	}
+	if err != nil {
+		return "", fmt.Errorf("resetting invite code: %w", err)
+	}
+	return ch.InviteCode, nil
+}
+
+// ByInviteCode is the channel a link leads to. A code that was reset is
+// simply not on any channel any more, the same as one that never existed.
+func (s *channelStore) ByInviteCode(ctx context.Context, code string) (bson.ObjectID, error) {
+	var ch Channel
+	err := s.col.FindOne(ctx,
+		bson.M{"invite_code": code},
+		options.FindOne().SetProjection(bson.M{"_id": 1}),
+	).Decode(&ch)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return bson.ObjectID{}, errChannelNotFound
+	}
+	if err != nil {
+		return bson.ObjectID{}, fmt.Errorf("looking up invite code: %w", err)
+	}
+	return ch.ID, nil
 }
 
 // SetAvatar is users.SetAvatar for a channel, with the owner check inside the
@@ -312,7 +393,7 @@ func (s *channelStore) whyNotOwner(ctx context.Context, channelID, userID bson.O
 // fate: the last one out marks it deleted. Nothing is deleted here; the purge
 // job does that once the mark is old enough. The mark has to come with the
 // emptying write, not after it, since it is what AddMember refuses.
-func (s *channelStore) Leave(ctx context.Context, invites *inviteStore, channelID, userID bson.ObjectID) error {
+func (s *channelStore) Leave(ctx context.Context, channelID, userID bson.ObjectID) error {
 	empty := bson.M{"$eq": bson.A{bson.M{"$size": "$members"}, 0}}
 	var ch Channel
 	err := s.col.FindOneAndUpdate(ctx,
@@ -339,13 +420,10 @@ func (s *channelStore) Leave(ctx context.Context, invites *inviteStore, channelI
 		return fmt.Errorf("leaving channel: %w", err)
 	}
 
+	// A marked channel keeps its code until the purge: AddMember refuses it,
+	// so the link already answers "not found".
 	if ch.DeletedAt == nil {
 		return s.ensureOwner(ctx, channelID)
-	}
-	// So that a link answers "not found" at once. Joining is refused either
-	// way, and the purge job deletes whatever is left.
-	if _, err := invites.col.DeleteMany(ctx, bson.M{"channel_id": channelID}); err != nil {
-		log.Printf("leaving channel %s: deleting invites: %v", channelID.Hex(), err)
 	}
 	return nil
 }

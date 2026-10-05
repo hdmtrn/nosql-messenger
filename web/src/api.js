@@ -39,10 +39,8 @@ export const api = {
   channels: (params) => request('GET', '/channels' + qs(params)),
   createChannel: (name) => request('POST', '/channels', { name }),
   followInvite: (code) => request('POST', `/invites/${encodeURIComponent(code)}`),
-  invites: (channelId) => request('GET', `/channels/${channelId}/invites`),
-  createInvite: (channelId) => request('POST', `/channels/${channelId}/invites`),
-  revokeInvite: (channelId, code) =>
-    request('DELETE', `/channels/${channelId}/invites/${encodeURIComponent(code)}`),
+  invite: (channelId) => request('GET', `/channels/${channelId}/invite`),
+  resetInvite: (channelId) => request('POST', `/channels/${channelId}/invite/reset`),
   openDirect: (username) => request('POST', '/channels/direct', { username }),
   channel: (id) => request('GET', `/channels/${id}`),
   channelsInCommon: (username) => request('GET', `/users/${encodeURIComponent(username)}/channels`),

@@ -62,7 +62,6 @@ func newPurgeFixture(t *testing.T) purgeFixture {
 	s := &server{
 		channels: newChannelStore(db),
 		messages: newMessageStore(db),
-		invites:  newInviteStore(db),
 		media:    newMediaStore(db),
 	}
 	if err := s.channels.ensureIndexes(context.Background()); err != nil {
@@ -93,7 +92,7 @@ func (f purgeFixture) marked(t *testing.T, name string, n int) (Channel, Media) 
 	if _, err := f.s.media.Attach(ctx, []bson.ObjectID{pic.ID}, f.alice.UserID, ch.ID); err != nil {
 		t.Fatalf("attaching: %v", err)
 	}
-	if err := f.s.channels.Leave(ctx, f.s.invites, ch.ID, f.alice.UserID); err != nil {
+	if err := f.s.channels.Leave(ctx, ch.ID, f.alice.UserID); err != nil {
 		t.Fatalf("leaving: %v", err)
 	}
 	return ch, pic
@@ -105,12 +104,9 @@ func TestPurgeRemovesAMarkedChannelWithEverythingInIt(t *testing.T) {
 	ch, pic := f.marked(t, "doomed", 5)
 
 	// What lands after the mark: a message that passed its membership check a
-	// moment before, and an invite Leave failed to delete.
+	// moment before.
 	if _, err := f.s.messages.Insert(ctx, Message{ChannelID: ch.ID, Author: authorOf(f.alice), Text: "late"}); err != nil {
 		t.Fatalf("inserting the late message: %v", err)
-	}
-	if _, err := f.s.invites.col.InsertOne(ctx, bson.M{"channel_id": ch.ID, "code": "stray"}); err != nil {
-		t.Fatalf("inserting the stray invite: %v", err)
 	}
 
 	ageMark(t, f.s.channels, ch.ID)
@@ -122,7 +118,7 @@ func TestPurgeRemovesAMarkedChannelWithEverythingInIt(t *testing.T) {
 	if n := countIn(t, f.s.channels.col, bson.M{"_id": ch.ID}); n != 0 {
 		t.Fatalf("the channel itself was not deleted")
 	}
-	for _, col := range []*mongo.Collection{f.s.messages.col, f.s.invites.col, f.s.media.col} {
+	for _, col := range []*mongo.Collection{f.s.messages.col, f.s.media.col} {
 		if n := countIn(t, col, bson.M{"channel_id": ch.ID}); n != 0 {
 			t.Fatalf("%d %s outlived the purge", n, col.Name())
 		}

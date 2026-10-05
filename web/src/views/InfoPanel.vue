@@ -4,6 +4,7 @@ import { api } from '../api'
 import ChannelGlyph from '../components/ChannelGlyph.vue'
 import SgAvatar from '../components/SgAvatar.vue'
 import SgButton from '../components/SgButton.vue'
+import SgDialog from '../components/SgDialog.vue'
 import MediaViewer from '../components/MediaViewer.vue'
 import { avatarUrl, channelAvatarUrl, displayName, initials } from '../naming'
 import { toJpeg } from '../images'
@@ -19,7 +20,7 @@ const emit = defineEmits(['close', 'leave', 'select', 'person', 'changed'])
 const direct = () => props.channel.kind === 'direct'
 
 const members = ref([])
-const invites = ref([])
+const inviteCode = ref('')
 const person = ref(null)
 const common = ref([])
 
@@ -31,7 +32,8 @@ let asked = 0
 async function load() {
   const mine = ++asked
   members.value = []
-  invites.value = []
+  inviteCode.value = ''
+  inviteError.value = ''
   person.value = null
   common.value = []
 
@@ -44,46 +46,38 @@ async function load() {
     person.value = who
     common.value = shared
   } else {
-    const [full, codes] = await Promise.all([
+    const [full, link] = await Promise.all([
       api.channel(props.channel.id).catch(() => null),
-      api.invites(props.channel.id).catch(() => []),
+      api.invite(props.channel.id).catch(() => null),
     ])
     if (mine !== asked) return
     members.value = full ? full.members || [] : []
-    invites.value = codes
+    inviteCode.value = link ? link.code : ''
   }
 }
 
-const copiedCode = ref('')
+const copied = ref(false)
 
-function made(iso) {
-  return new Date(iso).toLocaleDateString([], { day: 'numeric', month: 'short' })
+function copyLink() {
+  navigator.clipboard.writeText(inviteLink(inviteCode.value))
+  copied.value = true
+  setTimeout(() => (copied.value = false), 1500)
 }
 
-function copy(code) {
-  navigator.clipboard.writeText(inviteLink(code))
-  copiedCode.value = code
-  setTimeout(() => (copiedCode.value = ''), 1500)
-}
-
-// The server caps invites at the number this list shows, so New can legitimately
-// refuse. A button that does nothing and says nothing is worse than the cap.
+// A reset cannot be undone: everyone holding the old link is shut out of it.
+const confirmReset = ref(false)
 const inviteError = ref('')
 
-async function newInvite() {
+async function resetLink() {
+  confirmReset.value = false
   inviteError.value = ''
+  const mine = asked
   try {
-    await api.createInvite(props.channel.id)
+    const link = await api.resetInvite(props.channel.id)
+    if (mine === asked) inviteCode.value = link.code
   } catch (e) {
-    inviteError.value = e.message
+    if (mine === asked) inviteError.value = e.message
   }
-  invites.value = await api.invites(props.channel.id).catch(() => [])
-}
-
-async function revoke(code) {
-  inviteError.value = ''
-  await api.revokeInvite(props.channel.id, code).catch(() => null)
-  invites.value = await api.invites(props.channel.id).catch(() => [])
 }
 
 watch(() => props.channel.id, load, { immediate: true })
@@ -181,21 +175,14 @@ async function removeAvatar() {
     </template>
 
     <template v-else>
-      <div class="section-row">
-        <span class="label grow-only">Invites</span>
-        <SgButton variant="outline" size="sm" @click="newInvite">New</SgButton>
-      </div>
-      <div class="card invites">
-        <p v-if="inviteError" class="label note error">
-          {{ inviteError }}
-        </p>
-        <p v-if="!invites.length" class="label note">None</p>
-        <div v-for="i in invites" :key="i.code" class="invite">
-          <SgButton variant="outline" size="sm" @click="copy(i.code)">
-            {{ copiedCode === i.code ? 'Copied' : 'Copy invite link' }}
+      <span class="label section">Invite link</span>
+      <div class="card invite">
+        <p v-if="inviteError" class="label note error">{{ inviteError }}</p>
+        <div class="invite-actions">
+          <SgButton variant="outline" size="sm" :disabled="!inviteCode" @click="copyLink">
+            {{ copied ? 'Copied' : 'Copy invite link' }}
           </SgButton>
-          <span class="label grow-only">{{ made(i.created_at) }}</span>
-          <SgButton variant="mutedText" @click="revoke(i.code)">Revoke</SgButton>
+          <SgButton v-if="isOwner" variant="mutedText" @click="confirmReset = true">Reset link</SgButton>
         </div>
       </div>
 
@@ -215,6 +202,19 @@ async function removeAvatar() {
         <button type="button" class="row clickable body leave"
                 @click="emit('leave')">Leave channel</button>
       </div>
+
+      <!-- The stage is a size container, which would pin a fixed dialog to it. -->
+      <Teleport to="body">
+        <SgDialog v-if="confirmReset" title="Reset invite link?" @close="confirmReset = false">
+          <p class="dialog-text">
+            The current link stops working, and nobody can join with it any more. Members get the new one here.
+          </p>
+          <div class="dialog-actions">
+            <SgButton variant="danger" @click="resetLink">Reset</SgButton>
+            <SgButton variant="outline" @click="confirmReset = false">Cancel</SgButton>
+          </div>
+        </SgDialog>
+      </Teleport>
     </template>
   </aside>
 </template>
@@ -272,21 +272,26 @@ async function removeAvatar() {
 .note { margin: 0; }
 .error { color: var(--status-error); }
 .section { padding: 0 24px; }
-.section-row {
-  display: flex;
-  align-items: center;
-  padding: 0 24px;
-}
 .list { padding: 4px 0; }
-.invites {
+.invite {
   padding: 12px 24px;
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
-.invite {
+.invite-actions {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.dialog-text {
+  margin: 0;
+  font: var(--text-body);
+  color: var(--text-muted);
+}
+.dialog-actions {
+  display: flex;
   gap: 12px;
 }
 .row {
@@ -309,7 +314,6 @@ async function removeAvatar() {
   flex: 1;
   text-align: left;
 }
-.grow-only { flex: 1; }
 .avatar {
   padding: 0;
   border: none;
