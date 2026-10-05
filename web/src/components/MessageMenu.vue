@@ -30,17 +30,14 @@ const top = Math.min(props.y, window.innerHeight - HEIGHT - MARGIN)
 
 // The chat list unfolds beside the Forward row: to the right when it fits,
 // otherwise to the left, and lifted when it would run past the bottom.
-const subStyle = computed(() => {
+const sub = computed(() => {
   const height = Math.min(props.targets.length * ROW + 16, SUB_MAX)
   // Forward is the third row: 8px padding plus two 44px rows and their 2px gaps.
   const rowTop = 100
   const shift = Math.min(0, window.innerHeight - MARGIN - (top + rowTop + height))
-  const fitsRight = left + WIDTH + GAP + SUB_WIDTH <= window.innerWidth - MARGIN
   return {
-    top: rowTop + shift + 'px',
-    width: SUB_WIDTH + 'px',
-    maxHeight: SUB_MAX + 'px',
-    ...(fitsRight ? { left: WIDTH + GAP + 'px' } : { right: WIDTH + GAP + 'px' }),
+    top: rowTop + shift,
+    right: left + WIDTH + GAP + SUB_WIDTH <= window.innerWidth - MARGIN,
   }
 })
 
@@ -77,8 +74,8 @@ onUnmounted(() => {
 
 <template>
   <Teleport to="body">
-    <div ref="root" class="anchor" :style="{ left: left + 'px', top: top + 'px' }">
-      <div role="menu" class="panel" :style="{ width: WIDTH + 'px' }">
+    <div ref="root" class="anchor" :style="{ '--left': left + 'px', '--top': top + 'px' }">
+      <div role="menu" class="panel main">
         <button type="button" role="menuitem" class="item"
                 @mouseenter="subOpen = false" @click="emit('reply')">Reply</button>
         <button type="button" role="menuitem" class="item"
@@ -86,12 +83,13 @@ onUnmounted(() => {
         <button type="button" role="menuitem" class="item" :class="{ open: subOpen }"
                 aria-haspopup="menu" :aria-expanded="subOpen"
                 @mouseenter="subOpen = true" @click="openSub" @keydown.right.prevent="openSub">
-          <span style="flex:1">Forward</span>
+          <span class="grow">Forward</span>
           <span aria-hidden="true">›</span>
         </button>
       </div>
 
-      <div v-if="subOpen" role="menu" aria-label="Forward to" class="panel sub" :style="subStyle"
+      <div v-if="subOpen" role="menu" aria-label="Forward to" class="panel sub"
+           :class="sub.right ? 'to-right' : 'to-left'" :style="{ '--sub-top': sub.top + 'px' }"
            @keydown.left.prevent="subOpen = false">
         <p v-if="!targets.length" class="note">No other chats</p>
         <button v-for="t in targets" :key="t.id" type="button" role="menuitem" class="item"
@@ -106,10 +104,15 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+/* WIDTH, SUB_WIDTH and SUB_MAX above are the same numbers: the script needs
+   them to fit the menu inside the window. */
 .anchor {
   position: fixed;
+  left: var(--left);
+  top: var(--top);
   z-index: 20;
 }
+.main { width: 220px; }
 .panel {
   position: relative;
   box-sizing: border-box;
@@ -122,8 +125,14 @@ onUnmounted(() => {
 }
 .sub {
   position: absolute;
+  top: var(--sub-top);
+  width: 260px;
+  max-height: 340px;
   overflow-y: auto;
 }
+.to-right { left: 228px; }
+.to-left { right: 228px; }
+.grow { flex: 1; }
 .item {
   display: flex;
   flex: none;

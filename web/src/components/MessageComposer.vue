@@ -155,7 +155,7 @@ function send() {
 </script>
 
 <template>
-  <div style="position:relative;padding:16px 28px 20px"
+  <div class="message-composer"
        @dragover.prevent @drop.prevent="addFiles($event.dataTransfer.files)">
     <slot />
     <SendFilesDialog
@@ -169,16 +169,8 @@ function send() {
       @add="addFiles"
       @send="sendFiles"
     />
-    <div style="display:flex;align-items:center;gap:16px">
-      <div
-        :style="{ flex: 1, display: 'flex', alignItems: 'center', gap: '12px', height: '48px',
-                  /* Without this the field keeps the text input's intrinsic width as its
-                     floor and pushes Send out of the row on a narrow pane. */
-                  minWidth: 0,
-                  padding: '0 24px 0 12px',
-                  background: 'var(--surface-sunken)', borderRadius: 'var(--radius-pill)',
-                  boxShadow: focused ? 'inset 0 0 0 2px var(--border-active)' : 'none' }"
-      >
+    <div class="controls">
+      <div class="field" :class="{ focused }">
         <button type="button" class="attach" aria-label="Attach pictures" title="Attach pictures"
                 :disabled="disabled" @click="picker.click()">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -194,8 +186,7 @@ function send() {
           :disabled="disabled"
           :placeholder="placeholder"
           :maxlength="maxLength"
-          style="flex:1;min-width:0;border:none;outline:none;background:transparent;
-                 font:var(--text-body);color:var(--text-primary)"
+          class="text"
           @focus="focused = true"
           @blur="focused = false"
           @paste="paste"
@@ -206,12 +197,8 @@ function send() {
       <button
         type="button"
         :disabled="!canSend"
-        :style="{ height: '48px', padding: '0 26px', border: 'none',
-                  cursor: disabled || uploading ? 'not-allowed' : 'pointer', borderRadius: 'var(--radius-pill)',
-                  background: disabled || uploading || broken ? 'var(--text-muted)' : 'var(--surface-accent)',
-                  color: '#fff',
-                  font: 'var(--text-machine-11)', textTransform: 'uppercase',
-                  letterSpacing: 'var(--mono-tracking)' }"
+        class="send"
+        :class="{ blocked: disabled || uploading, dimmed: disabled || uploading || broken }"
         @click="send"
       >Send</button>
     </div>
@@ -219,6 +206,50 @@ function send() {
 </template>
 
 <style scoped>
+.message-composer {
+  position: relative;
+  padding: 16px 28px 20px;
+}
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.field {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 48px;
+  /* Without this the field keeps the text input's intrinsic width as its floor
+     and pushes Send out of the row on a narrow pane. */
+  min-width: 0;
+  padding: 0 24px 0 12px;
+  background: var(--surface-sunken);
+  border-radius: var(--radius-pill);
+}
+.field.focused { box-shadow: inset 0 0 0 2px var(--border-active); }
+.text {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font: var(--text-body);
+  color: var(--text-primary);
+}
+.send {
+  height: 48px;
+  padding: 0 26px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--surface-accent);
+  color: #fff;
+  font: var(--text-label);
+  cursor: pointer;
+}
+.send.blocked { cursor: not-allowed; }
+.send.dimmed { background: var(--text-muted); }
 .attach {
   display: flex;
   flex: none;
