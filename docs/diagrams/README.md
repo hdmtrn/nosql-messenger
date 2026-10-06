@@ -207,7 +207,10 @@ flowchart LR
 
 - The Go process serves the built frontend itself: `GET /` falls through to `serveWeb`,
   which returns `web/dist/index.html` for any path that is not a file on disk, because
-  `/invite/{code}` is a client-side route.
+  `/invite/{code}` is a client-side route. The page goes out with `Cache-Control:
+  no-cache` and is revalidated on every load, so the first load after a deploy names the
+  new bundle. Files under `/assets/` carry a hash of their content in the name and are
+  cached for a year as `immutable`; one that is not on disk is a 404, not the page.
 - The dashed edges to instance 2 are dashed for a reason: nothing routes a client there.
   A second browser is pointed at `http://localhost:8081` by hand. In dev, Vite proxies
   everything to `:8080` only (`web/vite.config.js`).

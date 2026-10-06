@@ -4,23 +4,46 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/redis/go-redis/v9"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
-const webRoot = "web/dist"
+const (
+	webRoot = "web/dist"
+	// Where Vite puts the bundle. Every name there carries a hash of the
+	// file's content, so a name never changes what it holds.
+	assetsPrefix = "/assets/"
+)
 
 // serveWeb hands back the built page for any path that is not a file, because
 // an invite link is a client-side route: /invite/CODE exists in the app, not
 // on disk, and a file server would answer it with 404.
+//
+// The page is revalidated on every load, so the first load after a deploy
+// gets the page that names the new bundle. The bundle is cached for a year,
+// and a bundle file that is not here is a 404 rather than the page: a page
+// that names an old bundle, served the page in place of its script, could
+// only stay blank.
 func serveWeb(w http.ResponseWriter, r *http.Request) {
 	path := filepath.Join(webRoot, filepath.Clean(r.URL.Path))
+	asset := strings.HasPrefix(r.URL.Path, assetsPrefix)
 	if info, err := os.Stat(path); err == nil && !info.IsDir() {
+		if asset {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
 		http.ServeFile(w, r, path)
 		return
 	}
+	if asset {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-cache")
 	http.ServeFile(w, r, filepath.Join(webRoot, "index.html"))
 }
 
