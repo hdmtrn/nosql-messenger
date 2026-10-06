@@ -1,12 +1,18 @@
 import { reactive } from 'vue'
 import { api } from './api'
 
+// The other member of a direct channel, or null once that account is deleted:
+// erasing an account takes it out of every conversation it was in.
+export function otherMember(channel, meId) {
+  return (channel?.members || []).find((m) => m.user_id !== meId) || null
+}
+
 // A direct channel has no name of its own: it is displayed as the other person.
 export function channelTitle(channel, meId) {
   if (!channel) return ''
   if (channel.kind !== 'direct') return channel.name
-  const other = (channel.members || []).find((m) => m.user_id !== meId)
-  return other ? other.username : 'Direct message'
+  const other = otherMember(channel, meId)
+  return other ? other.username : DELETED_NAME
 }
 
 // Unlike a person's, a channel's picture id comes with the channel itself.
@@ -53,6 +59,10 @@ export function avatarUrl(username) {
 }
 
 export const DELETED_NAME = 'Deleted Account'
+// It stands as the title of a conversation whose other side is gone, and names
+// nobody to look up: no username has a space in it.
+people.set(DELETED_NAME, { name: DELETED_NAME, avatar: '' })
+asked.add(DELETED_NAME)
 
 // For answers that already carry the user: our own profile, search results.
 // A deleted account keeps its messages, and they read as from no one in particular.

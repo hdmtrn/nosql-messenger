@@ -8,7 +8,7 @@ import MessageText from '../components/MessageText.vue'
 import SgAvatar from '../components/SgAvatar.vue'
 import ChannelGlyph from '../components/ChannelGlyph.vue'
 import MediaViewer from '../components/MediaViewer.vue'
-import { avatarUrl, channelAvatarUrl, displayName, initials, messagePreview } from '../naming'
+import { avatarUrl, channelAvatarUrl, displayName, initials, messagePreview, otherMember } from '../naming'
 
 const props = defineProps({
   me: { type: Object, required: true },
@@ -235,7 +235,7 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
   <section class="conversation">
     <PaneHeader
       :title="direct() ? displayName(title) : title"
-      :subtitle="typingLine || presenceLine || (direct() ? '@' + title
+      :subtitle="typingLine || presenceLine || (direct() ? (otherMember(channel, me.id) ? '@' + title : '')
                           : channel.member_count + (channel.member_count === 1 ? ' member' : ' members'))"
       :subtitle-accent="!!typingLine || presence?.online === true"
       :open="infoOpen"

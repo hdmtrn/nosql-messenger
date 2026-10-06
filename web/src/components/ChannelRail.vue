@@ -3,7 +3,7 @@ import { computed, onUnmounted, ref, watch } from 'vue'
 import ChannelRow from './ChannelRow.vue'
 import SgAvatar from './SgAvatar.vue'
 import SgButton from './SgButton.vue'
-import { avatarUrl, channelAvatarUrl, channelTitle, displayName, initials, rememberUser } from '../naming'
+import { DELETED_NAME, avatarUrl, channelAvatarUrl, displayName, initials, otherMember, rememberUser } from '../naming'
 import { api } from '../api'
 
 const props = defineProps({
@@ -80,18 +80,24 @@ const named = computed(() => props.channels.filter((c) => c.kind !== 'direct'))
 // ends a friendship, not what was written.
 const conversations = computed(() => {
   const byUsername = new Map()
+  // A conversation whose other side deleted the account has nobody to be keyed
+  // by, so each is its own row, under its channel id.
+  const gone = []
   for (const c of props.channels.filter((c) => c.kind === 'direct')) {
-    byUsername.set(channelTitle(c, props.me.id), c)
+    const other = otherMember(c, props.me.id)
+    if (other) byUsername.set(other.username, c)
+    else gone.push({ key: c.id, username: DELETED_NAME, channel: c })
   }
   const rows = props.friends.map((f) => ({
+    key: f.username,
     username: f.username,
     channel: byUsername.get(f.username) || null,
   }))
   const listed = new Set(rows.map((r) => r.username))
   for (const [username, channel] of byUsername) {
-    if (!listed.has(username)) rows.push({ username, channel })
+    if (!listed.has(username)) rows.push({ key: username, username, channel })
   }
-  return rows
+  return rows.concat(gone)
 })
 
 const isFriend = (username) => props.friends.some((f) => f.username === username)
@@ -179,7 +185,7 @@ const isPending = (username) => props.sentTo.includes(username)
         <div class="group-gap"><div class="divider" /></div>
         <ChannelRow
           v-for="d in conversations"
-          :key="d.username"
+          :key="d.key"
           :name="displayName(d.username)"
           :avatar="initials(displayName(d.username))"
           :avatar-src="avatarUrl(d.username)"
