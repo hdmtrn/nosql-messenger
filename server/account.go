@@ -101,6 +101,9 @@ func (s *server) eraseAccount(ctx context.Context, id bson.ObjectID, owner strin
 	if err := s.friends.deleteAllOf(ctx, id); err != nil {
 		return err
 	}
+	if err := s.reads.deleteFor(ctx, bson.M{"user_id": id}); err != nil {
+		return err
+	}
 	if u.AvatarID != nil {
 		if err := s.media.Delete(ctx, *u.AvatarID); err != nil && !errors.Is(err, errMediaNotFound) {
 			return err

@@ -323,3 +323,13 @@ func (s *sessionStore) sweepCache(ctx context.Context) {
 		}
 	}
 }
+
+// exists asks the database, not the cache, whether a session is still there:
+// for when this node may have missed the event that revoked it.
+func (s *sessionStore) exists(ctx context.Context, id bson.ObjectID) (bool, error) {
+	n, err := s.col.CountDocuments(ctx, bson.M{"_id": id}, options.Count().SetLimit(1))
+	if err != nil {
+		return false, fmt.Errorf("checking a session: %w", err)
+	}
+	return n == 1, nil
+}

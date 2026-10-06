@@ -19,7 +19,14 @@ const emit = defineEmits(['log-out', 'profile-changed', 'session-ended'])
 const channels = ref([])
 const activeId = ref(null)
 const messages = ref([])
-const unread = ref({})
+// Every message has a number in its channel. What is unread is the newest number
+// minus how far this person has read, both kept on the server, so a jump in the
+// numbers counts the messages that never reached this tab too.
+const lastSeq = ref({})
+const readSeq = ref({})
+const unread = computed(() => Object.fromEntries(
+  Object.keys(lastSeq.value).map((id) => [id, Math.max(0, lastSeq.value[id] - (readSeq.value[id] || 0))])
+))
 const friends = ref([])
 const requests = ref([])
 const sentTo = ref([])
@@ -92,19 +99,28 @@ watch([activeId, showProfile, showInfo, person], () => {
 
 async function loadChannels() {
   channels.value = await api.channels()
+  // Max, not overwrite: a message may have arrived while the list was on its way.
+  const last = { ...lastSeq.value }
+  const read = { ...readSeq.value }
+  for (const c of channels.value) {
+    last[c.id] = Math.max(last[c.id] || 0, c.last_seq || 0)
+    read[c.id] = Math.max(read[c.id] || 0, c.read_seq || 0)
+  }
+  lastSeq.value = last
+  readSeq.value = read
 }
 
 async function selectChannel(id) {
   if (pendingAction.value && pendingAction.value.channelId !== id) pendingAction.value = null
   showProfile.value = false
   activeId.value = id
-  unread.value = { ...unread.value, [id]: 0 }
   hasOlder.value = true
   const page = (await api.messages({ channel_id: id })).reverse()
   // Clicked elsewhere while this was loading: the answer belongs to another chat.
   if (activeId.value !== id) return
   messages.value = page
   conversation.value?.toBottom()
+  markRead()
 }
 
 async function runDialog(action) {
@@ -148,10 +164,12 @@ async function loadOlder() {
   loadingOlder.value = true
 
   const channelId = activeId.value
-  const older = (await api.messages({
-    channel_id: channelId,
-    before: messages.value[0].id,
-  })).reverse()
+  const oldest = messages.value.find((m) => m.seq)?.seq
+  if (!oldest) {
+    loadingOlder.value = false
+    return
+  }
+  const older = (await api.messages({ channel_id: channelId, before_seq: oldest })).reverse()
   if (activeId.value !== channelId) {
     loadingOlder.value = false
     return
@@ -394,16 +412,28 @@ function receive(msg) {
   // The message is what the typing was for.
   forgetTyping(msg.channel_id, msg.author.id)
   if (!channels.value.some((c) => c.id === msg.channel_id)) catchUpChannels()
-  if (msg.channel_id !== activeId.value) {
-    unread.value = { ...unread.value, [msg.channel_id]: (unread.value[msg.channel_id] || 0) + 1 }
-    return
+  const ch = msg.channel_id
+  lastSeq.value = { ...lastSeq.value, [ch]: Math.max(lastSeq.value[ch] || 0, msg.seq || 0) }
+  // What we wrote ourselves, from this tab or another, is read.
+  if (msg.author.id === props.me.id) {
+    readSeq.value = { ...readSeq.value, [ch]: Math.max(readSeq.value[ch] || 0, msg.seq || 0) }
   }
+  if (ch !== activeId.value) return
+
   const known = messages.value.some(
     (m) => m.id === msg.id || (msg.client_msg_id && m.client_msg_id === msg.client_msg_id)
   )
   if (known) return
-  messages.value = [...messages.value, { ...msg, status: 'delivered' }]
+  // A number further on than the next one means some never arrived: fetch them
+  // with this one rather than show it after a hole.
+  const newest = newestSeq()
+  if (newest && msg.seq > newest + 1) {
+    catchUp()
+    return
+  }
+  messages.value = inOrder([...messages.value, { ...msg, status: 'delivered' }])
   conversation.value?.toBottom()
+  markRead()
 }
 
 /* ---------- typing ---------- */
@@ -526,47 +556,58 @@ const activePresence = computed(() => {
 })
 
 // A socket that was down missed messages; the REST history is what fills the gap.
-// Ids made on two nodes within one second are not in the order they were written,
-// so the first request starts this many seconds before the newest message known.
-const CATCH_UP_OVERLAP = 5
 const CATCH_UP_PAGE = 100
 
-// An id made that many seconds earlier with nothing after the timestamp: every
-// id of that second and later sorts above it.
-function idSecondsBefore(id, seconds) {
-  const t = parseInt(id.slice(0, 8), 16) - seconds
-  return t.toString(16).padStart(8, '0') + '0'.repeat(16)
+// The newest number among the messages the open chat has from the server.
+function newestSeq() {
+  return messages.value.reduce((n, m) => Math.max(n, m.seq || 0), 0)
 }
 
-// What the open chat missed while the socket was away, or while the server's bus
-// was: everything after the newest message it has, page by page. The server sends
-// "ready" on every connection and "resync" after its bus reconnected.
+// Saved messages in number order, then the ones still on their way, as they were.
+function inOrder(list) {
+  const saved = list.filter((m) => m.seq).sort((a, b) => a.seq - b.seq)
+  return [...saved, ...list.filter((m) => !m.seq)]
+}
+
 async function catchUp() {
   const channelId = activeId.value
   if (!channelId) return
-  const newest = messages.value.findLast((m) => m.id)?.id
-  if (!newest) return selectChannel(channelId)
+  let after = newestSeq()
+  if (!after) return selectChannel(channelId)
 
   const found = []
-  let after = idSecondsBefore(newest, CATCH_UP_OVERLAP)
   for (;;) {
-    const page = await api.messages({ channel_id: channelId, after, limit: CATCH_UP_PAGE })
+    const page = await api.messages({ channel_id: channelId, after_seq: after, limit: CATCH_UP_PAGE })
     if (activeId.value !== channelId) return
     found.push(...page)
     if (page.length < CATCH_UP_PAGE) break
-    after = page[page.length - 1].id
+    after = page[page.length - 1].seq
   }
 
   const known = (msg) => messages.value.some(
     (m) => m.id === msg.id || (msg.client_msg_id && m.client_msg_id === msg.client_msg_id)
   )
   const fresh = found.filter((m) => !known(m)).map((m) => ({ ...m, status: 'delivered' }))
-  if (!fresh.length) return
-  // Saved messages in id order, then the ones still on their way, as they were.
-  const saved = [...messages.value.filter((m) => m.id), ...fresh]
-    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-  messages.value = [...saved, ...messages.value.filter((m) => !m.id)]
-  conversation.value?.toBottom()
+  if (fresh.length) {
+    messages.value = inOrder([...messages.value, ...fresh])
+    conversation.value?.toBottom()
+  }
+  markRead()
+}
+
+// Tells the server how far the open chat has been read: only while the page is
+// in front of the person, and once a second at most.
+let readTimer = null
+function markRead() {
+  const channelId = activeId.value
+  const seq = newestSeq()
+  if (!channelId || !seq || document.visibilityState !== 'visible') return
+  if (seq <= (readSeq.value[channelId] || 0)) return
+  readSeq.value = { ...readSeq.value, [channelId]: seq }
+  clearTimeout(readTimer)
+  readTimer = setTimeout(() => {
+    api.markRead(channelId, readSeq.value[channelId]).catch(() => {})
+  }, 1000)
 }
 
 // Friends and their conversations are the same list in the rail, so both are
@@ -614,7 +655,13 @@ async function respond(id, action) {
   loadPeople()
 }
 
+// Messages that came while the page was behind another are read once it is back.
+function onVisible() {
+  if (document.visibilityState === 'visible') markRead()
+}
+
 onMounted(async () => {
+  document.addEventListener('visibilitychange', onVisible)
   paneFromUrl()
   const invite = takePendingInvite()
   if (invite) {
@@ -645,6 +692,8 @@ onMounted(async () => {
 onUnmounted(() => {
   socket && socket.close()
   typingTimers.forEach(clearTimeout)
+  clearTimeout(readTimer)
+  document.removeEventListener('visibilitychange', onVisible)
 })
 </script>
 

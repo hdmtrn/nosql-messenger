@@ -8,9 +8,11 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
 // The bus carries what has to reach the other instances but does not have to
@@ -28,9 +30,14 @@ const (
 	// Also one topic for all: a subscription change concerns one user, and
 	// nobody knows which nodes hold that user's sockets.
 	subscriptionTopic = "subscription"
+	// Says that something published may have been lost: sent by a node whose
+	// publishes failed for a while, and by a node that has just started.
+	resyncTopic = "resync"
 	// A publish outlives the request that caused it, so it cannot borrow the
 	// request context — but it must not hang either.
 	publishTimeout = 2 * time.Second
+	// How long rebuilding after a gap may read MongoDB.
+	gapTimeout = 30 * time.Second
 )
 
 // redisOptions connects with REDIS_PASSWORD when it is set; empty sends no
@@ -98,6 +105,14 @@ type bus struct {
 	// Set by main once the session store exists. Without it a revocation event
 	// is simply ignored, which is what a test that only checks messages wants.
 	onSessionRevoked func(sessionID string)
+
+	// Runs after this node may have missed events: it rebuilds what it learned
+	// from the bus and tells its sockets to catch up. Without it the sockets are
+	// only told.
+	onGap func()
+
+	// A publish failed and no node has been told yet.
+	lost atomic.Bool
 }
 
 func newBus(ctx context.Context, hub *Hub) (*bus, error) {
@@ -120,7 +135,7 @@ func newBusWith(ctx context.Context, hub *Hub, opts *redis.Options) (*bus, error
 	// this function returns the instance is certainly listening. In Run it
 	// would happen in another goroutine, and an event published right after
 	// startup could slip past.
-	permanent := []string{sessionTopic, subscriptionTopic}
+	permanent := []string{sessionTopic, subscriptionTopic, resyncTopic}
 	sub := rdb.Subscribe(ctx)
 	err := sub.Subscribe(ctx, permanent...)
 	// Subscribe only writes the command; Redis may not have run it yet. Each
@@ -149,24 +164,45 @@ func newBusWith(ctx context.Context, hub *Hub, opts *redis.Options) (*bus, error
 // it on the way back from Redis like everybody else. One path means one order
 // of messages on all nodes and no need to filter out an echo of our own event.
 func (b *bus) Publish(chID string, msg []byte) {
+	b.publish(channelTopic+chID, msg)
+}
+
+// publish sends to every node. A failure is remembered: what failed here reached
+// no node, and none of them can tell. Once Redis takes a publish again, every
+// node is told to resync.
+func (b *bus) publish(topic string, payload any) {
 	ctx, cancel := context.WithTimeout(context.Background(), publishTimeout)
 	defer cancel()
-
-	if err := b.rdb.Publish(ctx, channelTopic+chID, msg).Err(); err != nil {
-		log.Printf("bus: publishing to %s: %v", chID, err)
+	if err := b.rdb.Publish(ctx, topic, payload).Err(); err != nil {
+		b.lost.Store(true)
+		log.Printf("bus: publishing to %s: %v", topic, err)
+		return
 	}
+	b.announceIfLost(ctx)
+}
+
+func (b *bus) announceIfLost(ctx context.Context) {
+	if !b.lost.CompareAndSwap(true, false) {
+		return
+	}
+	log.Printf("bus: publishes were lost, telling every node to resync")
+	if err := b.rdb.Publish(ctx, resyncTopic, "lost").Err(); err != nil {
+		b.lost.Store(true)
+		log.Printf("bus: publishing a resync: %v", err)
+	}
+}
+
+// ResyncAll tells every node that something may have been missed. A node that
+// starts calls it: if it went down holding lost publishes, nobody else knows.
+func (b *bus) ResyncAll() {
+	b.publish(resyncTopic, "started")
 }
 
 // PublishRevoked tells the other instances to forget a session they may have
 // cached. The revoking node has already dropped its own copy: if Redis is down,
 // revocation must still work where it was asked for.
 func (b *bus) PublishRevoked(sessionID string) {
-	ctx, cancel := context.WithTimeout(context.Background(), publishTimeout)
-	defer cancel()
-
-	if err := b.rdb.Publish(ctx, sessionTopic, sessionID).Err(); err != nil {
-		log.Printf("bus: publishing the revocation of %s: %v", sessionID, err)
-	}
+	b.publish(sessionTopic, sessionID)
 }
 
 // Subscribe and Unsubscribe apply the change here first and then announce it,
@@ -190,13 +226,7 @@ func (b *bus) publishSubscription(c subscriptionChange) {
 		log.Printf("bus: encoding a subscription change: %v", err)
 		return
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), publishTimeout)
-	defer cancel()
-
-	if err := b.rdb.Publish(ctx, subscriptionTopic, payload).Err(); err != nil {
-		log.Printf("bus: publishing a subscription change for %s: %v", c.ChID, err)
-	}
+	b.publish(subscriptionTopic, payload)
 }
 
 // Watch and Unwatch are called from the hub while it holds its mutex, so they
@@ -308,6 +338,8 @@ func (b *bus) dispatch(m *redis.Message) {
 		if b.onSessionRevoked != nil {
 			b.onSessionRevoked(m.Payload)
 		}
+	case m.Channel == resyncTopic:
+		b.gap()
 	case m.Channel == subscriptionTopic:
 		var c subscriptionChange
 		if err := json.Unmarshal([]byte(m.Payload), &c); err != nil {
@@ -331,13 +363,29 @@ func (b *bus) confirmed(m *redis.Subscription) {
 		return
 	}
 	if m.Channel == sessionTopic {
-		log.Printf("bus: resubscribed after a lost connection, telling sockets to catch up")
-		b.hub.SendAll(resyncFrame)
+		log.Printf("bus: resubscribed after a lost connection")
+		b.gap()
+		// Whatever this node failed to publish meanwhile, the others never got.
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), publishTimeout)
+			defer cancel()
+			b.announceIfLost(ctx)
+		}()
 	}
 	if b.unconfirmed > 0 {
 		b.unconfirmed--
 	}
 	b.release()
+}
+
+// gap hands a possible loss to onGap, off Run's goroutine: rebuilding reads
+// MongoDB, and Run must keep reading Redis meanwhile.
+func (b *bus) gap() {
+	if b.onGap == nil {
+		b.hub.SendAll(resyncFrame)
+		return
+	}
+	go b.onGap()
 }
 
 // release lets the waiting callers of Settled go once nothing is outstanding.
@@ -369,4 +417,51 @@ func (b *bus) Settled(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// recoverFromGap rebuilds what this node learns from the bus after it may have
+// missed some of it: which channels each local socket reads, and whether its
+// session still exists. Only then are the sockets told to catch up, so that what
+// they fetch and what reaches them afterwards agree.
+func (s *server) recoverFromGap() {
+	ctx, cancel := context.WithTimeout(context.Background(), gapTimeout)
+	defer cancel()
+
+	byUser := map[string][]*Subscriber{}
+	for _, c := range s.hub.Subscribers() {
+		byUser[c.userID] = append(byUser[c.userID], c)
+	}
+	for userID, socks := range byUser {
+		id, err := bson.ObjectIDFromHex(userID)
+		if err != nil {
+			continue
+		}
+		channels, err := s.channels.memberOf(ctx, id)
+		if err != nil {
+			log.Printf("recovering after a gap: %v", err)
+			continue
+		}
+		ids := make([]string, len(channels))
+		for i, ch := range channels {
+			ids[i] = ch.Hex()
+		}
+		s.hub.SetChannels(userID, ids)
+
+		for _, c := range socks {
+			sid, err := bson.ObjectIDFromHex(c.sessionID)
+			if err != nil {
+				continue
+			}
+			alive, err := s.sessions.exists(ctx, sid)
+			if err != nil {
+				log.Printf("recovering after a gap: %v", err)
+				continue
+			}
+			if !alive {
+				s.sessions.invalidateByID(sid)
+				s.hub.CloseSession(c.sessionID)
+			}
+		}
+	}
+	s.hub.SendAll(resyncFrame)
 }

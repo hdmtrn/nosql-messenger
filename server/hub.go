@@ -146,7 +146,10 @@ func (h *Hub) Subscribe(userID, chID string) {
 func (h *Hub) Unsubscribe(userID, chID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.detachUser(userID, chID)
+}
 
+func (h *Hub) detachUser(userID, chID string) {
 	for c := range h.byUser[userID] {
 		delete(h.byChannel[chID], c)
 		delete(c.channels, chID)
@@ -157,6 +160,32 @@ func (h *Hub) Unsubscribe(userID, chID string) {
 	if subs, ok := h.byChannel[chID]; ok && len(subs) == 0 {
 		delete(h.byChannel, chID)
 		h.unwatch(chID)
+	}
+}
+
+// SetChannels makes every socket of a user read exactly these channels and
+// their own topic, rebuilding routing that a lost bus event left wrong.
+func (h *Hub) SetChannels(userID string, chIDs []string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	want := map[string]struct{}{userTopic(userID): {}}
+	for _, id := range chIDs {
+		want[id] = struct{}{}
+	}
+	extra := map[string]struct{}{}
+	for c := range h.byUser[userID] {
+		for id := range want {
+			h.attach(c, id)
+		}
+		for id := range c.channels {
+			if _, ok := want[id]; !ok {
+				extra[id] = struct{}{}
+			}
+		}
+	}
+	for id := range extra {
+		h.detachUser(userID, id)
 	}
 }
 

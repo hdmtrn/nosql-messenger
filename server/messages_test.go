@@ -87,7 +87,7 @@ func TestForwardReachesOnlyMessagesYouCanSee(t *testing.T) {
 		t.Fatalf("foreign message answers %s, missing one %s: they must not differ", foreignBody, inventedBody)
 	}
 
-	leaked, err := messages.List(ctx, malloryRoom.ID, bson.ObjectID{}, 0)
+	leaked, err := messages.List(ctx, malloryRoom.ID, 0, 0)
 	if err != nil {
 		t.Fatalf("listing messages: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestReplyStaysInItsChannel(t *testing.T) {
 	}
 
 	for _, ch := range []Channel{aliceNotes, malloryRoom} {
-		leaked, err := messages.List(ctx, ch.ID, bson.ObjectID{}, 0)
+		leaked, err := messages.List(ctx, ch.ID, 0, 0)
 		if err != nil {
 			t.Fatalf("listing messages: %v", err)
 		}

@@ -240,6 +240,18 @@ func (s *server) handleForwardMessage(w http.ResponseWriter, r *http.Request, se
 // first, broadcast only after the write succeeded, then answered to the sender.
 // A repeated client_msg_id gets the stored message back and is not broadcast again.
 func (s *server) deliverMessage(w http.ResponseWriter, r *http.Request, msg Message) {
+	seq, err := s.channels.nextSeq(r.Context(), msg.ChannelID)
+	if errors.Is(err, errChannelNotFound) {
+		writeError(w, http.StatusNotFound, "channel not found")
+		return
+	}
+	if err != nil {
+		log.Printf("numbering message: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	msg.Seq = seq
+
 	stored, err := s.messages.Insert(r.Context(), msg)
 	if errors.Is(err, errDuplicateMessage) {
 		existing, ferr := s.messages.ByClientMsgID(r.Context(), msg.ChannelID, msg.ClientMsgID)
@@ -264,6 +276,11 @@ func (s *server) deliverMessage(w http.ResponseWriter, r *http.Request, msg Mess
 		s.bus.Publish(stored.ChannelID.Hex(), payload)
 	}
 
+	// What you wrote yourself is not unread to you.
+	if err := s.reads.mark(r.Context(), stored.Author.ID, stored.ChannelID, stored.Seq); err != nil {
+		log.Printf("marking own message read: %v", err)
+	}
+
 	writeJSON(w, http.StatusCreated, stored)
 }
 
@@ -278,27 +295,25 @@ func (s *server) handleListMessages(w http.ResponseWriter, r *http.Request, sess
 	// ids asks for particular messages (the originals replies point at) rather
 	// than a page, so the page parameters make no sense next to it.
 	if raw := q.Get("ids"); raw != "" {
-		if q.Has("before") || q.Has("after") || q.Has("limit") {
-			writeError(w, http.StatusBadRequest, "ids cannot be combined with before, after or limit")
+		if q.Has("before_seq") || q.Has("after_seq") || q.Has("limit") {
+			writeError(w, http.StatusBadRequest, "ids cannot be combined with before_seq, after_seq or limit")
 			return
 		}
 		s.listMessagesByID(w, r, channelID, raw)
 		return
 	}
-
-	if q.Has("before") && q.Has("after") {
-		writeError(w, http.StatusBadRequest, "before and after cannot be combined")
+	if q.Has("before_seq") && q.Has("after_seq") {
+		writeError(w, http.StatusBadRequest, "before_seq and after_seq cannot be combined")
 		return
 	}
 
-	var before bson.ObjectID
-	if raw := q.Get("before"); raw != "" {
-		id, err := bson.ObjectIDFromHex(raw)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "malformed before cursor")
-			return
-		}
-		before = id
+	before, ok := seqParam(w, q.Get("before_seq"), "before_seq")
+	if !ok {
+		return
+	}
+	after, ok := seqParam(w, q.Get("after_seq"), "after_seq")
+	if !ok {
+		return
 	}
 
 	limit := 0
@@ -311,16 +326,11 @@ func (s *server) handleListMessages(w http.ResponseWriter, r *http.Request, sess
 		limit = n
 	}
 
-	// after goes forward, oldest first, for a client catching up; before and no
-	// cursor at all go back from the newest, for history.
+	// after_seq goes forward, oldest first, for a client catching up; before_seq
+	// and no cursor at all go back from the newest, for history.
 	var messages []Message
 	var err error
-	if raw := q.Get("after"); raw != "" {
-		after, perr := bson.ObjectIDFromHex(raw)
-		if perr != nil {
-			writeError(w, http.StatusBadRequest, "malformed after cursor")
-			return
-		}
+	if q.Has("after_seq") {
 		messages, err = s.messages.ListAfter(r.Context(), channelID, after, limit)
 	} else {
 		messages, err = s.messages.List(r.Context(), channelID, before, limit)
@@ -331,6 +341,19 @@ func (s *server) handleListMessages(w http.ResponseWriter, r *http.Request, sess
 		return
 	}
 	writeJSON(w, http.StatusOK, messages)
+}
+
+// seqParam reads a message number; empty is zero.
+func seqParam(w http.ResponseWriter, raw, name string) (int64, bool) {
+	if raw == "" {
+		return 0, true
+	}
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || n < 0 {
+		writeError(w, http.StatusBadRequest, "malformed "+name)
+		return 0, false
+	}
+	return n, true
 }
 
 // listMessagesByID answers with the listed messages of the channel. An id that is

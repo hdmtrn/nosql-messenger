@@ -16,27 +16,36 @@ import (
 	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
-func TestCatchingUpListsWhatCameAfterOldestFirst(t *testing.T) {
-	ctx := context.Background()
+func TestHistoryPagesByNumber(t *testing.T) {
 	db := testDB(t)
 	channels, messages := newMessageTestStores(t, db)
 	owner := person("owner")
 	ch := createChannel(t, channels, "room", owner)
 	other := createChannel(t, channels, "other", owner)
+	h := NewHub()
+	s := &server{channels: channels, messages: messages, hub: h, bus: h}
 
-	var ids []bson.ObjectID
-	for i := range 5 {
-		m, err := messages.Insert(ctx, Message{ChannelID: ch.ID, Author: authorOf(owner), Text: string(rune('a' + i))})
-		if err != nil {
-			t.Fatalf("inserting: %v", err)
+	send := func(chID bson.ObjectID, text string) Message {
+		t.Helper()
+		code, body := callMessageHandler(t, s.handleSendMessage, "", map[string]string{
+			"channel_id": chID.Hex(), "text": text, "client_msg_id": text,
+		}, owner)
+		var m Message
+		json.Unmarshal(body, &m)
+		if code != http.StatusCreated {
+			t.Fatalf("sending %s: %d %s", text, code, body)
 		}
-		ids = append(ids, m.ID)
+		return m
 	}
-	if _, err := messages.Insert(ctx, Message{ChannelID: other.ID, Author: authorOf(owner), Text: "elsewhere"}); err != nil {
-		t.Fatalf("inserting: %v", err)
+	for i := range 5 {
+		if m := send(ch.ID, string(rune('a'+i))); m.Seq != int64(i+1) {
+			t.Fatalf("message %d got number %d", i+1, m.Seq)
+		}
+	}
+	if m := send(other.ID, "elsewhere"); m.Seq != 1 {
+		t.Fatalf("another channel's first message got number %d, want 1", m.Seq)
 	}
 
-	s := &server{channels: channels, messages: messages}
 	list := func(query string) (int, []Message) {
 		r := httptest.NewRequest(http.MethodGet, "/messages?channel_id="+ch.ID.Hex()+query, nil)
 		w := httptest.NewRecorder()
@@ -53,25 +62,31 @@ func TestCatchingUpListsWhatCameAfterOldestFirst(t *testing.T) {
 		return b.String()
 	}
 
-	if code, got := list("&after=" + ids[1].Hex()); code != http.StatusOK || texts(got) != "cde" {
-		t.Fatalf("after the second: %d %q, want 200 \"cde\" oldest first and without the cursor", code, texts(got))
+	if code, got := list(""); code != http.StatusOK || texts(got) != "edcba" {
+		t.Fatalf("newest page: %d %q, want \"edcba\"", code, texts(got))
 	}
-	// Pages chain on the last id of the one before.
-	code, page := list("&after=" + ids[1].Hex() + "&limit=2")
-	if code != http.StatusOK || texts(page) != "cd" {
-		t.Fatalf("first page: %d %q, want \"cd\"", code, texts(page))
+	if _, got := list("&before_seq=3"); texts(got) != "ba" {
+		t.Fatalf("before 3: %q, want \"ba\"", texts(got))
 	}
-	if _, rest := list("&after=" + page[1].ID.Hex() + "&limit=2"); texts(rest) != "e" {
+	if _, got := list("&after_seq=2"); texts(got) != "cde" {
+		t.Fatalf("after 2: %q, want \"cde\" oldest first", texts(got))
+	}
+	// Pages chain on the last number of the one before.
+	if _, page := list("&after_seq=2&limit=2"); texts(page) != "cd" {
+		t.Fatalf("first page: %q, want \"cd\"", texts(page))
+	}
+	if _, rest := list("&after_seq=4&limit=2"); texts(rest) != "e" {
 		t.Fatalf("second page: %q, want \"e\"", texts(rest))
 	}
-	if _, none := list("&after=" + ids[4].Hex()); len(none) != 0 {
+	if _, none := list("&after_seq=5"); len(none) != 0 {
 		t.Fatalf("after the newest: %q, want nothing", texts(none))
 	}
 
 	for _, bad := range []string{
-		"&after=" + ids[1].Hex() + "&before=" + ids[3].Hex(),
-		"&after=" + ids[1].Hex() + "&ids=" + ids[2].Hex(),
-		"&after=nonsense",
+		"&after_seq=1&before_seq=3",
+		"&after_seq=1&ids=" + bson.NewObjectID().Hex(),
+		"&after_seq=nonsense",
+		"&before_seq=-1",
 	} {
 		if code, _ := list(bad); code != http.StatusBadRequest {
 			t.Errorf("%s: got %d, want 400", bad, code)
