@@ -1,0 +1,47 @@
+{{define "title"}}Privacy notice{{end}}
+
+{{define "content"}}
+<h1>Privacy notice</h1>
+<p class="updated">Last updated on 6 October 2026</p>
+{{template "missing" .}}
+
+<p>This messenger is a university thesis project run by {{template "operator" .}}, who decides what happens to the data described here and answers questions and requests about it.</p>
+
+<h2>What is kept and why</h2>
+<ul>
+  <li><strong>Your account:</strong> your username, the name you show, your bio and profile picture, when you registered and when you were last online. They run your account and show you to the people you talk to.</li>
+  <li><strong>Your password,</strong> only as an argon2id hash. The password itself is never stored.</li>
+  <li><strong>What you write:</strong> messages, pictures, replies and forwards, the channels you are in, your friends and friend requests, and how far you have read each chat. They are kept to deliver and show them.</li>
+  <li><strong>Your sessions:</strong> a random token in a cookie, a description of the browser and when the session was last used. They keep you signed in and let you see and end your sessions.</li>
+  <li><strong>Your network address,</strong> in counters that slow down password guessing and floods, for an hour at most.</li>
+  <li><strong>Server logs:</strong> requests and connections, with usernames, kept for 7 days to find faults.</li>
+</ul>
+<p>Pictures you add to a message but never send are deleted after a day.</p>
+
+<h2>Why this is allowed</h2>
+<p>The data is needed to provide the service you sign up for, which is the legal basis in Article 6(1)(b) of the General Data Protection Regulation.</p>
+
+<h2>Who else sees it</h2>
+<p>The people in your chats see what you send there and your profile. The service runs on Amazon Web Services in Frankfurt, in the European Union, which processes the data on the operator's behalf. Nothing is sold or given to anyone else, and there is no analytics or advertising.</p>
+
+<h2>Messages are not end-to-end encrypted</h2>
+<p>Messages are encrypted on their way between your browser and the server, but they are stored readable on the server, so the operator could read them. Do not use this messenger for anything you need to keep secret.</p>
+
+<h2>How long it is kept</h2>
+<p>Your account stays until you delete it. Messages stay as long as the chat they are in, and a chat is deleted with everything in it when its last member leaves. Server logs are kept for 7 days, and backups of the database for a few days.</p>
+
+<h2>Deleting your account</h2>
+<p>Open your profile and choose Delete account. Your profile, picture, sessions, friends and read positions are erased at once, and your username becomes free again. Messages you sent to chats with other people stay there, signed as Deleted Account, because their replies refer to them; a direct conversation stays with the other person. Backups age out within days.</p>
+
+<h2>Your rights</h2>
+<p>You can see and correct your profile at any time and delete your account yourself. You can also ask {{template "operator" .}} for a copy of your data, for a correction, or for anything here to be explained. You may complain to a data protection authority: in Hungary that is the Nemzeti Adatvédelmi és Információszabadság Hatóság (<a href="https://naih.hu">naih.hu</a>), or the authority where you live.</p>
+
+<h2>Cookies</h2>
+<p>One cookie is used, the session cookie, which keeps you signed in and is strictly necessary for that. There are no other cookies, no tracking and no third-party content: even the fonts are served from this site.</p>
+
+<h2>Age</h2>
+<p>You must be 16 or older to use this messenger.</p>
+
+<h2>Changes</h2>
+<p>If this notice changes, the date at the top changes with it. The <a href="/terms">terms of use</a> say what the service is and how it may be used.</p>
+{{end}}

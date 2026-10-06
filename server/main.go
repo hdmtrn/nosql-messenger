@@ -130,6 +130,7 @@ func run(ctx context.Context) error {
 		media:    media,
 		reads:    reads,
 		limits:   limits,
+		operator: operatorFromEnv(),
 	}
 
 	// Run starts once srv exists, which recovering from a gap needs. Nothing
@@ -160,6 +161,9 @@ func run(ctx context.Context) error {
 
 	log.Printf("cookies: Secure=%v (set COOKIE_SECURE=false for plain http)", secureCookies)
 	log.Printf("rate limits: TRUST_PROXY=%v (true only behind the ALB)", limits.trustProxy)
+	if !srv.operator.Configured() {
+		log.Println("privacy and terms: OPERATOR_NAME and OPERATOR_EMAIL are not set, the pages name nobody")
+	}
 	log.Println("listening on", httpSrv.Addr)
 
 	served := make(chan error, 1)

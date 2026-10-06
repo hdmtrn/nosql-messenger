@@ -124,6 +124,19 @@ last `X-Forwarded-For` entry is used instead: the balancer appends the address t
 connected to it, and anything before that comes from the client. With Redis down the
 limits let everything through.
 
+## Privacy notice and terms of use
+
+`/privacy` and `/terms` are rendered from `server/legal/`. The texts name whoever runs the
+instance, and that comes from the environment rather than the repository:
+
+```bash
+OPERATOR_NAME="Your Name" OPERATOR_EMAIL="you@example.com" docker compose -p thesis up -d
+```
+
+Without both the pages say that no operator has been set, and the server logs it at start.
+The texts describe the deployment this repository is built for, hosted in Frankfurt with the
+Hungarian authority named for complaints; anyone running it elsewhere has to change them.
+
 ## Layout
 
 | Path | What is in it |

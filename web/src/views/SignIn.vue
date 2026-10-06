@@ -118,6 +118,19 @@ async function submit() {
               <a href="#" class="link" @click.prevent="switchTo('register')">Register</a>
             </template>
           </span>
+
+          <p class="legal">
+            <template v-if="registering">
+              By registering you accept the
+              <a class="link" href="/terms" target="_blank" rel="noopener">terms of use</a>
+              and the <a class="link" href="/privacy" target="_blank" rel="noopener">privacy notice</a>.
+            </template>
+            <template v-else>
+              <a class="link" href="/privacy" target="_blank" rel="noopener">Privacy notice</a>
+              ·
+              <a class="link" href="/terms" target="_blank" rel="noopener">Terms of use</a>
+            </template>
+          </p>
         </div>
       </form>
     </section>
@@ -181,4 +194,9 @@ async function submit() {
   color: var(--grey);
 }
 .link { color: var(--blue); }
+.legal {
+  margin: 0;
+  font: var(--text-meta);
+  color: var(--grey);
+}
 </style>
