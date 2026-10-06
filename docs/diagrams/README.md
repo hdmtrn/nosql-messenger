@@ -70,7 +70,8 @@ repeats, so it is bounded by the node's own channels and nothing is dropped.
 **The bus is the fast path, never the guarantee.** A message is written to MongoDB
 *before* it is announced (`deliverMessage`). If no node is subscribed, or Redis is down,
 the event is lost and the message is still in the database — the client recovers it with
-`GET /messages` on the next reconnect (`backfill()` in `Messenger.vue`).
+`GET /messages?after=` when its socket is sent `ready` (every connection) or `resync` (the
+node's bus reconnected), in `catchUp()` in `Messenger.vue`.
 
 ### 2. Redis as the presence store
 
@@ -965,9 +966,12 @@ sequenceDiagram
       P->>BUS: announcePresence per channel
       BUS->>R: PUBLISH ch:{channelID} presenceEvent
     end
+    WS->>BUS: Settled, waits for the SUBSCRIBE confirmations
+    R-->>BUS: one confirmation per channel
+    WS->>HUB: Send(ready)
     Note over WS: go writePump, then readPump
-    WS-->>C: socket open
-    Note over C: onStateChange('online')
+    WS-->>C: socket open, then the ready frame
+    Note over C: onStateChange('online'), catchUp() on ready
   end
 ```
 
@@ -993,6 +997,12 @@ sequenceDiagram
   so one of the two always sees the other. It is almost always a cache hit.
 - **`MULTI SADD, SMEMBERS, INCR, EXEC`.** `presence.connect` uses `MULTI`/`EXEC` so both indexes move together and the
   `SMEMBERS` reads the state the write produced.
+- **`Settled, waits for the SUBSCRIBE confirmations`.** `SUBSCRIBE` only writes the command; a
+  channel is heard once Redis has confirmed it. `bus.Run` counts the confirmations off and
+  lets `Settled` return when none is outstanding, so after `ready` nothing can slip past: a
+  message written before the client's `GET /messages?after=` is in its answer, one written
+  after reaches the socket. A second confirmation of a permanent topic means go-redis
+  reconnected and subscribed everything again; the node then sends `resync` to all its sockets.
 - **`go writePump, then readPump`.** `writePump` is the only goroutine that writes to the socket — `gorilla/websocket`
   forbids concurrent writes. It also holds a timer on the session's `ExpiresAt` and
   re-reads the session when it fires, because expiry is otherwise invisible: the TTL index
@@ -1104,7 +1114,7 @@ sequenceDiagram
   opt channel not in Bob's loaded list
     B->>N2: catchUpChannels, GET /channels
   end
-  Note over R,N2: With no subscriber anywhere the event is dropped.<br/>The message is in MongoDB, and backfill() fetches it.
+  Note over R,N2: With no subscriber anywhere the event is dropped.<br/>The message is in MongoDB, and catchUp() fetches it on ready or resync.
 ```
 
 **Reading it**
@@ -1119,7 +1129,7 @@ sequenceDiagram
   `catchUpChannels()` reloads the list, one request at a time so a burst does not fetch it
   once per message.
 - **The closing note.** With no subscriber anywhere, Redis drops the event. Nothing is lost: the message
-  is in MongoDB and `backfill()` fetches it on reconnect.
+  is in MongoDB, and `catchUp()` fetches it when the socket is sent `ready` or `resync`.
 - There is no sticky-session problem to solve here, because no per-user state lives in the
   process. There is also no failover: `socket.js` reconnects to `location.host`, so a tab
   whose node dies retries that same port with 1–15 s backoff until it comes back.
@@ -1131,10 +1141,10 @@ sequenceDiagram
 ## seq-load-history.mmd
 
 Loading history: the first page, older pages on scroll, the originals that replies quote,
-and the backfill after a reconnect.
+and the catch-up after a gap.
 
 ```mermaid
-%% Loading history: first page, older pages, reply originals, backfill.
+%% Loading history: first page, older pages, reply originals, catch-up.
 %% See README for the notes referenced by step number.
 %% Sources: web/src/views/Messenger.vue, web/src/views/Conversation.vue,
 %% server/messages_http.go, server/messages.go
@@ -1174,8 +1184,8 @@ sequenceDiagram
   M-->>MG: the quoted originals
   Note over MG: a missing id becomes null in originals
 
-  Note over MG: socket went offline, then online
-  MG->>H: backfill(), GET /messages?channel_id=ID
+  Note over MG: the socket sends ready or resync
+  MG->>H: catchUp(), GET /messages?channel_id=ID&after=ID, every page
 ```
 
 **Reading it**
@@ -1187,16 +1197,20 @@ sequenceDiagram
   `_id` is an ObjectID, so it is time-ordered anyway, and the index `channel_id + _id`
   serves the descending sort as a backward scan with no `SORT` stage. There is no `skip`.
 - **`GET /messages?channel_id=ID&ids=a,b,c`.** `ids` asks for particular messages rather than a page, so it refuses to be
-  combined with `before` or `limit`. `listMessagesByID` uses `SplitN` with the limit plus
+  combined with `before`, `after` or `limit`. `listMessagesByID` uses `SplitN` with the limit plus
   one, so a query with a million commas is rejected without allocating a million strings.
 - **`a missing id becomes null in originals`.** An id the server leaves out becomes `null` in `originals`, and the quote renders
   as unavailable. `findMessage(id)` walks up to 20 older pages when a quote's original is
   further back than the loaded window.
-- **`backfill()`.** It runs on every offline→online transition. This is the mechanism
-  that makes a lost Pub/Sub event harmless, so it belongs to the delivery guarantee, not
-  to the UI.
+- **`catchUp(), GET /messages?channel_id=ID&after=ID, every page`.** It runs on every
+  `ready` and `resync` frame, and fetches everything after the newest message the chat has,
+  oldest first, until a page comes back short. The first cursor is five seconds before that
+  message, since ids from two nodes within one second are not in write order; repeats are
+  dropped by id or `client_msg_id`. This is what makes a lost Pub/Sub event harmless, so it
+  belongs to the delivery guarantee, not to the UI. Unread counts in other chats are not
+  part of it.
 
-**Based on:** `web/src/views/Messenger.vue` (`selectChannel`, `loadOlder`, `findMessage`, `resolveReplies`, `backfill`), `web/src/views/Conversation.vue`, `server/messages_http.go`, `server/messages.go`
+**Based on:** `web/src/views/Messenger.vue` (`selectChannel`, `loadOlder`, `findMessage`, `resolveReplies`, `catchUp`), `web/src/views/Conversation.vue`, `server/messages_http.go`, `server/messages.go`
 
 ---
 

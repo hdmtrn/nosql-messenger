@@ -1,4 +1,4 @@
-%% Loading history: first page, older pages, reply originals, backfill.
+%% Loading history: first page, older pages, reply originals, catch-up.
 %% See README for the notes referenced by step number.
 %% Sources: web/src/views/Messenger.vue, web/src/views/Conversation.vue,
 %% server/messages_http.go, server/messages.go
@@ -38,5 +38,5 @@ sequenceDiagram
   M-->>MG: the quoted originals
   Note over MG: a missing id becomes null in originals
 
-  Note over MG: socket went offline, then online
-  MG->>H: backfill(), GET /messages?channel_id=ID
+  Note over MG: the socket sends ready or resync
+  MG->>H: catchUp(), GET /messages?channel_id=ID&after=ID, every page

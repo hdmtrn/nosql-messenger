@@ -20,7 +20,10 @@ const (
 	pongWait   = 60 * time.Second
 	pingPeriod = 30 * time.Second
 	sendBuffer = 256
-	readLimit  = 512
+	// How long a new socket waits for Redis to confirm its channels before it
+	// is told to catch up anyway; a resync follows once Redis is back.
+	settleTimeout = 3 * time.Second
+	readLimit     = 512
 )
 
 // Sent when the socket has no session: revoked, signed out, expired, or never
@@ -33,6 +36,10 @@ const closeSessionEnded = 4001
 // Sent when this node is shutting down. Another node is serving, so the client
 // comes back at once instead of backing off as from a network drop.
 const closeServiceRestart = websocket.CloseServiceRestart
+
+// readyFrame is the first thing a socket is sent once it can miss nothing more;
+// the client answers it by fetching what it does not have yet.
+var readyFrame = []byte(`{"type":"ready"}`)
 
 // The reason travels with its code, so a code added later cannot go out with
 // another one's text. The client decides by the code; the reason is for people
@@ -145,6 +152,15 @@ func (s *server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	s.socketOpened(r.Context(), c, ids)
 	log.Printf("+ %s connected (channels: %d)", sess.Username, len(ids))
+
+	// ready means this node now hears everything sent to the socket's channels:
+	// what the client fetches after it is either in the answer or arrives here.
+	settleCtx, cancel := context.WithTimeout(r.Context(), settleTimeout)
+	if err := s.bus.Settled(settleCtx); err != nil {
+		log.Printf("websocket: channels not confirmed for %s: %v", sess.Username, err)
+	}
+	cancel()
+	s.hub.Send(c, readyFrame)
 
 	// The socket authenticated once, above; the session can expire while it
 	// stays open, and nothing else would notice — expiry is seen only by a

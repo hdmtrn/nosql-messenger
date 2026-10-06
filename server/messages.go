@@ -248,6 +248,28 @@ func (s *messageStore) List(ctx context.Context, channelID bson.ObjectID, before
 	return messages, nil
 }
 
+// ListAfter is List going forward: the messages after a known one, oldest first,
+// which is how a client catches up on what it missed.
+func (s *messageStore) ListAfter(ctx context.Context, channelID, after bson.ObjectID, limit int) ([]Message, error) {
+	if limit <= 0 || limit > messagesMaxLimit {
+		limit = messagesMaxLimit
+	}
+	cur, err := s.col.Find(ctx,
+		bson.M{"channel_id": channelID, "_id": bson.M{"$gt": after}},
+		options.Find().
+			SetSort(bson.D{{Key: "_id", Value: 1}}).
+			SetLimit(int64(limit)),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("listing messages after %s: %w", after.Hex(), err)
+	}
+	messages := []Message{}
+	if err := cur.All(ctx, &messages); err != nil {
+		return nil, fmt.Errorf("decoding messages: %w", err)
+	}
+	return messages, nil
+}
+
 // renameAuthor puts a new name on everything a person wrote, forwarded copies
 // included. Messages carry the name rather than a reference, so this is how a
 // deleted account's messages stop pointing at its old name.

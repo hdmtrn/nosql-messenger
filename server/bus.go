@@ -16,8 +16,8 @@ import (
 // The bus carries what has to reach the other instances but does not have to
 // survive a restart: a new message now, a revoked session and "typing" later.
 // Everything durable stays in MongoDB, so a lost event costs latency, not data —
-// the message is stored before it is announced and the client backfills on
-// reconnect.
+// the message is stored before it is announced, and the client catches up when
+// its socket is sent ready or resync.
 const (
 	channelTopic = "ch:"
 	// One topic for all instances: revocations are rare, and every node has to
@@ -55,11 +55,19 @@ func redisAddr() string {
 // not membership — that lives in MongoDB — but the in-memory view of it that
 // the hub delivers by, and every node holding the user's sockets has to update
 // its own.
+//
+// Settled returns once every channel this node listens to is confirmed by
+// Redis, so that nothing published from then on can pass it by.
 type publisher interface {
 	Publish(chID string, msg []byte)
 	Subscribe(userID, chID string)
 	Unsubscribe(userID, chID string)
+	Settled(ctx context.Context) error
 }
+
+// resyncFrame tells this node's sockets that the bus was down for a while and
+// they may have missed messages; the client then fetches what it lacks.
+var resyncFrame = []byte(`{"type":"resync"}`)
 
 type subscriptionChange struct {
 	UserID     string `json:"user_id"`
@@ -79,6 +87,13 @@ type bus struct {
 	mu      sync.Mutex
 	pending map[string]bool
 	wake    chan struct{}
+	// Callers of Settled not yet seen by Run, under mu.
+	waiters []chan struct{}
+
+	// Run's own: subscriptions written to Redis and not yet confirmed, and the
+	// callers waiting for that count to reach zero.
+	unconfirmed int
+	held        []chan struct{}
 
 	// Set by main once the session store exists. Without it a revocation event
 	// is simply ignored, which is what a test that only checks messages wants.
@@ -86,7 +101,13 @@ type bus struct {
 }
 
 func newBus(ctx context.Context, hub *Hub) (*bus, error) {
-	rdb := redis.NewClient(redisOptions())
+	return newBusWith(ctx, hub, redisOptions())
+}
+
+// newBusWith takes the options, so that a test can name its connections and
+// find them in Redis.
+func newBusWith(ctx context.Context, hub *Hub, opts *redis.Options) (*bus, error) {
+	rdb := redis.NewClient(opts)
 
 	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -204,6 +225,8 @@ func (b *bus) applyWatches(ctx context.Context) {
 	b.mu.Lock()
 	pending := b.pending
 	b.pending = make(map[string]bool)
+	waiters := b.waiters
+	b.waiters = nil
 	b.mu.Unlock()
 
 	var add, drop []string
@@ -216,8 +239,14 @@ func (b *bus) applyWatches(ctx context.Context) {
 	}
 
 	if len(add) > 0 {
+		// Redis confirms each channel with a reply of its own; until they are all
+		// in, a publish can still pass the node by. A failed write is not
+		// counted: go-redis keeps the channels and subscribes them again when it
+		// reconnects, and the reconnection triggers a resync.
 		if err := b.sub.Subscribe(ctx, add...); err != nil {
 			log.Printf("bus: subscribing to %d channels: %v", len(add), err)
+		} else {
+			b.unconfirmed += len(add)
 		}
 	}
 	if len(drop) > 0 {
@@ -225,6 +254,9 @@ func (b *bus) applyWatches(ctx context.Context) {
 			log.Printf("bus: unsubscribing from %d channels: %v", len(drop), err)
 		}
 	}
+
+	b.held = append(b.held, waiters...)
+	b.release()
 }
 
 // Close releases the connections to Redis once nothing publishes any more. The
@@ -242,7 +274,9 @@ func (b *bus) Run(ctx context.Context) {
 	sub := b.sub
 	defer sub.Close()
 
-	incoming := sub.Channel()
+	// With the confirmations, not only the messages: they tell when a watch has
+	// taken effect, and when go-redis has reconnected.
+	incoming := sub.ChannelWithSubscriptions()
 
 	for {
 		select {
@@ -256,25 +290,83 @@ func (b *bus) Run(ctx context.Context) {
 			if !ok {
 				return
 			}
-			switch {
-			case strings.HasPrefix(m.Channel, channelTopic):
-				b.hub.Publish(strings.TrimPrefix(m.Channel, channelTopic), []byte(m.Payload))
-			case m.Channel == sessionTopic:
-				if b.onSessionRevoked != nil {
-					b.onSessionRevoked(m.Payload)
-				}
-			case m.Channel == subscriptionTopic:
-				var c subscriptionChange
-				if err := json.Unmarshal([]byte(m.Payload), &c); err != nil {
-					log.Printf("bus: unreadable subscription change %q: %v", m.Payload, err)
-					continue
-				}
-				if c.Subscribed {
-					b.hub.Subscribe(c.UserID, c.ChID)
-				} else {
-					b.hub.Unsubscribe(c.UserID, c.ChID)
-				}
+			switch m := m.(type) {
+			case *redis.Subscription:
+				b.confirmed(m)
+			case *redis.Message:
+				b.dispatch(m)
 			}
 		}
+	}
+}
+
+func (b *bus) dispatch(m *redis.Message) {
+	switch {
+	case strings.HasPrefix(m.Channel, channelTopic):
+		b.hub.Publish(strings.TrimPrefix(m.Channel, channelTopic), []byte(m.Payload))
+	case m.Channel == sessionTopic:
+		if b.onSessionRevoked != nil {
+			b.onSessionRevoked(m.Payload)
+		}
+	case m.Channel == subscriptionTopic:
+		var c subscriptionChange
+		if err := json.Unmarshal([]byte(m.Payload), &c); err != nil {
+			log.Printf("bus: unreadable subscription change %q: %v", m.Payload, err)
+			return
+		}
+		if c.Subscribed {
+			b.hub.Subscribe(c.UserID, c.ChID)
+		} else {
+			b.hub.Unsubscribe(c.UserID, c.ChID)
+		}
+	}
+}
+
+// confirmed counts a subscription off. The permanent topics are subscribed once,
+// in newBus, so a confirmation of one here means go-redis lost the connection
+// and subscribed everything again, and whatever was published in between never
+// reached this node: its sockets are told to catch up.
+func (b *bus) confirmed(m *redis.Subscription) {
+	if m.Kind != "subscribe" {
+		return
+	}
+	if m.Channel == sessionTopic {
+		log.Printf("bus: resubscribed after a lost connection, telling sockets to catch up")
+		b.hub.SendAll(resyncFrame)
+	}
+	if b.unconfirmed > 0 {
+		b.unconfirmed--
+	}
+	b.release()
+}
+
+// release lets the waiting callers of Settled go once nothing is outstanding.
+func (b *bus) release() {
+	if b.unconfirmed > 0 {
+		return
+	}
+	for _, done := range b.held {
+		close(done)
+	}
+	b.held = nil
+}
+
+// Settled waits until Redis has confirmed every subscription this node asked for
+// so far. A socket's channels are watched in Connect, before this is called, so
+// once it returns the node hears everything published to them.
+func (b *bus) Settled(ctx context.Context) error {
+	done := make(chan struct{})
+	b.mu.Lock()
+	b.waiters = append(b.waiters, done)
+	b.mu.Unlock()
+	select {
+	case b.wake <- struct{}{}:
+	default:
+	}
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }

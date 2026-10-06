@@ -24,4 +24,4 @@ sequenceDiagram
   opt channel not in Bob's loaded list
     B->>N2: catchUpChannels, GET /channels
   end
-  Note over R,N2: With no subscriber anywhere the event is dropped.<br/>The message is in MongoDB, and backfill() fetches it.
+  Note over R,N2: With no subscriber anywhere the event is dropped.<br/>The message is in MongoDB, and catchUp() fetches it on ready or resync.

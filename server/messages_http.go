@@ -278,11 +278,16 @@ func (s *server) handleListMessages(w http.ResponseWriter, r *http.Request, sess
 	// ids asks for particular messages (the originals replies point at) rather
 	// than a page, so the page parameters make no sense next to it.
 	if raw := q.Get("ids"); raw != "" {
-		if q.Has("before") || q.Has("limit") {
-			writeError(w, http.StatusBadRequest, "ids cannot be combined with before or limit")
+		if q.Has("before") || q.Has("after") || q.Has("limit") {
+			writeError(w, http.StatusBadRequest, "ids cannot be combined with before, after or limit")
 			return
 		}
 		s.listMessagesByID(w, r, channelID, raw)
+		return
+	}
+
+	if q.Has("before") && q.Has("after") {
+		writeError(w, http.StatusBadRequest, "before and after cannot be combined")
 		return
 	}
 
@@ -306,7 +311,20 @@ func (s *server) handleListMessages(w http.ResponseWriter, r *http.Request, sess
 		limit = n
 	}
 
-	messages, err := s.messages.List(r.Context(), channelID, before, limit)
+	// after goes forward, oldest first, for a client catching up; before and no
+	// cursor at all go back from the newest, for history.
+	var messages []Message
+	var err error
+	if raw := q.Get("after"); raw != "" {
+		after, perr := bson.ObjectIDFromHex(raw)
+		if perr != nil {
+			writeError(w, http.StatusBadRequest, "malformed after cursor")
+			return
+		}
+		messages, err = s.messages.ListAfter(r.Context(), channelID, after, limit)
+	} else {
+		messages, err = s.messages.List(r.Context(), channelID, before, limit)
+	}
 	if err != nil {
 		log.Printf("listing messages: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

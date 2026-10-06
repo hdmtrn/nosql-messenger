@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -222,11 +223,42 @@ func (h *Hub) Publish(chID string, msg []byte) {
 	defer h.mu.Unlock()
 
 	for c := range h.byChannel[chID] {
-		select {
-		case c.send <- msg:
-		default:
-			h.drop(c)
+		h.deliver(c, msg)
+	}
+}
+
+// Send delivers a frame to one socket, the way Publish does to a channel.
+func (h *Hub) Send(c *Subscriber, msg []byte) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.deliver(c, msg)
+}
+
+// SendAll delivers a frame to every socket of this node.
+func (h *Hub) SendAll(msg []byte) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, subs := range h.byUser {
+		for c := range subs {
+			h.deliver(c, msg)
 		}
+	}
+}
+
+// Settled is the bus's wait for subscriptions; the hub delivers from memory and
+// has none to wait for.
+func (h *Hub) Settled(context.Context) error { return nil }
+
+// deliver never blocks under the mutex: a socket too slow to take a frame is
+// dropped, and its client reconnects and catches up.
+func (h *Hub) deliver(c *Subscriber, msg []byte) {
+	if c.dropped {
+		return
+	}
+	select {
+	case c.send <- msg:
+	default:
+		h.drop(c)
 	}
 }
 

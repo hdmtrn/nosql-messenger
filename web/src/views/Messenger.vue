@@ -362,6 +362,13 @@ function catchUpChannels() {
 }
 
 function receive(msg) {
+  // The socket can miss nothing from here on, or the server's bus came back:
+  // fetch what came in meanwhile, and the channels joined meanwhile.
+  if (msg.type === 'ready' || msg.type === 'resync') {
+    catchUpChannels()
+    catchUp()
+    return
+  }
   // Typing shares the channel's stream with messages and is told apart by its
   // type; read as a message, it would become a bubble with no author.
   if (msg.type === 'typing') {
@@ -519,16 +526,47 @@ const activePresence = computed(() => {
 })
 
 // A socket that was down missed messages; the REST history is what fills the gap.
-async function backfill() {
+// Ids made on two nodes within one second are not in the order they were written,
+// so the first request starts this many seconds before the newest message known.
+const CATCH_UP_OVERLAP = 5
+const CATCH_UP_PAGE = 100
+
+// An id made that many seconds earlier with nothing after the timestamp: every
+// id of that second and later sorts above it.
+function idSecondsBefore(id, seconds) {
+  const t = parseInt(id.slice(0, 8), 16) - seconds
+  return t.toString(16).padStart(8, '0') + '0'.repeat(16)
+}
+
+// What the open chat missed while the socket was away, or while the server's bus
+// was: everything after the newest message it has, page by page. The server sends
+// "ready" on every connection and "resync" after its bus reconnected.
+async function catchUp() {
   const channelId = activeId.value
-  const latest = await api.messages({ channel_id: channelId })
-  if (activeId.value !== channelId) return
-  const have = new Set(messages.value.map((m) => m.id))
-  const missing = latest.reverse().filter((m) => !have.has(m.id))
-  if (missing.length) {
-    messages.value = [...messages.value, ...missing]
-    conversation.value?.toBottom()
+  if (!channelId) return
+  const newest = messages.value.findLast((m) => m.id)?.id
+  if (!newest) return selectChannel(channelId)
+
+  const found = []
+  let after = idSecondsBefore(newest, CATCH_UP_OVERLAP)
+  for (;;) {
+    const page = await api.messages({ channel_id: channelId, after, limit: CATCH_UP_PAGE })
+    if (activeId.value !== channelId) return
+    found.push(...page)
+    if (page.length < CATCH_UP_PAGE) break
+    after = page[page.length - 1].id
   }
+
+  const known = (msg) => messages.value.some(
+    (m) => m.id === msg.id || (msg.client_msg_id && m.client_msg_id === msg.client_msg_id)
+  )
+  const fresh = found.filter((m) => !known(m)).map((m) => ({ ...m, status: 'delivered' }))
+  if (!fresh.length) return
+  // Saved messages in id order, then the ones still on their way, as they were.
+  const saved = [...messages.value.filter((m) => m.id), ...fresh]
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+  messages.value = [...saved, ...messages.value.filter((m) => !m.id)]
+  conversation.value?.toBottom()
 }
 
 // Friends and their conversations are the same list in the rail, so both are
@@ -599,10 +637,7 @@ onMounted(async () => {
     onStateChange: (state) => {
       const wasOffline = connection.value === 'offline'
       connection.value = state
-      if (state === 'online' && wasOffline) {
-        loadPresence()
-        if (activeId.value) backfill()
-      }
+      if (state === 'online' && wasOffline) loadPresence()
     },
   })
 })
