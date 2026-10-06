@@ -34,7 +34,9 @@ async function parse(res) {
 
 // How long a 429 asks to wait, as a person reads it.
 export function waitText(seconds) {
-  return seconds < 60 ? `${seconds} s` : `${Math.ceil(seconds / 60)} min`
+  if (seconds < 60) return `${seconds} s`
+  if (seconds < 3600) return `${Math.ceil(seconds / 60)} min`
+  return `${Math.ceil(seconds / 3600)} h`
 }
 
 // A send or an upload refused for coming too fast waits out the limit and goes
@@ -86,6 +88,7 @@ export const api = {
   acceptFriendRequest: (id) => request('POST', `/friends/requests/${id}/accept`),
   declineFriendRequest: (id) => request('POST', `/friends/requests/${id}/decline`),
   friends: () => request('GET', '/friends'),
+  removeFriend: (id) => request('DELETE', `/friends/${id}`),
 
   uploadMedia: (file) => upload('/media', file),
   messages: (params) => request('GET', '/messages' + qs(params)),

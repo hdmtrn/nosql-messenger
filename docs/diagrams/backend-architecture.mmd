@@ -27,7 +27,7 @@ flowchart LR
     hch["handleCreateChannel, handleListChannels,<br/>handleGetChannel, handleOpenDirect,<br/>handleLeaveChannel, handleMarkRead,<br/>handleChannelsInCommon,<br/>handleSetChannelAvatar,<br/>handleDeleteChannelAvatar"]
     hinv["handleGetInvite, handleResetInvite,<br/>handleFollowInvite"]
     hmsg["handleSendMessage,<br/>handleForwardMessage,<br/>handleListMessages,<br/>deliverMessage"]
-    hfr["handleSendFriendRequest,<br/>handleListFriendRequests,<br/>handleAcceptFriendRequest,<br/>handleDeclineFriendRequest,<br/>handleListFriends"]
+    hfr["handleSendFriendRequest,<br/>handleListFriendRequests,<br/>handleAcceptFriendRequest,<br/>handleDeclineFriendRequest,<br/>handleListFriends, handleRemoveFriend"]
     hmedia["handleUploadMedia,<br/>handleGetMedia, saveUpload"]
     hpres["handlePresence<br/>visibleTo"]
     hhealth["handleHealthz — liveness"]
@@ -93,7 +93,7 @@ flowchart LR
 
   hauth --> authsvc
   hauth -->|"handleDeleteAccount"| erase
-  authsvc & hmsg & hmedia --> limits
+  authsvc & hmsg & hmedia & hfr --> limits
   authsvc --> ustore
   authsvc --> sstore
   husers --> ustore

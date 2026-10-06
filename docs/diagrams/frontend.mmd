@@ -15,6 +15,7 @@ flowchart TD
     info["InfoPanel.vue<br/>channel info, invite link"]
     profile["Profile.vue<br/>own profile, devices"]
     userp["UserPanel.vue<br/>another person"]
+    reqp["RequestsPanel.vue<br/>incoming and sent requests"]
   end
 
   subgraph comps["components/"]
@@ -23,7 +24,7 @@ flowchart TD
     composer["MessageComposer → SendFilesDialog"]
     menu["MessageMenu"]
     viewer["MediaViewer"]
-    prims["ChannelGlyph, SgAvatar, SgButton,<br/>SgDialog, SgInput, SgSpinner, PaneHeader"]
+    prims["ChannelGlyph, SgAvatar, SgButton,<br/>SgDialog, SgInput, SgSpinner, PaneHeader,<br/>RemoveFriendDialog"]
   end
 
   subgraph clients["client modules"]
@@ -43,11 +44,12 @@ flowchart TD
   app -->|"/auth/me, /auth/logout"| apijs
   signin -->|"/auth/login, /auth/register"| apijs
 
-  messenger --> conv & info & profile & userp & rail
+  messenger --> conv & info & profile & userp & reqp & rail
   conv --> bubble & composer & menu & viewer & prims
   info --> viewer & prims
   profile --> viewer & prims
   userp --> viewer & prims
+  reqp --> prims
   rail --> prims
   menu --> prims
   bubble --> prims
@@ -64,6 +66,7 @@ flowchart TD
   info --> naming & images & pending
   profile --> naming & images
   userp --> naming
+  reqp --> naming
   conv --> naming
   rail --> naming
   composer --> images

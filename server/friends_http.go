@@ -30,6 +30,11 @@ func (s *server) announceFriends(ids ...bson.ObjectID) {
 }
 
 func (s *server) handleSendFriendRequest(w http.ResponseWriter, r *http.Request, sess Session) {
+	// Counted before the lookup, so a name that does not exist costs the same
+	// as one that does.
+	if !s.limits.allow(w, r, limitFriendRequests, sess.UserID.Hex()) {
+		return
+	}
 	var body friendRequestBody
 	if !decodeJSON(w, r, &body) {
 		return
@@ -43,6 +48,9 @@ func (s *server) handleSendFriendRequest(w http.ResponseWriter, r *http.Request,
 	if err != nil {
 		log.Printf("looking up user: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !s.limits.allow(w, r, limitFriendPair, sess.UserID.Hex()+">"+target.ID.Hex()) {
 		return
 	}
 
@@ -114,6 +122,28 @@ func (s *server) handleAcceptFriendRequest(w http.ResponseWriter, r *http.Reques
 
 func (s *server) handleDeclineFriendRequest(w http.ResponseWriter, r *http.Request, sess Session) {
 	s.respond(w, r, sess, friendDeclined)
+}
+
+// handleRemoveFriend ends a friendship and nothing else: a conversation the two
+// had stays with both of them. The answer is the same whether they were friends
+// or not, so a second click or a second tab is not an error.
+func (s *server) handleRemoveFriend(w http.ResponseWriter, r *http.Request, sess Session) {
+	id, err := bson.ObjectIDFromHex(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "malformed user id")
+		return
+	}
+
+	removed, err := s.friends.Remove(r.Context(), sess.UserID, id)
+	if err != nil {
+		log.Printf("removing a friend: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if removed {
+		s.announceFriends(sess.UserID, id)
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *server) handleListFriends(w http.ResponseWriter, r *http.Request, sess Session) {

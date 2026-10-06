@@ -35,7 +35,7 @@ hub is shared. What ties the instances together is Redis, in two distinct roles.
 | Topic | Payload | Subscribed |
 |---|---|---|
 | `ch:{channelID}` | a stored `Message` as JSON, or `typingEvent` / `presenceEvent` / `profileEvent`, told apart by a `type` field a message never has | dynamically, while this node has at least one local socket reading that channel |
-| `u:{userID}` | `{"type":"friends"}`: a friend request arrived or was answered, and both lists are fetched again | dynamically, like a channel: `Hub.Connect` attaches every socket to its user's topic as well |
+| `u:{userID}` | `{"type":"friends"}`: a friend request arrived or was answered, or a friendship ended, and both lists are fetched again | dynamically, like a channel: `Hub.Connect` attaches every socket to its user's topic as well |
 | `session-revoked` | a session `ObjectID` hex — never the token | permanently, from `newBus` |
 | `subscription` | `subscriptionChange{user_id, channel_id, subscribed}` | permanently, from `newBus` |
 | `resync` | nothing that matters: hearing it is the message | permanently, from `newBus`; published by a node whose publishes failed once Redis takes one again, and by every node as it starts |
@@ -113,6 +113,8 @@ move. A 429 carries `Retry-After`, the key's remaining TTL.
 | `rl:register-ip:{ip}` | 1 h | 50 | registrations from the address |
 | `rl:messages:{userID}` | 10 s | 30 | sends and forwards |
 | `rl:uploads:{userID}` | 1 min | 60 | pictures and both kinds of avatar |
+| `rl:friend-requests:{userID}` | 1 h | 20 | friend requests to anyone, counted before the name is looked up |
+| `rl:friend-pair:{fromID}>{toID}` | 24 h | 3 | friend requests to one person, so a decline cannot be answered with the same request at once |
 
 The address is the connection's, or the last `X-Forwarded-For` entry with `TRUST_PROXY=true`;
 an IPv6 address counts by its /64.
@@ -265,7 +267,7 @@ flowchart LR
     hch["handleCreateChannel, handleListChannels,<br/>handleGetChannel, handleOpenDirect,<br/>handleLeaveChannel, handleMarkRead,<br/>handleChannelsInCommon,<br/>handleSetChannelAvatar,<br/>handleDeleteChannelAvatar"]
     hinv["handleGetInvite, handleResetInvite,<br/>handleFollowInvite"]
     hmsg["handleSendMessage,<br/>handleForwardMessage,<br/>handleListMessages,<br/>deliverMessage"]
-    hfr["handleSendFriendRequest,<br/>handleListFriendRequests,<br/>handleAcceptFriendRequest,<br/>handleDeclineFriendRequest,<br/>handleListFriends"]
+    hfr["handleSendFriendRequest,<br/>handleListFriendRequests,<br/>handleAcceptFriendRequest,<br/>handleDeclineFriendRequest,<br/>handleListFriends, handleRemoveFriend"]
     hmedia["handleUploadMedia,<br/>handleGetMedia, saveUpload"]
     hpres["handlePresence<br/>visibleTo"]
     hhealth["handleHealthz — liveness"]
@@ -331,7 +333,7 @@ flowchart LR
 
   hauth --> authsvc
   hauth -->|"handleDeleteAccount"| erase
-  authsvc & hmsg & hmedia --> limits
+  authsvc & hmsg & hmedia & hfr --> limits
   authsvc --> ustore
   authsvc --> sstore
   husers --> ustore
@@ -387,8 +389,8 @@ flowchart LR
   `GET /ws` and `GET /`. The auth routes read the cookie themselves where they need it;
   `/ws` is outside on purpose — see `seq-ws-connect.mmd`.
 - **Limits are counted before the work they guard.** `limiter.allow` is one `INCR` in
-  Redis, with the window set by `EXPIRE NX`; login, registration, sends, forwards and
-  uploads call it first, so a refused request costs a Redis round trip and never a
+  Redis, with the window set by `EXPIRE NX`; login, registration, sends, forwards,
+  uploads and friend requests call it first, so a refused request costs a Redis round trip and never a
   password hash or a write. Keys and numbers are in the rate limit table above.
 - **Two jobs run on every node.** `runPurge`, every 5 minutes, removes channels marked at
   their last leave and finishes account erasures whose claim ran out; `runFileSweep`
@@ -488,6 +490,7 @@ flowchart TD
     info["InfoPanel.vue<br/>channel info, invite link"]
     profile["Profile.vue<br/>own profile, devices"]
     userp["UserPanel.vue<br/>another person"]
+    reqp["RequestsPanel.vue<br/>incoming and sent requests"]
   end
 
   subgraph comps["components/"]
@@ -496,7 +499,7 @@ flowchart TD
     composer["MessageComposer → SendFilesDialog"]
     menu["MessageMenu"]
     viewer["MediaViewer"]
-    prims["ChannelGlyph, SgAvatar, SgButton,<br/>SgDialog, SgInput, SgSpinner, PaneHeader"]
+    prims["ChannelGlyph, SgAvatar, SgButton,<br/>SgDialog, SgInput, SgSpinner, PaneHeader,<br/>RemoveFriendDialog"]
   end
 
   subgraph clients["client modules"]
@@ -516,11 +519,12 @@ flowchart TD
   app -->|"/auth/me, /auth/logout"| apijs
   signin -->|"/auth/login, /auth/register"| apijs
 
-  messenger --> conv & info & profile & userp & rail
+  messenger --> conv & info & profile & userp & reqp & rail
   conv --> bubble & composer & menu & viewer & prims
   info --> viewer & prims
   profile --> viewer & prims
   userp --> viewer & prims
+  reqp --> prims
   rail --> prims
   menu --> prims
   bubble --> prims
@@ -537,6 +541,7 @@ flowchart TD
   info --> naming & images & pending
   profile --> naming & images
   userp --> naming
+  reqp --> naming
   conv --> naming
   rail --> naming
   composer --> images
@@ -576,7 +581,7 @@ Which module calls what:
 |---|---|
 | `App.vue` | `me`, `logout` |
 | `views/SignIn.vue` | `login`, `register`, `me` |
-| `views/Messenger.vue` | `channels`, `createChannel`, `openDirect`, `leaveChannel`, `followInvite`, `messages`, `messagesByIds`, `send`, `forward`, `presence`, `friends`, `friendRequests`, `sendFriendRequest`, `acceptFriendRequest`, `declineFriendRequest`, `markRead` |
+| `views/Messenger.vue` | `channels`, `createChannel`, `openDirect`, `leaveChannel`, `followInvite`, `messages`, `messagesByIds`, `send`, `forward`, `presence`, `friends`, `friendRequests`, `sendFriendRequest`, `acceptFriendRequest`, `declineFriendRequest`, `removeFriend`, `markRead` |
 | `views/InfoPanel.vue` | `channel`, `channelsInCommon`, `invite`, `resetInvite`, `setChannelAvatar`, `removeChannelAvatar`, `user` |
 | `views/Profile.vue` | `updateProfile`, `setAvatar`, `removeAvatar`, `sessions`, `revokeSession`, `deleteAccount` |
 | `views/UserPanel.vue` | `user`, `channelsInCommon` |
@@ -839,6 +844,8 @@ classDiagram
     rl:register-ip:IP 1 h
     rl:messages:USER_ID 10 s
     rl:uploads:USER_ID 1 min
+    rl:friend-requests:USER_ID 1 h
+    rl:friend-pair:USER_ID>USER_ID 24 h
   }
 
   class subscriptionChange {

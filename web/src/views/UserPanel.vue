@@ -4,6 +4,7 @@ import { api } from '../api'
 import ChannelGlyph from '../components/ChannelGlyph.vue'
 import SgAvatar from '../components/SgAvatar.vue'
 import SgButton from '../components/SgButton.vue'
+import RemoveFriendDialog from '../components/RemoveFriendDialog.vue'
 import MediaViewer from '../components/MediaViewer.vue'
 import { DELETED_NAME, avatarUrl, channelAvatarUrl, initials } from '../naming'
 
@@ -13,12 +14,13 @@ const props = defineProps({
   // panel only needs to know which button to offer.
   relation: { type: String, default: 'none' }, // friend | incoming | sent | none
 })
-const emit = defineEmits(['close', 'message', 'befriend', 'select'])
+const emit = defineEmits(['close', 'message', 'befriend', 'unfriend', 'select'])
 
 const person = ref(null)
 const missing = ref(false)
 const common = ref([])
 const viewing = ref(false)
+const confirmRemove = ref(false)
 
 // Same guard as the info panel: clicking two authors in a row leaves two loads
 // in flight, and only the newest one may write.
@@ -76,8 +78,10 @@ const name = computed(() => (gone.value ? DELETED_NAME : person.value ? person.v
       <p v-else-if="gone" class="label note">This account was deleted</p>
 
       <template v-else>
-        <SgButton v-if="relation === 'friend'" variant="primary"
-                  @click="emit('message', username)">Send message</SgButton>
+        <div v-if="relation === 'friend'" class="actions">
+          <SgButton variant="primary" @click="emit('message', username)">Send message</SgButton>
+          <SgButton variant="outline" @click="confirmRemove = true">Remove friend</SgButton>
+        </div>
         <SgButton v-else-if="relation === 'sent'" variant="outline" disabled>Request sent</SgButton>
         <!-- an open request the other way round is accepted by sending one back -->
         <SgButton v-else variant="primary" @click="emit('befriend', username)">
@@ -85,6 +89,9 @@ const name = computed(() => (gone.value ? DELETED_NAME : person.value ? person.v
         </SgButton>
       </template>
     </div>
+
+    <RemoveFriendDialog v-if="confirmRemove" :name="name" @close="confirmRemove = false"
+                        @remove="confirmRemove = false; emit('unfriend', username)" />
 
     <template v-if="!missing">
       <span class="label section">Channels in common</span>
@@ -191,4 +198,9 @@ const name = computed(() => (gone.value ? DELETED_NAME : person.value ? person.v
   cursor: zoom-in;
 }
 .avatar:disabled { cursor: default; }
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 </style>
