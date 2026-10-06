@@ -118,6 +118,8 @@ and the client waits that long and sends again.
 | registration, per address | 50 an hour |
 | messages, per user | 30 in 10 seconds, forwards included |
 | uploads, per user | 60 a minute, avatars included |
+| friend requests, per user | 20 an hour |
+| friend requests, per user and recipient | 3 a day |
 
 The address is the connection's. Behind a load balancer set `TRUST_PROXY=true`, and the
 last `X-Forwarded-For` entry is used instead: the balancer appends the address that

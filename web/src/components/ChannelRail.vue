@@ -15,9 +15,10 @@ const props = defineProps({
   activeId: { type: String, default: null },
   unread: { type: Object, default: () => ({}) },
   profileOpen: Boolean,
+  requestsOpen: Boolean,
 })
 
-const emit = defineEmits(['select', 'create', 'open-direct', 'add-friend', 'respond', 'profile', 'person'])
+const emit = defineEmits(['select', 'create', 'open-direct', 'add-friend', 'requests', 'profile', 'person'])
 
 // The width is a preference of this browser, not of the account, so it is kept in
 // localStorage. Storage can be unavailable (private mode, blocked site data), and
@@ -74,16 +75,23 @@ function search() {
 
 const named = computed(() => props.channels.filter((c) => c.kind !== 'direct'))
 
-// Every friend belongs here, whether or not a conversation has been opened yet.
+// Every friend belongs here, whether or not a conversation has been opened yet,
+// and so does every conversation: removing a friend or deleting an account
+// ends a friendship, not what was written.
 const conversations = computed(() => {
   const byUsername = new Map()
   for (const c of props.channels.filter((c) => c.kind === 'direct')) {
     byUsername.set(channelTitle(c, props.me.id), c)
   }
-  return props.friends.map((f) => ({
+  const rows = props.friends.map((f) => ({
     username: f.username,
     channel: byUsername.get(f.username) || null,
   }))
+  const listed = new Set(rows.map((r) => r.username))
+  for (const [username, channel] of byUsername) {
+    if (!listed.has(username)) rows.push({ username, channel })
+  }
+  return rows
 })
 
 const isFriend = (username) => props.friends.some((f) => f.username === username)
@@ -132,37 +140,27 @@ const isPending = (username) => props.sentTo.includes(username)
       </template>
 
       <template v-else>
-        <template v-if="requests.length">
-          <div class="section-head">
-            <span v-if="!collapsed" class="label">Friend requests</span>
-          </div>
-          <!-- Answering needs the buttons, so a collapsed request only opens the rail. -->
-          <template v-if="collapsed">
-            <button v-for="r in requests" :key="r.id" type="button"
-                    :title="`Friend request from ${r.from.username}`"
-                    :aria-label="`Friend request from ${r.from.username}`"
-                    class="request-mark"
-                    @click="collapsed = false">
-              <span class="mark"><SgAvatar :initials="initials(displayName(r.from.username))" :src="avatarUrl(r.from.username)" :size="24" tone="onBlue" /></span>
-            </button>
-          </template>
-          <template v-else>
-            <div v-for="r in requests" :key="r.id" class="person-row">
-              <button type="button" class="person" @click="emit('person', r.from.username)">
-                <span class="mark"><SgAvatar :initials="initials(displayName(r.from.username))" :src="avatarUrl(r.from.username)" :size="24" tone="onBlue" /></span>
-                <span class="person-name">{{ displayName(r.from.username) }}</span>
-              </button>
-              <SgButton variant="outline" size="sm" on-blue
-                        @click="emit('respond', r.id, 'accept')">Yes</SgButton>
-              <SgButton variant="ghost" size="sm" on-blue
-                        @click="emit('respond', r.id, 'decline')">No</SgButton>
-            </div>
-          </template>
-        </template>
+        <!-- Only the count lives here; the requests themselves open in a panel. -->
+        <button type="button" class="requests-row"
+                :class="{ 'requests-row--active': requestsOpen, 'requests-row--compact': collapsed }"
+                :aria-current="requestsOpen || undefined"
+                :aria-label="collapsed ? 'Friend requests' : undefined"
+                :title="collapsed ? 'Friend requests' : undefined"
+                @click="emit('requests')">
+          <span class="mark">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+              <circle cx="9" cy="8" r="4" />
+              <path d="M2 20c0-3.6 3.1-6 7-6s7 2.4 7 6M19 8v6M16 11h6" />
+            </svg>
+          </span>
+          <span v-if="!collapsed" class="new-label">Friend requests</span>
+          <span v-if="requests.length && !requestsOpen" class="badge">
+            {{ requests.length > 99 ? '99+' : requests.length }}
+          </span>
+        </button>
 
-        <div class="group-gap">
-          <div v-if="requests.length" class="divider" />
-        </div>
+        <div class="group-gap"><div class="divider" /></div>
         <ChannelRow
           v-for="c in named"
           :key="c.id"
@@ -338,15 +336,40 @@ const isPending = (username) => props.sentTo.includes(username)
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.request-mark {
+.requests-row {
+  position: relative;
   display: flex;
   align-items: center;
-  width: 40px;
+  gap: 8px;
+  width: 100%;
   height: 40px;
-  padding: 0;
+  padding: 0 12px 0 0;
   border: none;
+  border-radius: var(--radius-pill);
   background: transparent;
+  color: #fff;
+  text-align: left;
   cursor: pointer;
+}
+.requests-row--compact { padding: 0; }
+.requests-row--active {
+  background: var(--surface-panel);
+  color: var(--blue);
+}
+.requests-row .new-label { flex: 1; }
+/* The same count as a chat's unread, and on the mark's corner when collapsed. */
+.badge {
+  font: var(--text-label);
+  background: #fff;
+  color: var(--blue);
+  border-radius: var(--radius-pill);
+  padding: 2px 7px;
+}
+.requests-row--compact .badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 1px 5px;
 }
 .new-row {
   display: flex;

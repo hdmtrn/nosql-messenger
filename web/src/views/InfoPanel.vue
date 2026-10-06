@@ -6,6 +6,7 @@ import SgAvatar from '../components/SgAvatar.vue'
 import SgButton from '../components/SgButton.vue'
 import SgDialog from '../components/SgDialog.vue'
 import MediaViewer from '../components/MediaViewer.vue'
+import RemoveFriendDialog from '../components/RemoveFriendDialog.vue'
 import { avatarUrl, channelAvatarUrl, displayName, initials } from '../naming'
 import { toJpeg } from '../images'
 import { inviteLink } from '../pending'
@@ -14,8 +15,11 @@ const props = defineProps({
   me: { type: Object, required: true },
   channel: { type: Object, required: true },
   title: { type: String, required: true },
+  // Of a direct conversation: whether its other side is a friend, which the
+  // messenger knows from its lists.
+  friend: Boolean,
 })
-const emit = defineEmits(['close', 'leave', 'select', 'person', 'changed'])
+const emit = defineEmits(['close', 'leave', 'select', 'person', 'changed', 'unfriend'])
 
 const direct = () => props.channel.kind === 'direct'
 
@@ -23,6 +27,7 @@ const members = ref([])
 const inviteCode = ref('')
 const person = ref(null)
 const common = ref([])
+const confirmRemove = ref(false)
 
 // Every load is numbered. Switching channels twice in a row leaves two requests
 // in flight, and the first one may answer last; a reply that is not the newest
@@ -172,6 +177,13 @@ async function removeAvatar() {
           <span class="grow">{{ c.name }}</span>
         </button>
       </div>
+
+      <div v-if="friend" class="card list">
+        <button type="button" class="row clickable body leave"
+                @click="confirmRemove = true">Remove friend</button>
+      </div>
+      <RemoveFriendDialog v-if="confirmRemove" :name="displayName(title)" @close="confirmRemove = false"
+                          @remove="confirmRemove = false; emit('unfriend', title)" />
     </template>
 
     <template v-else>

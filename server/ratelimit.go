@@ -36,6 +36,10 @@ var (
 	limitRegisterIP = rateLimit{"register-ip", 50, time.Hour}
 	limitMessages   = rateLimit{"messages", 30, 10 * time.Second}
 	limitUploads    = rateLimit{"uploads", 60, time.Minute}
+	// Requests to anyone, and to one person: without the second a decline
+	// could be answered with the same request at once, over and over.
+	limitFriendRequests = rateLimit{"friend-requests", 20, time.Hour}
+	limitFriendPair     = rateLimit{"friend-pair", 3, 24 * time.Hour}
 )
 
 // limiter keeps the counts in Redis, so that the nodes share them: a count

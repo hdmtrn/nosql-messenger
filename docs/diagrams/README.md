@@ -112,6 +112,8 @@ move. A 429 carries `Retry-After`, the key's remaining TTL.
 | `rl:register-ip:{ip}` | 1 h | 50 | registrations from the address |
 | `rl:messages:{userID}` | 10 s | 30 | sends and forwards |
 | `rl:uploads:{userID}` | 1 min | 60 | pictures and both kinds of avatar |
+| `rl:friend-requests:{userID}` | 1 h | 20 | friend requests to anyone, counted before the name is looked up |
+| `rl:friend-pair:{fromID}>{toID}` | 24 h | 3 | friend requests to one person, so a decline cannot be answered with the same request at once |
 
 The address is the connection's, or the last `X-Forwarded-For` entry with `TRUST_PROXY=true`;
 an IPv6 address counts by its /64.
@@ -244,7 +246,7 @@ flowchart LR
     hch["handleCreateChannel, handleListChannels,<br/>handleGetChannel, handleOpenDirect,<br/>handleLeaveChannel,<br/>handleChannelsInCommon,<br/>handleSetChannelAvatar"]
     hinv["handleGetInvite, handleResetInvite,<br/>handleFollowInvite"]
     hmsg["handleSendMessage,<br/>handleForwardMessage,<br/>handleListMessages,<br/>deliverMessage"]
-    hfr["handleSendFriendRequest,<br/>handleListFriendRequests,<br/>handleAcceptFriendRequest,<br/>handleDeclineFriendRequest,<br/>handleListFriends"]
+    hfr["handleSendFriendRequest,<br/>handleListFriendRequests,<br/>handleAcceptFriendRequest,<br/>handleDeclineFriendRequest,<br/>handleListFriends, handleRemoveFriend"]
     hmedia["handleUploadMedia,<br/>handleGetMedia, saveUpload"]
     hpres["handlePresence<br/>visibleTo"]
     hhealth["handleHealthz — liveness"]
@@ -428,6 +430,7 @@ flowchart TD
     info["InfoPanel.vue<br/>channel info, invite link"]
     profile["Profile.vue<br/>own profile, devices"]
     userp["UserPanel.vue<br/>another person"]
+    reqp["RequestsPanel.vue<br/>incoming and sent requests"]
   end
 
   subgraph comps["components/"]
@@ -436,7 +439,7 @@ flowchart TD
     composer["MessageComposer → SendFilesDialog"]
     menu["MessageMenu"]
     viewer["MediaViewer"]
-    prims["ChannelGlyph, SgAvatar, SgButton,<br/>SgDialog, SgInput, SgSpinner, PaneHeader"]
+    prims["ChannelGlyph, SgAvatar, SgButton,<br/>SgDialog, SgInput, SgSpinner, PaneHeader,<br/>RemoveFriendDialog"]
   end
 
   subgraph clients["client modules"]
@@ -456,11 +459,12 @@ flowchart TD
   app -->|"/auth/me, /auth/logout"| apijs
   signin -->|"/auth/login, /auth/register"| apijs
 
-  messenger --> conv & info & profile & userp & rail
+  messenger --> conv & info & profile & userp & reqp & rail
   conv --> bubble & composer & menu & viewer & prims
   info --> viewer & prims
   profile --> viewer & prims
   userp --> viewer & prims
+  reqp --> prims
   rail --> prims
   menu --> prims
   bubble --> prims
@@ -477,6 +481,7 @@ flowchart TD
   info --> naming & images & pending
   profile --> naming & images
   userp --> naming
+  reqp --> naming
   conv --> naming
   rail --> naming
   composer --> images
@@ -516,7 +521,7 @@ Which module calls what:
 |---|---|
 | `App.vue` | `me`, `logout` |
 | `views/SignIn.vue` | `login`, `register`, `me` |
-| `views/Messenger.vue` | `channels`, `createChannel`, `openDirect`, `leaveChannel`, `followInvite`, `messages`, `messagesByIds`, `send`, `forward`, `presence`, `friends`, `friendRequests`, `sendFriendRequest`, `acceptFriendRequest`, `declineFriendRequest` |
+| `views/Messenger.vue` | `channels`, `createChannel`, `openDirect`, `leaveChannel`, `followInvite`, `messages`, `messagesByIds`, `send`, `forward`, `presence`, `friends`, `friendRequests`, `sendFriendRequest`, `acceptFriendRequest`, `declineFriendRequest`, `removeFriend` |
 | `views/InfoPanel.vue` | `channel`, `channelsInCommon`, `invite`, `resetInvite`, `setChannelAvatar`, `removeChannelAvatar`, `user` |
 | `views/Profile.vue` | `updateProfile`, `setAvatar`, `removeAvatar`, `sessions`, `revokeSession` |
 | `views/UserPanel.vue` | `user`, `channelsInCommon` |
@@ -779,6 +784,8 @@ classDiagram
     rl:register-ip:IP 1 h
     rl:messages:USER_ID 10 s
     rl:uploads:USER_ID 1 min
+    rl:friend-requests:USER_ID 1 h
+    rl:friend-pair:USER_ID>USER_ID 24 h
   }
 
   class subscriptionChange {
