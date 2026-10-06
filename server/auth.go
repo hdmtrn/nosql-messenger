@@ -208,8 +208,10 @@ func (a *auth) checkPassword(w http.ResponseWriter, r *http.Request, username, p
 	if !a.limits.allow(w, r, limitLoginIP, ip) {
 		return nil
 	}
-	// Only a name that could exist is counted: any other string would be a key
-	// nobody can log in as, and a way to fill Redis with garbage.
+	// Counted now, before the hash, and not after a failure: a check here and a
+	// count after the hash let a burst of parallel attempts all pass on the same
+	// zero. Only a name that could exist is counted: any other string would be a
+	// key nobody can log in as, and a way to fill Redis with garbage.
 	name := normaliseUsername(username)
 	counted := validateUsername(name) == nil
 	pair := name + "@" + ip
@@ -218,8 +220,7 @@ func (a *auth) checkPassword(w http.ResponseWriter, r *http.Request, username, p
 			lim rateLimit
 			key string
 		}{{limitLoginPair, pair}, {limitLoginUser, name}} {
-			if wait, ok := a.limits.check(r.Context(), c.lim, c.key); !ok {
-				writeTooMany(w, wait)
+			if !a.limits.allow(w, r, c.lim, c.key) {
 				return nil
 			}
 		}
@@ -252,16 +253,14 @@ func (a *auth) checkPassword(w http.ResponseWriter, r *http.Request, username, p
 	}
 
 	if u == nil || !match {
-		if counted {
-			a.limits.hit(r.Context(), limitLoginPair, pair)
-			a.limits.hit(r.Context(), limitLoginUser, name)
-		}
 		writeError(w, http.StatusUnauthorized, "invalid username or password")
 		return nil
 	}
 
-	// The owner got in from here, so the mistakes made here are forgiven. The
-	// count for the account stays: it is what holds a spread-out guess back.
+	// The owner got in from here, so the attempts made here are forgiven. The
+	// count for the account stays: it is what holds a spread-out guess back, and
+	// taking a success off it could leave a key without a TTL if the window ran
+	// out in between.
 	a.limits.clear(r.Context(), limitLoginPair, pair)
 	return u
 }

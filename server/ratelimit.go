@@ -2,11 +2,11 @@ package main
 
 import (
 	"context"
-	"errors"
 	"log"
 	"math"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -27,11 +27,11 @@ type rateLimit struct {
 var (
 	// Every attempt from one address: one password tried across many accounts.
 	limitLoginIP = rateLimit{"login-ip", 100, time.Minute}
-	// Failures for one account from one address. A stranger elsewhere runs
-	// into a count of their own, not the owner's.
+	// Attempts at one account from one address, cleared by logging in. A
+	// stranger elsewhere runs into a count of their own, not the owner's.
 	limitLoginPair = rateLimit{"login-pair", 10, 15 * time.Minute}
-	// Failures for one account from everywhere: the ceiling for a guess spread
-	// over many addresses.
+	// Attempts at one account from everywhere: the ceiling for a guess spread
+	// over many addresses. A person logs in far fewer times than this.
 	limitLoginUser  = rateLimit{"login-user", 100, time.Hour}
 	limitRegisterIP = rateLimit{"register-ip", 50, time.Hour}
 	limitMessages   = rateLimit{"messages", 30, 10 * time.Second}
@@ -109,33 +109,6 @@ func (l *limiter) hit(ctx context.Context, lim rateLimit, key string) (time.Dura
 	return ttl.Val(), false
 }
 
-// check is hit without the count, for the login limits that only failures
-// move: they are read before the password is, and counted after it fails.
-func (l *limiter) check(ctx context.Context, lim rateLimit, key string) (time.Duration, bool) {
-	if l == nil {
-		return 0, true
-	}
-	k := l.key(lim, key)
-	var count *redis.StringCmd
-	var ttl *redis.DurationCmd
-	_, err := l.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
-		count = p.Get(ctx, k)
-		ttl = p.PTTL(ctx, k)
-		return nil
-	})
-	if errors.Is(err, redis.Nil) {
-		return 0, true
-	}
-	if err != nil {
-		l.stepAside(err)
-		return 0, true
-	}
-	if n, _ := count.Int64(); n < lim.n {
-		return 0, true
-	}
-	return ttl.Val(), false
-}
-
 func (l *limiter) clear(ctx context.Context, lim rateLimit, key string) {
 	if l == nil {
 		return
@@ -174,15 +147,34 @@ func (l *limiter) clientIP(r *http.Request) string {
 		if values := r.Header.Values("X-Forwarded-For"); len(values) > 0 {
 			entries := strings.Split(values[len(values)-1], ",")
 			if ip := strings.TrimSpace(entries[len(entries)-1]); ip != "" {
-				return ip
+				return addressKey(ip)
 			}
 		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		return addressKey(r.RemoteAddr)
 	}
-	return host
+	return addressKey(host)
+}
+
+// addressKey counts an IPv6 address by its /64: one person is usually given a
+// whole /64, and a limit per address would let them walk through 2^64 of them.
+// An IPv4 address, written plain or mapped into IPv6, counts as itself.
+func addressKey(ip string) string {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return ip
+	}
+	addr = addr.Unmap()
+	if addr.Is4() {
+		return addr.String()
+	}
+	prefix, err := addr.Prefix(64)
+	if err != nil {
+		return ip
+	}
+	return prefix.String()
 }
 
 func writeTooMany(w http.ResponseWriter, wait time.Duration) {

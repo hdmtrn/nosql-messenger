@@ -102,13 +102,14 @@ move. A 429 carries `Retry-After`, the key's remaining TTL.
 | Key | Window | Limit | Counts |
 |---|---|---|---|
 | `rl:login-ip:{ip}` | 1 min | 100 | every login attempt from the address |
-| `rl:login-pair:{username}@{ip}` | 15 min | 10 | failed logins for the account from the address; a success deletes it |
-| `rl:login-user:{username}` | 1 h | 100 | failed logins for the account from anywhere |
+| `rl:login-pair:{username}@{ip}` | 15 min | 10 | login attempts at the account from the address, counted before the hash; a success deletes it |
+| `rl:login-user:{username}` | 1 h | 100 | login attempts at the account from anywhere, counted before the hash |
 | `rl:register-ip:{ip}` | 1 h | 50 | registrations from the address |
 | `rl:messages:{userID}` | 10 s | 30 | sends and forwards |
 | `rl:uploads:{userID}` | 1 min | 60 | pictures and both kinds of avatar |
 
-The address is the connection's, or the last `X-Forwarded-For` entry with `TRUST_PROXY=true`.
+The address is the connection's, or the last `X-Forwarded-For` entry with `TRUST_PROXY=true`;
+an IPv6 address counts by its /64.
 With Redis unreachable the limits let requests through; the limiter's own client gives up
 after 250 ms, so that costs a request a moment, not the default dial and retries.
 

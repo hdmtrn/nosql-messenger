@@ -5,11 +5,13 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -133,28 +135,6 @@ func TestTwoNodesShareOneCount(t *testing.T) {
 	}
 }
 
-func TestCheckReadsWithoutCounting(t *testing.T) {
-	ctx := context.Background()
-	l := testLimiter(t)
-	lim := rateLimit{"failures", 2, time.Minute}
-
-	for range 5 {
-		if _, ok := l.check(ctx, lim, "k"); !ok {
-			t.Fatalf("check refused a key nothing was counted on")
-		}
-	}
-	l.hit(ctx, lim, "k")
-	l.hit(ctx, lim, "k")
-	wait, ok := l.check(ctx, lim, "k")
-	if ok || wait <= 0 {
-		t.Fatalf("check after the limit was reached: ok=%v wait=%v", ok, wait)
-	}
-	l.clear(ctx, lim, "k")
-	if _, ok := l.check(ctx, lim, "k"); !ok {
-		t.Fatalf("still refused after clear")
-	}
-}
-
 // With Redis gone the limits let requests through, and quickly: a Redis that
 // accepts the connection and never answers is the slow case.
 func TestWithoutRedisTheLimitsStepAsideQuickly(t *testing.T) {
@@ -179,10 +159,9 @@ func TestWithoutRedisTheLimitsStepAsideQuickly(t *testing.T) {
 		l := &limiter{rdb: redis.NewClient(limiterOptions(&redis.Options{Addr: addr})), prefix: "rl:"}
 		start := time.Now()
 		_, hitOK := l.hit(ctx, lim, "k")
-		_, checkOK := l.check(ctx, lim, "k")
 		took := time.Since(start)
 		l.Close()
-		if !hitOK || !checkOK {
+		if !hitOK {
 			t.Fatalf("%s: a Redis that does not answer refused the request", addr)
 		}
 		if took > 2*time.Second {
@@ -203,6 +182,9 @@ func TestClientIPTrustsOnlyTheLastForwardedEntry(t *testing.T) {
 		{"proxy, a spoofed entry before the real one", true, []string{"10.0.0.1, 203.0.113.9"}, "203.0.113.9"},
 		{"proxy, two headers", true, []string{"10.0.0.1", "198.51.100.4, 203.0.113.9"}, "203.0.113.9"},
 		{"proxy, no header", true, nil, "192.0.2.1"},
+		{"IPv6 counts by its /64", true, []string{"2001:db8:1:2:aaaa:bbbb:cccc:1"}, "2001:db8:1:2::/64"},
+		{"another address of the same /64", true, []string{"2001:db8:1:2::ffff"}, "2001:db8:1:2::/64"},
+		{"IPv4 mapped into IPv6 counts as itself", true, []string{"::ffff:203.0.113.9"}, "203.0.113.9"},
 	} {
 		r := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
 		r.RemoteAddr = "192.0.2.1:40000"
@@ -345,8 +327,9 @@ func TestASuccessfulLoginForgivesItsAddressOnly(t *testing.T) {
 	if n := counted(t, f.l, limitLoginPair, "alice@198.51.100.7"); n != 0 {
 		t.Fatalf("the address still has %d failures after the owner got in", n)
 	}
-	if n := counted(t, f.l, limitLoginUser, "alice"); n != 5 {
-		t.Fatalf("the account count is %d, want the 5 it had", n)
+	// The success itself is an attempt at the account, and it stays counted.
+	if n := counted(t, f.l, limitLoginUser, "alice"); n != 6 {
+		t.Fatalf("the account count is %d, want the 5 it had and this attempt", n)
 	}
 }
 
@@ -360,6 +343,45 @@ func TestANameThatCannotExistIsNotCounted(t *testing.T) {
 	if keys, _ := f.l.rdb.Keys(context.Background(), f.l.prefix+"login-*").Result(); len(keys) != 1 {
 		t.Fatalf("keys after a login as an impossible name: %v, want the address only", keys)
 	}
+}
+
+// A burst of wrong passwords sent at once gets no more tries than the limit:
+// every attempt takes its number from INCR before the hash.
+func TestParallelGuessesStopAtTheLimit(t *testing.T) {
+	f := newLoginFixture(t)
+	codes := parallelLogins(f, 30, func(int) string { return "198.51.100.7" })
+	if codes[http.StatusUnauthorized] > int(limitLoginPair.n) {
+		t.Fatalf("%d wrong passwords were checked from one address, want at most %d", codes[http.StatusUnauthorized], limitLoginPair.n)
+	}
+	if codes[http.StatusTooManyRequests] != 30-codes[http.StatusUnauthorized] {
+		t.Fatalf("answers %v, want the rest refused with 429", codes)
+	}
+}
+
+// The same from many addresses at once, against the account's ceiling.
+func TestParallelGuessesFromManyAddressesStopAtTheCeiling(t *testing.T) {
+	f := newLoginFixture(t)
+	preset(t, f.l, limitLoginUser, "alice", int(limitLoginUser.n)-5)
+	codes := parallelLogins(f, 20, func(i int) string { return fmt.Sprintf("192.0.2.%d", i+1) })
+	if codes[http.StatusUnauthorized] > 5 {
+		t.Fatalf("%d guesses got past an account with 5 tries left", codes[http.StatusUnauthorized])
+	}
+}
+
+func parallelLogins(f loginFixture, n int, ip func(int) string) map[int]int {
+	var mu sync.Mutex
+	codes := map[int]int{}
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Go(func() {
+			code := f.login(ip(i), "alice", "wrong password")
+			mu.Lock()
+			codes[code]++
+			mu.Unlock()
+		})
+	}
+	wg.Wait()
+	return codes
 }
 
 func TestRegistrationStopsAtTheAddressLimit(t *testing.T) {

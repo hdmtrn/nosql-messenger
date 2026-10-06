@@ -114,14 +114,16 @@ and the client waits that long and sends again.
 |---|---|
 | login, per address | 100 attempts a minute |
 | login, per account and address | 10 failures in 15 minutes; logging in clears it |
-| login, per account | 100 failures an hour, from all addresses together |
+| login, per account | 100 attempts an hour, from all addresses together |
 | registration, per address | 50 an hour |
 | messages, per user | 30 in 10 seconds, forwards included |
 | uploads, per user | 60 a minute, avatars included |
 
 The address is the connection's. Behind a load balancer set `TRUST_PROXY=true`, and the
 last `X-Forwarded-For` entry is used instead: the balancer appends the address that
-connected to it, and anything before that comes from the client. With Redis down the
+connected to it, and anything before that comes from the client. An IPv6 address counts by
+its /64. Login attempts are counted before the password is checked, so a burst of parallel
+attempts gets no more tries than the limit. With Redis down the
 limits let everything through.
 
 ## Layout
