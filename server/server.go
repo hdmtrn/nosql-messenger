@@ -41,6 +41,7 @@ type server struct {
 	messages *messageStore
 	friends  *friendStore
 	media    *mediaStore
+	reads    *readStore
 	limits   *limiter
 
 	// The socket handlers still running. Shutdown waits for them before it
@@ -81,6 +82,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /channels/direct", s.requireAuth(s.handleOpenDirect))
 	mux.HandleFunc("GET /channels/{id}", s.requireAuth(s.handleGetChannel))
 	mux.HandleFunc("POST /channels/{id}/leave", s.requireAuth(s.handleLeaveChannel))
+	mux.HandleFunc("POST /channels/{id}/read", s.requireAuth(s.handleMarkRead))
 	mux.HandleFunc("POST /channels/{id}/avatar", s.requireAuth(s.handleSetChannelAvatar))
 	mux.HandleFunc("DELETE /channels/{id}/avatar", s.requireAuth(s.handleDeleteChannelAvatar))
 

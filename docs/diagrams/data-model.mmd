@@ -45,6 +45,7 @@ classDiagram
     +int MemberCount
     +string DirectKey
     +string InviteCode
+    +int64 LastSeq
   }
 
   class ChannelMember {
@@ -63,10 +64,18 @@ classDiagram
     +string Text
     +time_Time CreatedAt
     +string ClientMsgID
+    +int64 Seq
     +ForwardedFrom Forwarded
     +ObjectID ReplyTo
     +List~Attachment~ Attachments
     +forwardOf() ForwardedFrom
+  }
+
+  class Read {
+    <<collection reads>>
+    +ObjectID UserID
+    +ObjectID ChannelID
+    +int64 ReadSeq
   }
 
   class MessageAuthor {
@@ -129,6 +138,7 @@ classDiagram
   User "1" --> "0..*" Session : user_id
   Channel *-- ChannelMember : members
   Channel "1" --> "0..*" Message : channel_id
+  Channel "1" --> "0..*" Read : channel_id
   Message *-- MessageAuthor : author
   Message o-- ForwardedFrom : forwarded
   Message *-- Attachment : attachments

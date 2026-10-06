@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -145,7 +146,10 @@ func (h *Hub) Subscribe(userID, chID string) {
 func (h *Hub) Unsubscribe(userID, chID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.detachUser(userID, chID)
+}
 
+func (h *Hub) detachUser(userID, chID string) {
 	for c := range h.byUser[userID] {
 		delete(h.byChannel[chID], c)
 		delete(c.channels, chID)
@@ -156,6 +160,32 @@ func (h *Hub) Unsubscribe(userID, chID string) {
 	if subs, ok := h.byChannel[chID]; ok && len(subs) == 0 {
 		delete(h.byChannel, chID)
 		h.unwatch(chID)
+	}
+}
+
+// SetChannels makes every socket of a user read exactly these channels and
+// their own topic, rebuilding routing that a lost bus event left wrong.
+func (h *Hub) SetChannels(userID string, chIDs []string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	want := map[string]struct{}{userTopic(userID): {}}
+	for _, id := range chIDs {
+		want[id] = struct{}{}
+	}
+	extra := map[string]struct{}{}
+	for c := range h.byUser[userID] {
+		for id := range want {
+			h.attach(c, id)
+		}
+		for id := range c.channels {
+			if _, ok := want[id]; !ok {
+				extra[id] = struct{}{}
+			}
+		}
+	}
+	for id := range extra {
+		h.detachUser(userID, id)
 	}
 }
 
@@ -222,11 +252,42 @@ func (h *Hub) Publish(chID string, msg []byte) {
 	defer h.mu.Unlock()
 
 	for c := range h.byChannel[chID] {
-		select {
-		case c.send <- msg:
-		default:
-			h.drop(c)
+		h.deliver(c, msg)
+	}
+}
+
+// Send delivers a frame to one socket, the way Publish does to a channel.
+func (h *Hub) Send(c *Subscriber, msg []byte) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.deliver(c, msg)
+}
+
+// SendAll delivers a frame to every socket of this node.
+func (h *Hub) SendAll(msg []byte) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, subs := range h.byUser {
+		for c := range subs {
+			h.deliver(c, msg)
 		}
+	}
+}
+
+// Settled is the bus's wait for subscriptions; the hub delivers from memory and
+// has none to wait for.
+func (h *Hub) Settled(context.Context) error { return nil }
+
+// deliver never blocks under the mutex: a socket too slow to take a frame is
+// dropped, and its client reconnects and catches up.
+func (h *Hub) deliver(c *Subscriber, msg []byte) {
+	if c.dropped {
+		return
+	}
+	select {
+	case c.send <- msg:
+	default:
+		h.drop(c)
 	}
 }
 

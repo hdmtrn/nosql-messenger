@@ -201,6 +201,9 @@ func (s *server) handleLeaveChannel(w http.ResponseWriter, r *http.Request, sess
 	}
 
 	s.bus.Unsubscribe(sess.UserID.Hex(), id.Hex())
+	if err := s.reads.deleteFor(r.Context(), bson.M{"user_id": sess.UserID, "channel_id": id}); err != nil {
+		log.Printf("leaving channel: %v", err)
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "left"})
 }
 
@@ -286,4 +289,41 @@ func memberRole(ch Channel, userID bson.ObjectID) string {
 		}
 	}
 	return ""
+}
+
+type markReadRequest struct {
+	Seq int64 `json:"seq"`
+}
+
+// handleMarkRead moves the caller's read position in a channel. The number is
+// capped at the channel's newest, so a client cannot read ahead of what exists
+// and then miss what comes next.
+func (s *server) handleMarkRead(w http.ResponseWriter, r *http.Request, sess Session) {
+	id, err := bson.ObjectIDFromHex(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "malformed channel id")
+		return
+	}
+	var req markReadRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	last, err := s.channels.lastSeqFor(r.Context(), id, sess.UserID)
+	if errors.Is(err, errNotMember) {
+		writeError(w, http.StatusNotFound, "channel not found")
+		return
+	}
+	if err != nil {
+		log.Printf("marking read: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	seq := min(max(req.Seq, 0), last)
+	if err := s.reads.mark(r.Context(), sess.UserID, id, seq); err != nil {
+		log.Printf("marking read: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"read_seq": seq})
 }

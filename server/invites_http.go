@@ -80,6 +80,12 @@ func (s *server) handleFollowInvite(w http.ResponseWriter, r *http.Request, sess
 	status := "joined"
 	switch err := s.channels.AddMember(r.Context(), channelID, sess); {
 	case err == nil:
+		// What was written before joining is history, not unread.
+		if last, err := s.channels.lastSeqFor(r.Context(), channelID, sess.UserID); err == nil {
+			if err := s.reads.mark(r.Context(), sess.UserID, channelID, last); err != nil {
+				log.Printf("joining by invite: %v", err)
+			}
+		}
 	case errors.Is(err, errAlreadyMember):
 		status = "member"
 	case errors.Is(err, errChannelNotFound):

@@ -46,6 +46,14 @@ type Channel struct {
 	// MemberCount survives the projection that drops the member list itself.
 	MemberCount int `bson:"member_count,omitempty" json:"member_count,omitempty"`
 
+	// LastSeq is the number of the newest message: every message gets the next
+	// one, so the numbers order a channel's messages the same on every node and
+	// a missing number is a message the client has not got.
+	LastSeq int64 `bson:"last_seq,omitempty" json:"last_seq"`
+	// ReadSeq is how far the person asking has read; only the channel list
+	// fills it in, from the reads collection.
+	ReadSeq int64 `bson:"read_seq,omitempty" json:"read_seq"`
+
 	// DirectKey is the sorted pair of participants, which makes "the conversation
 	// between these two" a value the database can enforce as unique.
 	DirectKey string `bson:"direct_key,omitempty" json:"-"`
@@ -160,6 +168,17 @@ func (s *channelStore) ForUser(ctx context.Context, userID bson.ObjectID, after 
 				bson.M{"$eq": bson.A{"$kind", channelKindDirect}}, "$members", "$$REMOVE",
 			}},
 		}},
+		// How far this person has read, so the client can count what is unread
+		// from the numbers rather than from what it happened to see.
+		{"$lookup": bson.M{
+			"from":         "reads",
+			"localField":   "_id",
+			"foreignField": "channel_id",
+			"pipeline":     bson.A{bson.M{"$match": bson.M{"user_id": userID}}},
+			"as":           "read",
+		}},
+		{"$addFields": bson.M{"read_seq": bson.M{"$first": "$read.read_seq"}}},
+		{"$project": bson.M{"read": 0}},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("listing channels: %w", err)
@@ -643,4 +662,41 @@ func (s *channelStore) kindFor(ctx context.Context, channelID, userID bson.Objec
 		return "", fmt.Errorf("reading channel kind: %w", err)
 	}
 	return ch.Kind, nil
+}
+
+// nextSeq hands out the next message number of a channel. Numbers can be left
+// unused, when the insert after this fails or turns out to be a repeat; the
+// client takes a missing number for a gap once, fetches, and moves on.
+func (s *channelStore) nextSeq(ctx context.Context, channelID bson.ObjectID) (int64, error) {
+	var ch Channel
+	err := s.col.FindOneAndUpdate(ctx,
+		bson.M{"_id": channelID, "deleted_at": bson.M{"$exists": false}},
+		bson.M{"$inc": bson.M{"last_seq": 1}},
+		options.FindOneAndUpdate().
+			SetReturnDocument(options.After).
+			SetProjection(bson.M{"last_seq": 1}),
+	).Decode(&ch)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return 0, errChannelNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("numbering a message: %w", err)
+	}
+	return ch.LastSeq, nil
+}
+
+// lastSeqFor is the newest number of a channel, for a member only.
+func (s *channelStore) lastSeqFor(ctx context.Context, channelID, userID bson.ObjectID) (int64, error) {
+	var ch Channel
+	err := s.col.FindOne(ctx,
+		bson.M{"_id": channelID, "members.user_id": userID},
+		options.FindOne().SetProjection(bson.M{"last_seq": 1}),
+	).Decode(&ch)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return 0, errNotMember
+	}
+	if err != nil {
+		return 0, fmt.Errorf("reading the last message number: %w", err)
+	}
+	return ch.LastSeq, nil
 }

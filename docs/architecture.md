@@ -15,8 +15,15 @@ could run, and that was a documented limitation.
 What travels over the bus is what has to reach the other nodes and need not survive a
 restart: a new message, a revoked session, a change in which sockets read a channel,
 "typing". Everything durable stays in MongoDB, and the delivery guarantee stays where it
-was — the message is written before it is announced, and the client backfills what it missed
-on reconnect. The bus is the fast path, not the guarantee. Redis therefore runs without
+was — the message is written before it is announced, and every message carries a number in
+its channel, the way Telegram numbers a channel's updates. A client that sees a number skipped
+fetches what it lacks with `GET /messages?after_seq=`, and it is told to look when it cannot
+see a skip itself: each socket is sent `ready` once Redis has confirmed its channels, and
+`resync` when its node's bus reconnected, when some node could not publish for a while, or
+when a node started. Before `resync` a node rebuilds what it learns from the bus, its
+sockets' channels and sessions, from MongoDB. Unread is the channel's last number minus the
+reader's position in `reads`, so it survives a reload. The bus is the fast path, not the
+guarantee. Redis therefore runs without
 persistence and holds nothing of record: not a queue, not a store, not a cache of MongoDB.
 
 ## All broadcast goes through one method
@@ -29,8 +36,8 @@ fan-out mechanism at all.
 ## Persist first, then broadcast
 
 A message is written to MongoDB and only then broadcast; the order is strict. Because of it,
-losing the hub's in-memory state on restart loses no data: on reconnect the client fetches
-what it missed with `GET /messages?before=...`.
+losing the hub's in-memory state on restart loses no data: once reconnected the client fetches
+what it missed with `GET /messages?after_seq=...`.
 
 ## WebSocket writes come from one goroutine
 

@@ -368,7 +368,7 @@ func TestPicturesGoOnlyWhereTheirOwnerSendsThem(t *testing.T) {
 			t.Fatalf("attaching a picture %s: got %d %s, want 404", name, code, body)
 		}
 	}
-	if left, _ := messages.List(ctx, malloryRoom.ID, bson.ObjectID{}, 0); len(left) != 0 {
+	if left, _ := messages.List(ctx, malloryRoom.ID, 0, 0); len(left) != 0 {
 		t.Fatalf("mallory's room holds %d messages after refused sends, want 0", len(left))
 	}
 

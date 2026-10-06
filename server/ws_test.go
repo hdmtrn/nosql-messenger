@@ -262,7 +262,11 @@ func TestShutdownTellsSocketsToReconnect(t *testing.T) {
 		t.Fatal("drain returned before the socket's handler did")
 	}
 
+	// Every socket is told it is ready before anything else; the close follows.
 	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, frame, err := conn.ReadMessage(); err != nil || string(frame) != string(readyFrame) {
+		t.Fatalf("first frame: %v %q, want the ready frame", err, frame)
+	}
 	_, _, err := conn.ReadMessage()
 	var ce *websocket.CloseError
 	if !errors.As(err, &ce) || ce.Code != closeServiceRestart {

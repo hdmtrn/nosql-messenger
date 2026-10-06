@@ -79,6 +79,14 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("creating friend request indexes: %w", err)
 	}
 
+	reads := newReadStore(db)
+	if err := reads.ensureIndexes(ctx); err != nil {
+		return fmt.Errorf("creating read indexes: %w", err)
+	}
+	if err := messages.numberOldMessages(ctx, channels); err != nil {
+		return fmt.Errorf("numbering old messages: %w", err)
+	}
+
 	media := newMediaStore(db)
 	if err := media.ensureIndexes(ctx); err != nil {
 		return fmt.Errorf("creating media indexes: %w", err)
@@ -107,9 +115,6 @@ func run(ctx context.Context) error {
 
 	wireRevocation(sessions, hub, bus)
 
-	go bus.Run(ctx)
-	log.Println("connected to Redis")
-
 	srv := &server{
 		health:   db.Collection("health"),
 		redis:    bus.rdb,
@@ -123,8 +128,18 @@ func run(ctx context.Context) error {
 		messages: messages,
 		friends:  friends,
 		media:    media,
+		reads:    reads,
 		limits:   limits,
 	}
+
+	// Run starts once srv exists, which recovering from a gap needs. Nothing
+	// waits on the bus before the HTTP server starts below.
+	bus.onGap = srv.recoverFromGap
+	go bus.Run(ctx)
+	log.Println("connected to Redis")
+	// A node that went down holding publishes that never went out cannot be
+	// heard from again about them; telling every node to resync is cheap.
+	bus.ResyncAll()
 
 	go srv.runPresence(ctx)
 	go srv.runPurge(ctx)

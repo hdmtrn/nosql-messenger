@@ -67,6 +67,7 @@ export const api = {
   channel: (id) => request('GET', `/channels/${id}`),
   channelsInCommon: (username) => request('GET', `/users/${encodeURIComponent(username)}/channels`),
   leaveChannel: (id) => request('POST', `/channels/${id}/leave`),
+  markRead: (id, seq) => request('POST', `/channels/${id}/read`, { seq }),
   setChannelAvatar: (id, blob) => upload(`/channels/${id}/avatar`, blob),
   removeChannelAvatar: (id) => request('DELETE', `/channels/${id}/avatar`),
 

@@ -35,7 +35,10 @@ sequenceDiagram
       P->>BUS: announcePresence per channel
       BUS->>R: PUBLISH ch:{channelID} presenceEvent
     end
+    WS->>BUS: Settled, waits for the SUBSCRIBE confirmations
+    R-->>BUS: one confirmation per channel
+    WS->>HUB: Send(ready)
     Note over WS: go writePump, then readPump
-    WS-->>C: socket open
-    Note over C: onStateChange('online')
+    WS-->>C: socket open, then the ready frame
+    Note over C: onStateChange('online'), catchUp() on ready
   end

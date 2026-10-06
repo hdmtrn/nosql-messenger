@@ -42,6 +42,10 @@ type Message struct {
 	CreatedAt   time.Time     `bson:"created_at"              json:"created_at"`
 	ClientMsgID string        `bson:"client_msg_id,omitempty" json:"client_msg_id,omitempty"`
 
+	// Seq is the message's number in its channel, from nextSeq: the order every
+	// node and client agrees on, and what a client compares to find a gap.
+	Seq int64 `bson:"seq,omitempty" json:"seq"`
+
 	// A pointer, so that ordinary messages store no forwarded field at all.
 	Forwarded *ForwardedFrom `bson:"forwarded,omitempty" json:"forwarded,omitempty"`
 
@@ -97,6 +101,13 @@ func (s *messageStore) ensureIndexes(ctx context.Context) error {
 	_, err := s.col.Indexes().CreateMany(ctx, []mongo.IndexModel{
 		{
 			Keys: bson.D{{Key: "channel_id", Value: 1}, {Key: "_id", Value: 1}},
+		},
+		// History and catching up page by number. Partial: messages written
+		// before there were numbers have none until numberOldMessages runs.
+		{
+			Keys: bson.D{{Key: "channel_id", Value: 1}, {Key: "seq", Value: 1}},
+			Options: options.Index().SetUnique(true).
+				SetPartialFilterExpression(bson.M{"seq": bson.M{"$exists": true}}),
 		},
 		// Both serve renameAuthor, run once per deleted account. Without them
 		// that would be two scans of every message ever sent.
@@ -219,7 +230,9 @@ func (s *messageStore) ByIDs(ctx context.Context, channelID bson.ObjectID, ids [
 	return messages, nil
 }
 
-func (s *messageStore) List(ctx context.Context, channelID bson.ObjectID, before bson.ObjectID, limit int) ([]Message, error) {
+// List pages back from the newest message, or from before a number, newest
+// first.
+func (s *messageStore) List(ctx context.Context, channelID bson.ObjectID, beforeSeq int64, limit int) ([]Message, error) {
 	if limit <= 0 {
 		limit = messagesPageSize
 	}
@@ -228,24 +241,86 @@ func (s *messageStore) List(ctx context.Context, channelID bson.ObjectID, before
 	}
 
 	filter := bson.M{"channel_id": channelID}
-	if !before.IsZero() {
-		filter["_id"] = bson.M{"$lt": before}
+	if beforeSeq > 0 {
+		filter["seq"] = bson.M{"$lt": beforeSeq}
 	}
+	return s.find(ctx, filter, -1, limit)
+}
 
+// ListAfter is List going forward: the messages after a number, oldest first,
+// which is how a client catches up on what it missed.
+func (s *messageStore) ListAfter(ctx context.Context, channelID bson.ObjectID, afterSeq int64, limit int) ([]Message, error) {
+	if limit <= 0 || limit > messagesMaxLimit {
+		limit = messagesMaxLimit
+	}
+	return s.find(ctx, bson.M{"channel_id": channelID, "seq": bson.M{"$gt": afterSeq}}, 1, limit)
+}
+
+func (s *messageStore) find(ctx context.Context, filter bson.M, order, limit int) ([]Message, error) {
 	cur, err := s.col.Find(ctx, filter,
 		options.Find().
-			SetSort(bson.D{{Key: "_id", Value: -1}}).
+			SetSort(bson.D{{Key: "seq", Value: order}}).
 			SetLimit(int64(limit)),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("listing messages: %w", err)
 	}
-
 	messages := []Message{}
 	if err := cur.All(ctx, &messages); err != nil {
 		return nil, fmt.Errorf("decoding messages: %w", err)
 	}
 	return messages, nil
+}
+
+// numberOldMessages gives a number to every message written before messages
+// had one, channel by channel in the order of their ids. It runs at every
+// start and finds nothing once done. Messages written by a node of the previous
+// version during a rolling deploy get theirs at the next start, after the newer
+// ones; there is no such deploy before the first one.
+func (s *messageStore) numberOldMessages(ctx context.Context, channels *channelStore) error {
+	ids, err := s.col.Distinct(ctx, "channel_id", bson.M{"seq": bson.M{"$exists": false}}).Raw()
+	if err != nil {
+		return fmt.Errorf("finding unnumbered messages: %w", err)
+	}
+	values, err := ids.Values()
+	if err != nil {
+		return fmt.Errorf("reading channel ids: %w", err)
+	}
+	for _, v := range values {
+		channelID, ok := v.ObjectIDOK()
+		if !ok {
+			continue
+		}
+		cur, err := s.col.Find(ctx,
+			bson.M{"channel_id": channelID, "seq": bson.M{"$exists": false}},
+			options.Find().SetSort(bson.D{{Key: "_id", Value: 1}}).SetProjection(bson.M{"_id": 1}),
+		)
+		if err != nil {
+			return fmt.Errorf("listing unnumbered messages: %w", err)
+		}
+		var rows []struct {
+			ID bson.ObjectID `bson:"_id"`
+		}
+		if err := cur.All(ctx, &rows); err != nil {
+			return fmt.Errorf("decoding unnumbered messages: %w", err)
+		}
+		for _, row := range rows {
+			seq, err := channels.nextSeq(ctx, channelID)
+			if errors.Is(err, errChannelNotFound) {
+				break // marked for the purge: its messages go anyway
+			}
+			if err != nil {
+				return err
+			}
+			if _, err := s.col.UpdateOne(ctx,
+				bson.M{"_id": row.ID, "seq": bson.M{"$exists": false}},
+				bson.M{"$set": bson.M{"seq": seq}},
+			); err != nil {
+				return fmt.Errorf("numbering a message: %w", err)
+			}
+		}
+	}
+	return nil
 }
 
 // renameAuthor puts a new name on everything a person wrote, forwarded copies

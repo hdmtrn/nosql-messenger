@@ -81,6 +81,9 @@ func (s *server) purgeChannel(ctx context.Context, id bson.ObjectID, owner strin
 			return errClaimLost
 		}
 	}
+	if err := s.reads.deleteFor(ctx, bson.M{"channel_id": id}); err != nil {
+		return err
+	}
 	if err := s.media.purgeChannel(ctx, id); err != nil {
 		return err
 	}
