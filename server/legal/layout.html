@@ -1,0 +1,39 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{template "title" .}}</title>
+<style>
+  body {
+    margin: 0;
+    background: #f4f1ea;
+    color: #111;
+    font: 16px/1.55 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  main {
+    max-width: 680px;
+    margin: 0 auto;
+    padding: 40px 20px 64px;
+  }
+  h1 { font-size: 28px; line-height: 1.2; margin: 0 0 4px; }
+  h2 { font-size: 18px; margin: 32px 0 8px; }
+  p, li { color: #2b2b2b; }
+  ul { padding-left: 20px; }
+  .updated, .back { color: #6b6b6b; font-size: 14px; }
+  .missing { background: #fff3cd; padding: 12px 16px; border-radius: 12px; }
+  a { color: #1a2ad8; }
+</style>
+</head>
+<body>
+<main>
+<p class="back"><a href="/">Back to the messenger</a></p>
+{{template "content" .}}
+</main>
+</body>
+</html>
+{{end}}
+
+{{define "operator"}}{{if .Configured}}{{.Name}} (<a href="mailto:{{.Email}}">{{.Email}}</a>){{else}}the operator of this instance{{end}}{{end}}
+
+{{define "missing"}}{{if not .Configured}}<p class="missing">The operator of this instance has not set their name and contact address yet.</p>{{end}}{{end}}

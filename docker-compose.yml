@@ -59,6 +59,10 @@ services:
       MONGO_USERNAME: ${MONGO_USERNAME:-}
       MONGO_PASSWORD: ${MONGO_PASSWORD:-}
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      # Who runs the instance, for /privacy and /terms. Empty locally; the
+      # deployment sets them, so the public repository holds no address.
+      OPERATOR_NAME: ${OPERATOR_NAME:-}
+      OPERATOR_EMAIL: ${OPERATOR_EMAIL:-}
       # The code defaults to true, and the browser will not accept such a cookie
       # over http, so login would not work. On the instance with TLS the
       # variable is not set.

@@ -42,6 +42,7 @@ type server struct {
 	friends  *friendStore
 	media    *mediaStore
 	limits   *limiter
+	operator operator
 
 	// The socket handlers still running. Shutdown waits for them before it
 	// closes Redis and MongoDB, which they use until they return.
@@ -56,6 +57,8 @@ func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /healthz", handleHealthz)
+	mux.HandleFunc("GET /privacy", s.handleLegal("privacy"))
+	mux.HandleFunc("GET /terms", s.handleLegal("terms"))
 
 	mux.HandleFunc("POST /auth/register", s.auth.handleRegister)
 	mux.HandleFunc("POST /auth/login", s.auth.handleLogin)

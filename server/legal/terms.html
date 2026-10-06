@@ -1,0 +1,34 @@
+{{define "title"}}Terms of use{{end}}
+
+{{define "content"}}
+<h1>Terms of use</h1>
+<p class="updated">Last updated on 6 October 2026</p>
+{{template "missing" .}}
+
+<h2>What this is</h2>
+<p>A messenger built as a university thesis project and run by {{template "operator" .}}. It is provided as it is, without any guarantee: it may be unavailable, it may be reset, and messages may be lost. Do not rely on it for anything important.</p>
+
+<h2>Who can use it</h2>
+<p>People aged 16 or older.</p>
+
+<h2>What is not allowed</h2>
+<ul>
+  <li>anything unlawful;</li>
+  <li>harassment, threats or hate;</li>
+  <li>spam, and sharing other people's private information;</li>
+  <li>malware, and attempts to break, overload or get around the service's protections.</li>
+</ul>
+<p>The operator may remove content or accounts that break these rules, and may end the service at any time.</p>
+
+<h2>Your content</h2>
+<p>What you write stays yours. By sending it you let the service store it and show it to the people you send it to.</p>
+
+<h2>Reports and questions</h2>
+<p>Write to {{template "operator" .}}.</p>
+
+<h2>Liability</h2>
+<p>As far as the law allows, the operator is not liable for lost data or for what users send.</p>
+
+<h2>Privacy</h2>
+<p>What is kept about you and why is in the <a href="/privacy">privacy notice</a>.</p>
+{{end}}
