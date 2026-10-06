@@ -448,3 +448,64 @@ func TestUploadsStopAtTheLimitAndStoreNothing(t *testing.T) {
 		t.Fatalf("%d media records stored past the limit", n)
 	}
 }
+
+// Past either limit a request is refused before anything is stored. The limit
+// for all requests is counted before the name is looked up, so asking about
+// names is not a free way to learn which exist.
+func TestFriendRequestsStopAtTheLimits(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	l := testLimiter(t)
+	users, friends := newUserStore(db), newFriendStore(db)
+	if err := friends.ensureIndexes(ctx); err != nil {
+		t.Fatalf("indexes: %v", err)
+	}
+	h := NewHub()
+	s := &server{users: users, friends: friends, hub: h, bus: h, limits: l}
+	mara, nik, ole, pia := person("mara"), person("nik"), person("ole"), person("pia")
+	for _, u := range []Session{mara, nik, ole, pia} {
+		if err := users.Create(ctx, &User{ID: u.UserID, Username: u.Username, DisplayName: u.Username}); err != nil {
+			t.Fatalf("creating %s: %v", u.Username, err)
+		}
+	}
+	sent := func(from Session) int {
+		t.Helper()
+		out, err := friends.Outgoing(ctx, from.UserID)
+		if err != nil {
+			t.Fatalf("listing requests: %v", err)
+		}
+		return len(out)
+	}
+
+	if code, body := sendFriendRequest(s, mara, "nobody"); code != http.StatusNotFound {
+		t.Fatalf("an unknown name got %d %s, want 404", code, body)
+	}
+	if n := counted(t, l, limitFriendRequests, mara.UserID.Hex()); n != 1 {
+		t.Fatalf("an unknown name counted %d, want 1", n)
+	}
+
+	// One person, asked over and over; somebody else can still be asked.
+	fill(t, l, limitFriendPair, mara.UserID.Hex()+">"+nik.UserID.Hex())
+	if code, body := sendFriendRequest(s, mara, "nik"); code != http.StatusTooManyRequests {
+		t.Fatalf("one request too many to nik got %d %s, want 429", code, body)
+	}
+	if code, body := sendFriendRequest(s, mara, "ole"); code != http.StatusCreated {
+		t.Fatalf("a request to ole got %d %s, want 201", code, body)
+	}
+	if n := sent(mara); n != 1 {
+		t.Fatalf("%d requests stored, want only the one to ole", n)
+	}
+
+	// Anyone at all, once the count for all requests is full; nik's
+	// allowance is his own.
+	fill(t, l, limitFriendRequests, mara.UserID.Hex())
+	if code, body := sendFriendRequest(s, mara, "pia"); code != http.StatusTooManyRequests {
+		t.Fatalf("one request too many got %d %s, want 429", code, body)
+	}
+	if n := sent(mara); n != 1 {
+		t.Fatalf("%d requests stored past the limit, want 1", n)
+	}
+	if code, body := sendFriendRequest(s, nik, "pia"); code != http.StatusCreated {
+		t.Fatalf("nik's request got %d %s, want 201", code, body)
+	}
+}

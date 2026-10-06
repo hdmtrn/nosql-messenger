@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { api, patiently } from '../api'
+import { api, patiently, waitText } from '../api'
 import { createSocket } from '../socket'
 import { avatarUrl, channelAvatarUrl, channelTitle, displayName, initials, rememberUser } from '../naming'
 import { takePendingInvite } from '../pending'
@@ -11,6 +11,7 @@ import SgInput from '../components/SgInput.vue'
 import Conversation from './Conversation.vue'
 import InfoPanel from './InfoPanel.vue'
 import Profile from './Profile.vue'
+import RequestsPanel from './RequestsPanel.vue'
 import UserPanel from './UserPanel.vue'
 
 const props = defineProps({ me: { type: Object, required: true } })
@@ -34,8 +35,11 @@ const connection = ref('offline')
 const showProfile = ref(false)
 const showInfo = ref(false)
 // Username of the person whose page is open. It takes the same slot as the
-// channel info, so opening one closes the other.
+// channel info and the friend requests, so opening one closes the others.
 const person = ref('')
+const showRequests = ref(false)
+// When a friend request refused for coming too often may go again, as read.
+const tooMany = ref('')
 // False while the panes from the address bar are being put back after a reload.
 // The chat's info panel waits for the channel list, so it mounts after the page
 // does and Transition would take that for an opening; with this off it just
@@ -62,7 +66,8 @@ watch(() => [props.me.display_name, props.me.avatar_id], () => rememberUser(prop
 
 // The open pane lives in the address bar, so a reload lands back on it: the chat
 // as /c/{id}, and a side panel after it — /info for the chat's own panel,
-// /u/{username} for a person's page, which can also stand without a chat. The
+// /u/{username} for a person's page and /requests for the friend requests, both
+// of which can also stand without a chat. The
 // prefix is /c/ and not /channels/ because GET /channels/{id} is an API route:
 // the dev proxy would answer a reload with JSON instead of the page. /u/ does
 // not clash with /users, since the proxy matches whole prefixes.
@@ -71,11 +76,12 @@ function paneFromUrl() {
     showProfile.value = true
     return
   }
-  const match = location.pathname.match(/^(?:\/c\/([^/]+))?(?:\/(info)|\/u\/([^/]+))?$/)
+  const match = location.pathname.match(/^(?:\/c\/([^/]+))?(?:\/(info)|\/(requests)|\/u\/([^/]+))?$/)
   if (!match) return
-  const [, chat, info, username] = match
+  const [, chat, info, requests, username] = match
   if (chat) activeId.value = chat
   if (info) showInfo.value = true
+  if (requests) showRequests.value = true
   if (username) person.value = decodeURIComponent(username)
 }
 
@@ -84,13 +90,14 @@ function paneToUrl() {
   const chat = activeId.value ? `/c/${activeId.value}` : ''
   // The info panel shows only with its chat; a person's page shows either way.
   if (person.value) return `${chat}/u/${encodeURIComponent(person.value)}`
+  if (showRequests.value) return `${chat}/requests`
   if (showInfo.value && chat) return `${chat}/info`
   return chat || '/'
 }
 
 // replaceState rather than pushState: switching chats should not pile up
 // entries that the back button would then have to walk through.
-watch([activeId, showProfile, showInfo, person], () => {
+watch([activeId, showProfile, showInfo, person, showRequests], () => {
   const path = paneToUrl()
   if (location.pathname !== path) history.replaceState(null, '', path)
 })
@@ -623,8 +630,28 @@ async function loadPeople() {
 }
 
 async function addFriend(username) {
-  await api.sendFriendRequest(username).catch(() => null)
+  try {
+    await api.sendFriendRequest(username)
+  } catch (e) {
+    // Other refusals change nothing on screen; a limit is worth saying, with when it lifts.
+    if (e.status === 429) tooMany.value = e.retryAfter ? `in ${waitText(e.retryAfter)}` : 'later'
+  }
   loadPeople()
+}
+
+async function removeFriend(username) {
+  const friend = friends.value.find((f) => f.username === username)
+  if (!friend) return
+  await api.removeFriend(friend.id).catch(() => null)
+  loadPeople()
+}
+
+function toggleRequests() {
+  const open = !showRequests.value || showProfile.value
+  showProfile.value = false
+  showInfo.value = false
+  person.value = ''
+  showRequests.value = open
 }
 
 // An invite followed from a message, by the same path as one followed from the
@@ -639,6 +666,7 @@ async function joinByInvite(code) {
 
 function openPerson(username) {
   showInfo.value = false
+  showRequests.value = false
   person.value = username
 }
 
@@ -710,11 +738,12 @@ onUnmounted(() => {
         :requests="requests"
         :sent-to="sentTo"
         :profile-open="showProfile"
+        :requests-open="showRequests && !showProfile"
         @select="selectChannel"
         @create="dialog = 'create'"
         @open-direct="openDirect"
         @add-friend="addFriend"
-        @respond="respond"
+        @requests="toggleRequests"
         @profile="showProfile = true"
         @person="openPerson"
       />
@@ -744,7 +773,7 @@ onUnmounted(() => {
         @retry="deliver"
         @discard="discard"
         @load-older="loadOlder"
-        @info="showInfo = !showInfo; person = ''"
+        @info="showInfo = !showInfo; person = ''; showRequests = false"
         :forward-targets="forwardTargets"
         :pending="pendingAction && pendingAction.channelId === activeId ? pendingAction : null"
         :originals="originals"
@@ -770,11 +799,13 @@ onUnmounted(() => {
             :me="me"
             :channel="active"
             :title="activeTitle"
+            :friend="friends.some((f) => f.username === activeTitle)"
             @close="showInfo = false"
             @leave="showInfo = false; confirmLeave = true"
             @select="selectChannel"
             @person="openPerson"
             @changed="loadChannels"
+            @unfriend="removeFriend"
           />
         </div>
       </Transition>
@@ -787,7 +818,20 @@ onUnmounted(() => {
             @close="person = ''"
             @message="openDirect"
             @befriend="addFriend"
+            @unfriend="removeFriend"
             @select="selectChannel"
+          />
+        </div>
+      </Transition>
+
+      <Transition name="side" :css="panesRestored">
+        <div v-if="showRequests && !showProfile" class="side">
+          <RequestsPanel
+            :incoming="requests"
+            :sent="sentTo"
+            @close="showRequests = false"
+            @respond="respond"
+            @person="openPerson"
           />
         </div>
       </Transition>
@@ -802,6 +846,13 @@ onUnmounted(() => {
       <div class="dialog-actions">
         <SgButton variant="danger" @click="confirmLeave = false; leaveChannel()">Leave</SgButton>
         <SgButton variant="outline" @click="confirmLeave = false">Cancel</SgButton>
+      </div>
+    </SgDialog>
+
+    <SgDialog v-if="tooMany" title="Too many friend requests" @close="tooMany = ''">
+      <p class="dialog-text">Try again {{ tooMany }}.</p>
+      <div class="dialog-actions">
+        <SgButton variant="outline" @click="tooMany = ''">Close</SgButton>
       </div>
     </SgDialog>
 

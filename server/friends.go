@@ -150,6 +150,23 @@ func (s *friendStore) Respond(ctx context.Context, id bson.ObjectID, by Session,
 	return req, nil
 }
 
+// Remove ends a friendship, whichever of the two sent the request. Many, not
+// one: two requests sent to each other at the same moment can both be accepted.
+// It reports whether there was one, so that only a real change is announced.
+func (s *friendStore) Remove(ctx context.Context, a, b bson.ObjectID) (bool, error) {
+	res, err := s.col.DeleteMany(ctx, bson.M{
+		"status": friendAccepted,
+		"$or": []bson.M{
+			{"from.id": a, "to.id": b},
+			{"from.id": b, "to.id": a},
+		},
+	})
+	if err != nil {
+		return false, fmt.Errorf("removing a friend: %w", err)
+	}
+	return res.DeletedCount > 0, nil
+}
+
 func (s *friendStore) list(ctx context.Context, filter bson.M) ([]FriendRequest, error) {
 	cur, err := s.col.Find(ctx, filter,
 		options.Find().SetSort(bson.D{{Key: "_id", Value: -1}}).SetLimit(friendsMaxLimit))
