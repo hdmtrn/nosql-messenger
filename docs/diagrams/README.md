@@ -30,11 +30,12 @@ hub is shared. What ties the instances together is Redis, in two distinct roles.
 
 ### 1. Redis Pub/Sub as the fan-out bus
 
-`server/bus.go`. Four kinds of topic:
+`server/bus.go`. Five kinds of topic:
 
 | Topic | Payload | Subscribed |
 |---|---|---|
 | `ch:{channelID}` | a stored `Message` as JSON, or `typingEvent` / `presenceEvent` / `profileEvent`, told apart by a `type` field a message never has | dynamically, while this node has at least one local socket reading that channel |
+| `u:{userID}` | `{"type":"friends"}`: a friend request arrived or was answered, and both lists are fetched again | dynamically, like a channel: `Hub.Connect` attaches every socket to its user's topic as well |
 | `session-revoked` | a session `ObjectID` hex — never the token | permanently, from `newBus` |
 | `subscription` | `subscriptionChange{user_id, channel_id, subscribed}` | permanently, from `newBus` |
 | `resync` | nothing that matters: hearing it is the message | permanently, from `newBus`; published by a node whose publishes failed once Redis takes one again, and by every node as it starts |
@@ -138,7 +139,8 @@ the picture because there is none in the deployment.
 %% Whole system: Vue client, two Go instances, Redis, MongoDB.
 %% Exact Redis key and topic formats are in the README tables.
 %% Sources: docker-compose.yml, Dockerfile, server/main.go, server/server.go,
-%% server/bus.go, server/presence.go, web/src/api.js, web/src/socket.js
+%% server/bus.go, server/presence.go, server/ratelimit.go, server/legal.go,
+%% web/src/api.js, web/src/socket.js
 flowchart LR
   subgraph client["Browser"]
     vue["Vue 3 app<br/>web/dist"]
@@ -155,7 +157,9 @@ flowchart LR
       bus1["bus<br/>redis.PubSub"]
       pres1["presence<br/>nodeID"]
       st1["7 stores"]
+      lim1["limiter<br/>own redis.Client"]
       mux1 --> st1
+      mux1 --> lim1
       mux1 --> bus1
       mux1 --> hub1
       hub1 <--> bus1
@@ -167,7 +171,9 @@ flowchart LR
       bus2["bus"]
       pres2["presence"]
       st2["7 stores"]
+      lim2["limiter"]
       mux2 --> st2
+      mux2 --> lim2
       mux2 --> bus2
       mux2 --> hub2
       hub2 <--> bus2
@@ -182,14 +188,16 @@ flowchart LR
   wsjs -->|"WebSocket /ws"| mux1
   apijs -.->|"second browser, by hand"| mux2
   wsjs -.-> mux2
-  mux1 -->|"GET / serveWeb"| vue
+  mux1 -->|"GET / serveWeb<br/>GET /privacy, /terms"| vue
 
-  bus1 <-->|"PUBLISH / SUBSCRIBE<br/>ch:{channelID}<br/>session-revoked<br/>subscription"| redis
+  bus1 <-->|"PUBLISH / SUBSCRIBE<br/>ch:{channelID}, u:{userID}<br/>session-revoked<br/>subscription, resync"| redis
   bus2 <--> redis
   pres1 <-->|"presence:* keys<br/>sockets, node, version<br/>alive, nodes, sweeper, epoch"| redis
   pres2 <--> redis
+  lim1 -->|"rl:* counters<br/>INCR + EXPIRE NX"| redis
+  lim2 --> redis
 
-  st1 -->|"users, sessions, channels,<br/>messages, friend_requests,<br/>media, GridFS"| mongo
+  st1 -->|"users, sessions, channels,<br/>messages, reads, friend_requests,<br/>media, GridFS, health"| mongo
   st2 --> mongo
 ```
 
@@ -202,7 +210,17 @@ flowchart LR
   A second browser is pointed at `http://localhost:8081` by hand. In dev, Vite proxies
   everything to `:8080` only (`web/vite.config.js`).
 - Both instances talk to the same `redis.Client` config; `presence` is constructed with
-  `bus.rdb`, so the bus and the presence store share one connection pool.
+  `bus.rdb`, so the bus and the presence store share one connection pool. The rate
+  limiter is the exception: its client is its own, and its dial, read and write give up
+  after 250 ms with no retries, so with Redis away the limits step aside within a
+  quarter of a second instead of holding every request.
+- `GET /privacy` and `GET /terms` are pages of the Go process, not routes of the
+  client: `handleLegal` renders `server/legal/*.html`, embedded in the binary, and names
+  the operator from `OPERATOR_NAME` and `OPERATOR_EMAIL`.
+- On SIGTERM a node closes its listener, tells every socket to reconnect with close code
+  1012 (service restart), which lands the client on the other node, and gives requests
+  in flight and socket handlers up to `shutdownTimeout = 20 s` before MongoDB and
+  Redis are closed.
 - `GET /healthz` answers whether the process serves and touches no database: the load
   balancer replaces a node that fails it, which a database hiccup must not cause.
   Readiness is `GET /readyz` on the internal listener (`127.0.0.1:9090`): a journaled
@@ -223,10 +241,12 @@ WebSocket hub and the Redis bus, the two services, the seven stores, and the two
 %% server/ws.go, server/hub.go, server/bus.go, server/typing.go, server/presence.go,
 %% server/presence_nodes.go, server/*_http.go, server/users.go, server/sessions.go,
 %% server/channels.go, server/messages.go, server/friends.go, server/invites_http.go,
-%% server/media.go, server/mongo.go
+%% server/media.go, server/mongo.go, server/reads.go, server/ratelimit.go,
+%% server/account.go, server/purge.go, server/legal.go, server/internal.go
 flowchart LR
   subgraph entry["Entry — main.go, server.go, middleware.go"]
-    run["run(ctx)<br/>builds the stores, Hub,<br/>bus, presence"]
+    run["run(ctx)<br/>builds the stores, Hub,<br/>bus, presence, limiter;<br/>drains on SIGTERM"]
+    intl["internalServer<br/>127.0.0.1:9090<br/>handleReadyz, pprof"]
     routes["routes()<br/>http.ServeMux"]
     logging["withLogging<br/>responseRecorder"]
     reqauth["requireAuth<br/>sessions.ByToken"]
@@ -235,30 +255,33 @@ flowchart LR
     routes --> logging
     routes --> reqauth
     run --> wire
+    run --> intl
   end
 
   subgraph handlers["Handlers — *_http.go, auth.go, health.go"]
     hauth["handleRegister / handleLogin<br/>handleLogout / handleMe<br/>handleDeleteAccount"]
     husers["handleSearchUsers, handleGetUser,<br/>handleUpdateProfile, handleSetAvatar,<br/>handleDeleteAvatar, announceProfile"]
     hsess["handleListSessions<br/>handleRevokeSession"]
-    hch["handleCreateChannel, handleListChannels,<br/>handleGetChannel, handleOpenDirect,<br/>handleLeaveChannel,<br/>handleChannelsInCommon,<br/>handleSetChannelAvatar"]
+    hch["handleCreateChannel, handleListChannels,<br/>handleGetChannel, handleOpenDirect,<br/>handleLeaveChannel, handleMarkRead,<br/>handleChannelsInCommon,<br/>handleSetChannelAvatar,<br/>handleDeleteChannelAvatar"]
     hinv["handleGetInvite, handleResetInvite,<br/>handleFollowInvite"]
     hmsg["handleSendMessage,<br/>handleForwardMessage,<br/>handleListMessages,<br/>deliverMessage"]
     hfr["handleSendFriendRequest,<br/>handleListFriendRequests,<br/>handleAcceptFriendRequest,<br/>handleDeclineFriendRequest,<br/>handleListFriends"]
     hmedia["handleUploadMedia,<br/>handleGetMedia, saveUpload"]
     hpres["handlePresence<br/>visibleTo"]
     hhealth["handleHealthz — liveness"]
+    hlegal["handleLegal<br/>/privacy, /terms<br/>from embedded legal/*.html"]
     hweb["serveWeb — SPA fallback"]
   end
 
   subgraph realtime["WebSocket and fan-out — ws.go, hub.go, typing.go, bus.go"]
-    hws["handleWS<br/>Upgrade, then sessions.ByToken"]
+    hws["handleWS<br/>Upgrade, then sessions.ByToken;<br/>ready after bus.Settled"]
     sub["Subscriber<br/>send chan, socketID"]
     pumps["readPump / writePump<br/>ping 30s, pong 60s"]
     hub["Hub<br/>Connect, Publish, Subscribe,<br/>Unsubscribe, CloseSession, Reads"]
     frame["handleFrame / typing<br/>clientFrame type 'typing'"]
-    pubif["publisher interface<br/>Publish, Subscribe,<br/>Unsubscribe"]
-    busrun["bus.Run(ctx)<br/>one PubSub per process<br/>pending set + wake, applyWatches"]
+    pubif["publisher interface<br/>Publish, Subscribe,<br/>Unsubscribe, Settled"]
+    busrun["bus.Run(ctx)<br/>one PubSub per process<br/>pending set + wake, applyWatches<br/>resync topic"]
+    gap["recoverFromGap<br/>routing from memberOf,<br/>sessions.exists, resync frame"]
     hws --> sub
     hws --> hub
     sub --> pumps
@@ -266,6 +289,8 @@ flowchart LR
     frame --> hub
     hub -->|"watch/unwatch into the pending set"| busrun
     busrun -->|"hub.Publish(chID, payload)"| hub
+    busrun -->|"onGap"| gap
+    gap --> hub
   end
 
   subgraph services["Services — auth.go, presence.go, presence_nodes.go"]
@@ -273,8 +298,12 @@ flowchart LR
     pres["presence<br/>connect, disconnect, remove, lookup,<br/>beat, listen, sweeping, claim"]
     presloop["runPresence / presenceRound<br/>sweepNode, reregister"]
     announce["socketOpened / socketClosed<br/>announcePresence, markLastSeen"]
+    limits["limiter.allow<br/>INCR + EXPIRE NX per window"]
+    erase["eraseAccount<br/>revoke, leave, rename, free the name"]
+    jobs["runPurge every 5 min:<br/>purgeDiscarded, finishErasures;<br/>runFileSweep"]
     presloop --> pres
     announce --> pres
+    jobs --> erase
   end
 
   subgraph repos["Repositories — one Mongo collection each"]
@@ -284,27 +313,32 @@ flowchart LR
     mstore["messageStore — messages"]
     fstore["friendStore — friend_requests"]
     mdstore["mediaStore — media, GridFS"]
+    rstore["readStore — reads"]
   end
 
   subgraph adapters["Adapters"]
     mgo["connectMongo<br/>mongo.Client"]
     rdb["newBus<br/>redis.NewClient"]
+    lrdb["newLimiter<br/>own redis.NewClient, 250 ms"]
   end
 
   mongo[("MongoDB")]
   redis[("Redis")]
 
-  routes --> hauth & husers & hsess & hch & hinv & hmsg & hfr & hmedia & hpres & hhealth & hweb
+  routes --> hauth & husers & hsess & hch & hinv & hmsg & hfr & hmedia & hpres & hhealth & hlegal & hweb
   routes --> hws
   reqauth --> sstore
 
   hauth --> authsvc
+  hauth -->|"handleDeleteAccount"| erase
+  authsvc & hmsg & hmedia --> limits
   authsvc --> ustore
   authsvc --> sstore
   husers --> ustore
   husers -->|"profile event"| pubif
   hsess --> sstore
   hch --> cstore
+  hch & hmsg & hinv --> rstore
   hch -->|"Subscribe / Unsubscribe"| pubif
   hinv --> cstore
   hinv -->|"Subscribe"| pubif
@@ -319,6 +353,9 @@ flowchart LR
   hpres -->|"SharingAChannelWith"| cstore
   hpres -->|"FriendsAmong"| fstore
   hws --> cstore
+  gap --> cstore & sstore
+  erase --> sstore & cstore & fstore & rstore & mdstore & mstore & ustore
+  jobs -->|"purgeDiscarded"| cstore & mstore & mdstore
   hws --> sstore
   hws --> announce
   frame -->|"Publish(chID, typingEvent)"| pubif
@@ -328,8 +365,10 @@ flowchart LR
   wire --> hub
   sstore -->|"onRevoked → PublishRevoked"| busrun
 
-  ustore & sstore & cstore & mstore & fstore & mdstore --> mgo
+  ustore & sstore & cstore & mstore & fstore & mdstore & rstore --> mgo
   busrun --> rdb
+  limits --> lrdb
+  lrdb --> redis
   pres --> rdb
   mgo --> mongo
   rdb --> redis
@@ -343,15 +382,33 @@ flowchart LR
   fan-out for the Redis bus touched one file.
 - `*bus` and `*Hub` both satisfy `publisher`. Tests use `*Hub`, which reaches this process
   only, so they need neither Redis nor a second instance.
-- `requireAuth` wraps every route except `GET /healthz`, `GET /ws` and `GET /`. `/ws` is
-  outside on purpose — see `seq-ws-connect.mmd`.
+- `requireAuth` wraps every route except `GET /healthz`, `GET /privacy`, `GET /terms`,
+  `POST /auth/register`, `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`,
+  `GET /ws` and `GET /`. The auth routes read the cookie themselves where they need it;
+  `/ws` is outside on purpose — see `seq-ws-connect.mmd`.
+- **Limits are counted before the work they guard.** `limiter.allow` is one `INCR` in
+  Redis, with the window set by `EXPIRE NX`; login, registration, sends, forwards and
+  uploads call it first, so a refused request costs a Redis round trip and never a
+  password hash or a write. Keys and numbers are in the rate limit table above.
+- **Two jobs run on every node.** `runPurge`, every 5 minutes, removes channels marked at
+  their last leave and finishes account erasures whose claim ran out; `runFileSweep`
+  deletes stored files that no record names, one node per round. Each claims its work
+  with a single write, so two nodes never do the same piece (`docs/architecture.md`,
+  "MongoDB runs standalone").
+- **`recoverFromGap` repairs what a lost bus event broke.** When Redis takes this node
+  back, or another node announces a publish it lost, the node rebuilds its routing from
+  `channelStore.memberOf`, closes the sockets of sessions the database no longer has, and
+  sends every socket a `resync` frame, on which the client fetches what it missed.
+- **The internal listener** on `127.0.0.1:9090` is a second `http.Server`, built by
+  `internalServer`: `/readyz` and pprof, reachable only from inside the container, and
+  closed rather than drained at shutdown.
 - The layering here is by file, not by package: there is only one package (see
   `packages.mmd`).
 - `handlePresence` is the only handler that reaches into two stores purely to answer
   "may this caller ask?" — `visibleTo` unions `channelStore.SharingAChannelWith` and
   `friendStore.FriendsAmong` before anything is read from Redis.
 
-**Based on:** `server/main.go`, `server.go`, `middleware.go`, `auth.go`, `ws.go`, `hub.go`, `bus.go`, `typing.go`, `presence.go`, `presence_nodes.go`, `*_http.go`, `users.go`, `sessions.go`, `channels.go`, `messages.go`, `friends.go`, `media.go`, `mongo.go`, `health.go`
+**Based on:** `server/main.go`, `server.go`, `middleware.go`, `auth.go`, `ws.go`, `hub.go`, `bus.go`, `typing.go`, `presence.go`, `presence_nodes.go`, `*_http.go`, `users.go`, `sessions.go`, `channels.go`, `messages.go`, `friends.go`, `media.go`, `mongo.go`, `health.go`, `reads.go`, `ratelimit.go`, `account.go`, `purge.go`, `legal.go`, `internal.go`
 
 ---
 
@@ -369,7 +426,7 @@ diagram shows that plus the external modules it imports.
 %% graph would normally show lives in backend-architecture.mmd instead.
 flowchart TD
   subgraph internal["module messenger — internal packages"]
-    srv["messenger/server<br/>package main<br/>39 files (27 source + 12 test), no sub-packages<br/>no internal imports"]
+    srv["messenger/server<br/>package main<br/>58 files (33 source + 25 test), no sub-packages<br/>no internal imports; legal/*.html embedded"]
   end
 
   subgraph external["external modules — go.mod require block"]
@@ -379,6 +436,7 @@ flowchart TD
     mgo["go.mongodb.org/mongo-driver/v2/mongo"]
     mopt["go.mongodb.org/mongo-driver/v2/mongo/options"]
     mref["go.mongodb.org/mongo-driver/v2/mongo/readpref"]
+    mwc["go.mongodb.org/mongo-driver/v2/mongo/writeconcern"]
     argon["golang.org/x/crypto/argon2"]
   end
 
@@ -387,14 +445,16 @@ flowchart TD
   srv -->|"every store, hub.go"| bson
   srv -->|"mongo.go and every store"| mgo
   srv -->|"index and query options"| mopt
-  srv -->|"mongo.go, health.go — Ping"| mref
+  srv -->|"mongo.go — Ping"| mref
+  srv -->|"mongo.go — journaled writes"| mwc
   srv -->|"password.go"| argon
 ```
 
 **Reading it**
 
 - This is a finding, not a simplification: `go list ./...` returns the single line
-  `messenger/server`. 39 files, 27 source and 12 test, no sub-packages.
+  `messenger/server`. 58 files, 33 source and 25 test, no sub-packages: `server/legal/`
+  holds only the HTML templates that `legal.go` embeds.
 - It is also deliberate: the package layout is not designed up front, a file is split off
   only when the cut becomes obvious.
 - The layering a package graph would normally show lives in `backend-architecture.mmd`.
@@ -420,7 +480,7 @@ router and the store.
 flowchart TD
   main["main.js"]
   app["App.vue<br/>me, re-checked on focus<br/>sessionEnded remounts"]
-  signin["views/SignIn.vue"]
+  signin["views/SignIn.vue<br/>links /privacy, /terms"]
   messenger["views/Messenger.vue<br/>THE store and THE router<br/>channels, messages, unread, presence,<br/>typing, friends, pendingAction, originals<br/>paneFromUrl / paneToUrl"]
 
   subgraph views["views/"]
@@ -432,7 +492,7 @@ flowchart TD
 
   subgraph comps["components/"]
     rail["ChannelRail → ChannelRow"]
-    bubble["MessageBubble"]
+    bubble["MessageBubble → MessageText<br/>links, invites in place"]
     composer["MessageComposer → SendFilesDialog"]
     menu["MessageMenu"]
     viewer["MediaViewer"]
@@ -516,9 +576,9 @@ Which module calls what:
 |---|---|
 | `App.vue` | `me`, `logout` |
 | `views/SignIn.vue` | `login`, `register`, `me` |
-| `views/Messenger.vue` | `channels`, `createChannel`, `openDirect`, `leaveChannel`, `followInvite`, `messages`, `messagesByIds`, `send`, `forward`, `presence`, `friends`, `friendRequests`, `sendFriendRequest`, `acceptFriendRequest`, `declineFriendRequest` |
+| `views/Messenger.vue` | `channels`, `createChannel`, `openDirect`, `leaveChannel`, `followInvite`, `messages`, `messagesByIds`, `send`, `forward`, `presence`, `friends`, `friendRequests`, `sendFriendRequest`, `acceptFriendRequest`, `declineFriendRequest`, `markRead` |
 | `views/InfoPanel.vue` | `channel`, `channelsInCommon`, `invite`, `resetInvite`, `setChannelAvatar`, `removeChannelAvatar`, `user` |
-| `views/Profile.vue` | `updateProfile`, `setAvatar`, `removeAvatar`, `sessions`, `revokeSession` |
+| `views/Profile.vue` | `updateProfile`, `setAvatar`, `removeAvatar`, `sessions`, `revokeSession`, `deleteAccount` |
 | `views/UserPanel.vue` | `user`, `channelsInCommon` |
 | `components/ChannelRail.vue` | `searchUsers` |
 | `components/MessageComposer.vue` | `uploadMedia` |
@@ -884,42 +944,61 @@ Login: `POST /auth/login` through to the session cookie.
 ```mermaid
 %% Login. See README for the notes referenced by step number.
 %% Sources: web/src/views/SignIn.vue, web/src/api.js, server/auth.go,
-%% server/password.go, server/users.go, server/sessions.go
+%% server/password.go, server/users.go, server/sessions.go, server/ratelimit.go
 sequenceDiagram
   autonumber
   participant UI as SignIn.vue
   participant API as api.js
   participant A as auth.handleLogin
+  participant L as limiter
+  participant R as Redis
   participant US as userStore
   participant SS as sessionStore
   participant M as MongoDB
 
   UI->>API: api.login(username, password)
   API->>A: POST /auth/login
-  A->>US: GetByUsername(username)
-  US->>M: users.FindOne on username
-  M-->>A: User or errUserNotFound
-  Note over A: acquire() on sem, cap 6
-  Note over A,US: verifyPassword against the hash or dummyHash
-  alt no user or no match
-    A-->>UI: 401 invalid username or password
-  else verified
-    A->>SS: Create(user, r.UserAgent())
-    Note over SS: newToken(), 32 bytes, base64
-    SS->>M: sessions.InsertOne
-    M-->>SS: InsertedID
-    Note over SS: put(sess) in the local cache
-    SS-->>A: Session
-    A-->>API: 200, Set-Cookie session
-    API-->>UI: authResponse
-    UI->>A: GET /auth/me
-    A->>US: GetByUsername(sess.Username)
-    A-->>UI: meResponse
+  A->>L: allow(login-ip), then login-pair and login-user
+  L->>R: INCR, EXPIRE NX, PTTL for each key
+  alt a count over its limit
+    A-->>UI: 429, Retry-After
+  else within the limits
+    A->>US: GetByUsername(username)
+    US->>M: users.FindOne on username, not deleted
+    M-->>A: User or errUserNotFound
+    Note over A: acquire() on sem, cap 6
+    Note over A,US: verifyPassword against the hash or dummyHash
+    alt no user or no match
+      A-->>UI: 401 invalid username or password
+    else verified
+      A->>L: clear(login-pair)
+      L->>R: DEL
+      A->>SS: Create(user, r.UserAgent())
+      Note over SS: newToken(), 32 bytes, base64
+      SS->>M: sessions.InsertOne
+      M-->>SS: InsertedID
+      Note over SS: put(sess) in the local cache
+      SS-->>A: Session
+      A-->>API: 200, Set-Cookie session
+      API-->>UI: authResponse
+      UI->>A: GET /auth/me
+      A->>US: GetByUsername(sess.Username)
+      A-->>UI: meResponse
+    end
   end
 ```
 
 **Reading it**
 
+- **`allow(login-ip), then login-pair and login-user`.** All three counts are taken
+  before the hash, so a flood costs Redis round trips and not argon2. The pair and the
+  account are counted only for a name that could exist, and their number is the count
+  itself: a check followed by a count after a failure let a parallel burst pass on one
+  zero. A 429 carries `Retry-After`, and `SignIn.vue` says how long to wait.
+- **`not deleted`.** `GetByUsername` filters on `deleted_at`, so an erased account cannot
+  log in even while its name is still being freed.
+- **`clear(login-pair)`.** A success forgives the attempts made from this address. The
+  account's own count stays: it is what holds back a guess spread over many addresses.
 - **`acquire() on sem, cap 6`.** It bounds concurrent argon2id hashes to `hashConcurrency = 6` with a
   `hashWaitTimeout` of 2 s, after which the answer is 503. The limit is per process, so
   two replicas on one host allow 12 hashes at 19 MB each.
@@ -935,7 +1014,7 @@ sequenceDiagram
 - **`GET /auth/me`.** `handleMe` reads the *user*, not the session, so a display name changed in
   another tab is current rather than stale until the session expires.
 
-**Based on:** `web/src/views/SignIn.vue`, `web/src/api.js`, `server/auth.go`, `server/password.go`, `server/users.go`, `server/sessions.go`
+**Based on:** `web/src/views/SignIn.vue`, `web/src/api.js`, `server/auth.go`, `server/password.go`, `server/users.go`, `server/sessions.go`, `server/ratelimit.go`
 
 ---
 
