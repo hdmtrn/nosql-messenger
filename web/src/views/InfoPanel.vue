@@ -7,7 +7,7 @@ import SgButton from '../components/SgButton.vue'
 import SgDialog from '../components/SgDialog.vue'
 import MediaViewer from '../components/MediaViewer.vue'
 import RemoveFriendDialog from '../components/RemoveFriendDialog.vue'
-import { avatarUrl, channelAvatarUrl, displayName, initials } from '../naming'
+import { avatarUrl, channelAvatarUrl, displayName, initials, otherMember } from '../naming'
 import { toJpeg } from '../images'
 import { inviteLink } from '../pending'
 
@@ -22,6 +22,8 @@ const props = defineProps({
 const emit = defineEmits(['close', 'leave', 'select', 'person', 'changed', 'unfriend'])
 
 const direct = () => props.channel.kind === 'direct'
+// A direct conversation whose other side deleted the account: nobody to look up.
+const alone = () => direct() && !otherMember(props.channel, props.me.id)
 
 const members = ref([])
 const inviteCode = ref('')
@@ -42,6 +44,7 @@ async function load() {
   person.value = null
   common.value = []
 
+  if (alone()) return
   if (direct()) {
     const [who, shared] = await Promise.all([
       api.user(props.title).catch(() => null),
@@ -159,8 +162,8 @@ async function removeAvatar() {
       <div>
         <!-- The title of a direct channel is the other person's handle; what is read is their name. -->
         <div class="name">{{ direct() ? displayName(title) : title }}</div>
-        <div v-if="direct()" class="handle below">@{{ title }}</div>
-        <div v-else class="label below">{{ channel.member_count }} members</div>
+        <div v-if="direct() && !alone()" class="handle below">@{{ title }}</div>
+        <div v-else-if="!direct()" class="label below">{{ channel.member_count }} members</div>
       </div>
 
       <p v-if="direct() && person && person.bio" class="bio">{{ person.bio }}</p>
