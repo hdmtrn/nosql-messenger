@@ -1,7 +1,8 @@
 %% Whole system: Vue client, two Go instances, Redis, MongoDB.
 %% Exact Redis key and topic formats are in the README tables.
 %% Sources: docker-compose.yml, Dockerfile, server/main.go, server/server.go,
-%% server/bus.go, server/presence.go, web/src/api.js, web/src/socket.js
+%% server/bus.go, server/presence.go, server/ratelimit.go, server/legal.go,
+%% web/src/api.js, web/src/socket.js
 flowchart LR
   subgraph client["Browser"]
     vue["Vue 3 app<br/>web/dist"]
@@ -18,7 +19,9 @@ flowchart LR
       bus1["bus<br/>redis.PubSub"]
       pres1["presence<br/>nodeID"]
       st1["7 stores"]
+      lim1["limiter<br/>own redis.Client"]
       mux1 --> st1
+      mux1 --> lim1
       mux1 --> bus1
       mux1 --> hub1
       hub1 <--> bus1
@@ -30,7 +33,9 @@ flowchart LR
       bus2["bus"]
       pres2["presence"]
       st2["7 stores"]
+      lim2["limiter"]
       mux2 --> st2
+      mux2 --> lim2
       mux2 --> bus2
       mux2 --> hub2
       hub2 <--> bus2
@@ -45,12 +50,14 @@ flowchart LR
   wsjs -->|"WebSocket /ws"| mux1
   apijs -.->|"second browser, by hand"| mux2
   wsjs -.-> mux2
-  mux1 -->|"GET / serveWeb"| vue
+  mux1 -->|"GET / serveWeb<br/>GET /privacy, /terms"| vue
 
-  bus1 <-->|"PUBLISH / SUBSCRIBE<br/>ch:{channelID}<br/>session-revoked<br/>subscription"| redis
+  bus1 <-->|"PUBLISH / SUBSCRIBE<br/>ch:{channelID}, u:{userID}<br/>session-revoked<br/>subscription, resync"| redis
   bus2 <--> redis
   pres1 <-->|"presence:* keys<br/>sockets, node, version<br/>alive, nodes, sweeper, epoch"| redis
   pres2 <--> redis
+  lim1 -->|"rl:* counters<br/>INCR + EXPIRE NX"| redis
+  lim2 --> redis
 
-  st1 -->|"users, sessions, channels,<br/>messages, friend_requests,<br/>media, GridFS"| mongo
+  st1 -->|"users, sessions, channels,<br/>messages, reads, friend_requests,<br/>media, GridFS, health"| mongo
   st2 --> mongo

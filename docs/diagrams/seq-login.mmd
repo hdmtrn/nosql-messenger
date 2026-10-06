@@ -1,34 +1,44 @@
 %% Login. See README for the notes referenced by step number.
 %% Sources: web/src/views/SignIn.vue, web/src/api.js, server/auth.go,
-%% server/password.go, server/users.go, server/sessions.go
+%% server/password.go, server/users.go, server/sessions.go, server/ratelimit.go
 sequenceDiagram
   autonumber
   participant UI as SignIn.vue
   participant API as api.js
   participant A as auth.handleLogin
+  participant L as limiter
+  participant R as Redis
   participant US as userStore
   participant SS as sessionStore
   participant M as MongoDB
 
   UI->>API: api.login(username, password)
   API->>A: POST /auth/login
-  A->>US: GetByUsername(username)
-  US->>M: users.FindOne on username
-  M-->>A: User or errUserNotFound
-  Note over A: acquire() on sem, cap 6
-  Note over A,US: verifyPassword against the hash or dummyHash
-  alt no user or no match
-    A-->>UI: 401 invalid username or password
-  else verified
-    A->>SS: Create(user, r.UserAgent())
-    Note over SS: newToken(), 32 bytes, base64
-    SS->>M: sessions.InsertOne
-    M-->>SS: InsertedID
-    Note over SS: put(sess) in the local cache
-    SS-->>A: Session
-    A-->>API: 200, Set-Cookie session
-    API-->>UI: authResponse
-    UI->>A: GET /auth/me
-    A->>US: GetByUsername(sess.Username)
-    A-->>UI: meResponse
+  A->>L: allow(login-ip), then login-pair and login-user
+  L->>R: INCR, EXPIRE NX, PTTL for each key
+  alt a count over its limit
+    A-->>UI: 429, Retry-After
+  else within the limits
+    A->>US: GetByUsername(username)
+    US->>M: users.FindOne on username, not deleted
+    M-->>A: User or errUserNotFound
+    Note over A: acquire() on sem, cap 6
+    Note over A,US: verifyPassword against the hash or dummyHash
+    alt no user or no match
+      A-->>UI: 401 invalid username or password
+    else verified
+      A->>L: clear(login-pair)
+      L->>R: DEL
+      A->>SS: Create(user, r.UserAgent())
+      Note over SS: newToken(), 32 bytes, base64
+      SS->>M: sessions.InsertOne
+      M-->>SS: InsertedID
+      Note over SS: put(sess) in the local cache
+      SS-->>A: Session
+      A-->>API: 200, Set-Cookie session
+      API-->>UI: authResponse
+      UI->>A: GET /auth/me
+      A->>US: GetByUsername(sess.Username)
+      A-->>UI: meResponse
+    end
   end

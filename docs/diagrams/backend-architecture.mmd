@@ -3,10 +3,12 @@
 %% server/ws.go, server/hub.go, server/bus.go, server/typing.go, server/presence.go,
 %% server/presence_nodes.go, server/*_http.go, server/users.go, server/sessions.go,
 %% server/channels.go, server/messages.go, server/friends.go, server/invites_http.go,
-%% server/media.go, server/mongo.go
+%% server/media.go, server/mongo.go, server/reads.go, server/ratelimit.go,
+%% server/account.go, server/purge.go, server/legal.go, server/internal.go
 flowchart LR
   subgraph entry["Entry — main.go, server.go, middleware.go"]
-    run["run(ctx)<br/>builds the stores, Hub,<br/>bus, presence"]
+    run["run(ctx)<br/>builds the stores, Hub,<br/>bus, presence, limiter;<br/>drains on SIGTERM"]
+    intl["internalServer<br/>127.0.0.1:9090<br/>handleReadyz, pprof"]
     routes["routes()<br/>http.ServeMux"]
     logging["withLogging<br/>responseRecorder"]
     reqauth["requireAuth<br/>sessions.ByToken"]
@@ -15,30 +17,33 @@ flowchart LR
     routes --> logging
     routes --> reqauth
     run --> wire
+    run --> intl
   end
 
   subgraph handlers["Handlers — *_http.go, auth.go, health.go"]
     hauth["handleRegister / handleLogin<br/>handleLogout / handleMe<br/>handleDeleteAccount"]
     husers["handleSearchUsers, handleGetUser,<br/>handleUpdateProfile, handleSetAvatar,<br/>handleDeleteAvatar, announceProfile"]
     hsess["handleListSessions<br/>handleRevokeSession"]
-    hch["handleCreateChannel, handleListChannels,<br/>handleGetChannel, handleOpenDirect,<br/>handleLeaveChannel,<br/>handleChannelsInCommon,<br/>handleSetChannelAvatar"]
+    hch["handleCreateChannel, handleListChannels,<br/>handleGetChannel, handleOpenDirect,<br/>handleLeaveChannel, handleMarkRead,<br/>handleChannelsInCommon,<br/>handleSetChannelAvatar,<br/>handleDeleteChannelAvatar"]
     hinv["handleGetInvite, handleResetInvite,<br/>handleFollowInvite"]
     hmsg["handleSendMessage,<br/>handleForwardMessage,<br/>handleListMessages,<br/>deliverMessage"]
     hfr["handleSendFriendRequest,<br/>handleListFriendRequests,<br/>handleAcceptFriendRequest,<br/>handleDeclineFriendRequest,<br/>handleListFriends, handleRemoveFriend"]
     hmedia["handleUploadMedia,<br/>handleGetMedia, saveUpload"]
     hpres["handlePresence<br/>visibleTo"]
     hhealth["handleHealthz — liveness"]
+    hlegal["handleLegal<br/>/privacy, /terms<br/>from embedded legal/*.html"]
     hweb["serveWeb — SPA fallback"]
   end
 
   subgraph realtime["WebSocket and fan-out — ws.go, hub.go, typing.go, bus.go"]
-    hws["handleWS<br/>Upgrade, then sessions.ByToken"]
+    hws["handleWS<br/>Upgrade, then sessions.ByToken;<br/>ready after bus.Settled"]
     sub["Subscriber<br/>send chan, socketID"]
     pumps["readPump / writePump<br/>ping 30s, pong 60s"]
     hub["Hub<br/>Connect, Publish, Subscribe,<br/>Unsubscribe, CloseSession, Reads"]
     frame["handleFrame / typing<br/>clientFrame type 'typing'"]
-    pubif["publisher interface<br/>Publish, Subscribe,<br/>Unsubscribe"]
-    busrun["bus.Run(ctx)<br/>one PubSub per process<br/>pending set + wake, applyWatches"]
+    pubif["publisher interface<br/>Publish, Subscribe,<br/>Unsubscribe, Settled"]
+    busrun["bus.Run(ctx)<br/>one PubSub per process<br/>pending set + wake, applyWatches<br/>resync topic"]
+    gap["recoverFromGap<br/>routing from memberOf,<br/>sessions.exists, resync frame"]
     hws --> sub
     hws --> hub
     sub --> pumps
@@ -46,6 +51,8 @@ flowchart LR
     frame --> hub
     hub -->|"watch/unwatch into the pending set"| busrun
     busrun -->|"hub.Publish(chID, payload)"| hub
+    busrun -->|"onGap"| gap
+    gap --> hub
   end
 
   subgraph services["Services — auth.go, presence.go, presence_nodes.go"]
@@ -53,8 +60,12 @@ flowchart LR
     pres["presence<br/>connect, disconnect, remove, lookup,<br/>beat, listen, sweeping, claim"]
     presloop["runPresence / presenceRound<br/>sweepNode, reregister"]
     announce["socketOpened / socketClosed<br/>announcePresence, markLastSeen"]
+    limits["limiter.allow<br/>INCR + EXPIRE NX per window"]
+    erase["eraseAccount<br/>revoke, leave, rename, free the name"]
+    jobs["runPurge every 5 min:<br/>purgeDiscarded, finishErasures;<br/>runFileSweep"]
     presloop --> pres
     announce --> pres
+    jobs --> erase
   end
 
   subgraph repos["Repositories — one Mongo collection each"]
@@ -64,27 +75,32 @@ flowchart LR
     mstore["messageStore — messages"]
     fstore["friendStore — friend_requests"]
     mdstore["mediaStore — media, GridFS"]
+    rstore["readStore — reads"]
   end
 
   subgraph adapters["Adapters"]
     mgo["connectMongo<br/>mongo.Client"]
     rdb["newBus<br/>redis.NewClient"]
+    lrdb["newLimiter<br/>own redis.NewClient, 250 ms"]
   end
 
   mongo[("MongoDB")]
   redis[("Redis")]
 
-  routes --> hauth & husers & hsess & hch & hinv & hmsg & hfr & hmedia & hpres & hhealth & hweb
+  routes --> hauth & husers & hsess & hch & hinv & hmsg & hfr & hmedia & hpres & hhealth & hlegal & hweb
   routes --> hws
   reqauth --> sstore
 
   hauth --> authsvc
+  hauth -->|"handleDeleteAccount"| erase
+  authsvc & hmsg & hmedia & hfr --> limits
   authsvc --> ustore
   authsvc --> sstore
   husers --> ustore
   husers -->|"profile event"| pubif
   hsess --> sstore
   hch --> cstore
+  hch & hmsg & hinv --> rstore
   hch -->|"Subscribe / Unsubscribe"| pubif
   hinv --> cstore
   hinv -->|"Subscribe"| pubif
@@ -99,6 +115,9 @@ flowchart LR
   hpres -->|"SharingAChannelWith"| cstore
   hpres -->|"FriendsAmong"| fstore
   hws --> cstore
+  gap --> cstore & sstore
+  erase --> sstore & cstore & fstore & rstore & mdstore & mstore & ustore
+  jobs -->|"purgeDiscarded"| cstore & mstore & mdstore
   hws --> sstore
   hws --> announce
   frame -->|"Publish(chID, typingEvent)"| pubif
@@ -108,8 +127,10 @@ flowchart LR
   wire --> hub
   sstore -->|"onRevoked → PublishRevoked"| busrun
 
-  ustore & sstore & cstore & mstore & fstore & mdstore --> mgo
+  ustore & sstore & cstore & mstore & fstore & mdstore & rstore --> mgo
   busrun --> rdb
+  limits --> lrdb
+  lrdb --> redis
   pres --> rdb
   mgo --> mongo
   rdb --> redis

@@ -7,7 +7,7 @@
 flowchart TD
   main["main.js"]
   app["App.vue<br/>me, re-checked on focus<br/>sessionEnded remounts"]
-  signin["views/SignIn.vue"]
+  signin["views/SignIn.vue<br/>links /privacy, /terms"]
   messenger["views/Messenger.vue<br/>THE store and THE router<br/>channels, messages, unread, presence,<br/>typing, friends, pendingAction, originals<br/>paneFromUrl / paneToUrl"]
 
   subgraph views["views/"]
@@ -20,7 +20,7 @@ flowchart TD
 
   subgraph comps["components/"]
     rail["ChannelRail → ChannelRow"]
-    bubble["MessageBubble"]
+    bubble["MessageBubble → MessageText<br/>links, invites in place"]
     composer["MessageComposer → SendFilesDialog"]
     menu["MessageMenu"]
     viewer["MediaViewer"]

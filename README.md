@@ -10,8 +10,8 @@ rather than the shortest path to a working chat.
 
 The interesting parts are the ones a document database forces you to decide:
 what the message collection looks like when an array inside the channel document is not an
-option, how a cursor paginates when thousands of documents share a timestamp, and how
-fan-out survives a second instance. `docs/architecture.md` covers those decisions and their
+option, how history is paged and caught up when several instances write to one channel in
+the same millisecond, and how fan-out survives a second instance. `docs/architecture.md` covers those decisions and their
 cost; `docs/diagrams/` shows the same system as diagrams derived from the code.
 
 ## Running it

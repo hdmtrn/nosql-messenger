@@ -5,7 +5,7 @@
 %% graph would normally show lives in backend-architecture.mmd instead.
 flowchart TD
   subgraph internal["module messenger — internal packages"]
-    srv["messenger/server<br/>package main<br/>39 files (27 source + 12 test), no sub-packages<br/>no internal imports"]
+    srv["messenger/server<br/>package main<br/>58 files (33 source + 25 test), no sub-packages<br/>no internal imports; legal/*.html embedded"]
   end
 
   subgraph external["external modules — go.mod require block"]
@@ -15,6 +15,7 @@ flowchart TD
     mgo["go.mongodb.org/mongo-driver/v2/mongo"]
     mopt["go.mongodb.org/mongo-driver/v2/mongo/options"]
     mref["go.mongodb.org/mongo-driver/v2/mongo/readpref"]
+    mwc["go.mongodb.org/mongo-driver/v2/mongo/writeconcern"]
     argon["golang.org/x/crypto/argon2"]
   end
 
@@ -23,5 +24,6 @@ flowchart TD
   srv -->|"every store, hub.go"| bson
   srv -->|"mongo.go and every store"| mgo
   srv -->|"index and query options"| mopt
-  srv -->|"mongo.go, health.go — Ping"| mref
+  srv -->|"mongo.go — Ping"| mref
+  srv -->|"mongo.go — journaled writes"| mwc
   srv -->|"password.go"| argon
