@@ -1,0 +1,133 @@
+name: Deploy
+
+# A release is a tag on a commit of main. Pushing v* ships that commit; the
+# manual run ships any tag or commit of main, which is how a rollback or a
+# redeploy after the stack was brought back up is done. Nothing is built here:
+# the image is the one CI's publish job pushed for that commit.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Release tag (v1.2) or commit of main to deploy
+        required: true
+
+# Two deploys at once would race on the same stack; the second one waits.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  STACK: messenger-app
+  REPOSITORY: messenger
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      # The whole history and the tags, to resolve the ref and check it is on
+      # main. The template comes from the ref the workflow runs on: on a manual
+      # rollback that is main, so the infrastructure stays current and only the
+      # image goes back.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve what to deploy
+        id: target
+        env:
+          INPUT_REF: ${{ inputs.ref }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            ref="$GITHUB_REF_NAME"
+          else
+            ref="$INPUT_REF"
+          fi
+          # The input is typed by hand; anything but a tag or a hash is refused
+          # before it reaches git.
+          if ! printf '%s' "$ref" | grep -Eq '^(v[0-9A-Za-z._-]+|[0-9a-f]{7,40})$'; then
+            echo "::error::Not a release tag or a commit hash: $ref"
+            exit 1
+          fi
+          sha=$(git rev-parse --verify --quiet "$ref^{commit}") || {
+            echo "::error::No such tag or commit: $ref"
+            exit 1
+          }
+          if ! git merge-base --is-ancestor "$sha" origin/main; then
+            echo "::error::$ref is not on main; only commits of main are released"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          if git show-ref --verify --quiet "refs/tags/$ref"; then
+            echo "release=$ref" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Check the image is in ECR
+        id: image
+        env:
+          TAG: sha-${{ steps.target.outputs.sha }}
+        run: |
+          digest=$(aws ecr describe-images --repository-name "$REPOSITORY" \
+                     --image-ids imageTag="$TAG" \
+                     --query 'imageDetails[0].imageDigest' --output text 2>/dev/null) || {
+            echo "::error::No image $TAG in ECR. CI pushes it once the commit passes on main."
+            exit 1
+          }
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      # The release tag goes onto the existing image. Tags are immutable, so a
+      # tag already on another image is an error rather than a silent move.
+      - name: Tag the image with the release
+        if: steps.target.outputs.release != ''
+        env:
+          RELEASE: ${{ steps.target.outputs.release }}
+          TAG: ${{ steps.image.outputs.tag }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          existing=$(aws ecr describe-images --repository-name "$REPOSITORY" \
+                       --image-ids imageTag="$RELEASE" \
+                       --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || true)
+          if [ "$existing" = "$DIGEST" ]; then
+            echo "$RELEASE already names this image"
+            exit 0
+          fi
+          if [ -n "$existing" ]; then
+            echo "::error::$RELEASE already names another image ($existing)"
+            exit 1
+          fi
+          manifest=$(aws ecr batch-get-image --repository-name "$REPOSITORY" \
+                       --image-ids imageTag="$TAG" \
+                       --query 'images[0].imageManifest' --output text)
+          media_type=$(aws ecr batch-get-image --repository-name "$REPOSITORY" \
+                         --image-ids imageTag="$TAG" \
+                         --query 'images[0].imageManifestMediaType' --output text)
+          aws ecr put-image --repository-name "$REPOSITORY" --image-tag "$RELEASE" \
+            --image-manifest "$manifest" --image-manifest-media-type "$media_type" >/dev/null
+
+      # Waits until ECS reports the service stable. A version that fails its
+      # health checks is rolled back by the circuit breaker, the stack update
+      # fails, and so does this step.
+      - name: Deploy the stack
+        env:
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
+          CFN_ROLE_ARN: ${{ vars.AWS_CFN_ROLE_ARN }}
+          CERTIFICATE_ARN: ${{ vars.CERTIFICATE_ARN }}
+        run: |
+          aws cloudformation deploy \
+            --stack-name "$STACK" \
+            --template-file infra/app.yaml \
+            --role-arn "$CFN_ROLE_ARN" \
+            --capabilities CAPABILITY_IAM \
+            --parameter-overrides ImageTag="$IMAGE_TAG" CertificateArn="$CERTIFICATE_ARN" \
+            --no-fail-on-empty-changeset
