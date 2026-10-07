@@ -7,8 +7,8 @@ on:
   # branches at once, GitHub created a run for one of them and skipped the rest.
   workflow_dispatch:
 
-# The four jobs are independent and run in parallel: none of them consumes what
-# another produces. Go compiles fast and setup-go restores the build cache, so
+# The four checks are independent and run in parallel: none of them consumes
+# what another produces. publish, on main only, waits for all four. Go compiles fast and setup-go restores the build cache, so
 # each job running its own `go` command costs less than passing binaries
 # between jobs would.
 jobs:
@@ -104,9 +104,51 @@ jobs:
 
       # The Dockerfile builds the frontend and the Go binary itself, so this one
       # step covers both builds. The image is thrown away: it only proves the
-      # Dockerfile still builds. The production image is arm64 and is built
-      # outside CI, on the machine that deploys it.
+      # Dockerfile still builds. The image that ships is built by publish.
       # --progress=plain keeps the full output of every RUN in the log instead
       # of collapsing it, which is what a failed build needs.
       - name: Build image
         run: docker build --progress=plain .
+
+  # The image of every commit on main that passed, pushed to ECR as
+  # sha-<commit>. Nothing is deployed here: deploy.yml takes an image from ECR
+  # by release tag or by hand, so a release ships the very build tested here.
+  publish:
+    needs: [lint, unit, integration, image]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Fargate runs the tasks on arm64; a native runner avoids emulating it.
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      # The OIDC token the AWS role is assumed with; no keys are stored.
+      id-token: write
+    env:
+      TAG: sha-${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_PUSH_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Tags in the repository are immutable, so a rerun of the same commit
+      # would fail on push; the image is already there then.
+      - name: Check whether the image exists
+        id: exists
+        run: |
+          if aws ecr describe-images --repository-name messenger \
+               --image-ids imageTag="$TAG" >/dev/null 2>&1; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and push
+        if: steps.exists.outputs.found != 'true'
+        env:
+          IMAGE: ${{ steps.ecr.outputs.registry }}/messenger:${{ env.TAG }}
+        run: |
+          docker build --progress=plain -t "$IMAGE" .
+          docker push "$IMAGE"
