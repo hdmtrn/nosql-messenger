@@ -8,9 +8,13 @@ on:
   workflow_dispatch:
 
 # The four checks are independent and run in parallel: none of them consumes
-# what another produces. publish, on main only, waits for all four. Go compiles fast and setup-go restores the build cache, so
-# each job running its own `go` command costs less than passing binaries
-# between jobs would.
+# what another produces. Go compiles fast and setup-go restores the build
+# cache, so each job running its own `go` command costs less than passing
+# binaries between jobs would. publish, on main only, waits for all four.
+# Nothing here may touch the repository; publish alone gets an AWS token.
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -111,8 +115,8 @@ jobs:
         run: docker build --progress=plain .
 
   # The image of every commit on main that passed, pushed to ECR as
-  # sha-<commit>. Nothing is deployed here: deploy.yml takes an image from ECR
-  # by release tag or by hand, so a release ships the very build tested here.
+  # sha-<commit>. Nothing is deployed here: infra/deploy.sh, run by hand, takes
+  # the image of a release from ECR, so a release ships the build tested here.
   publish:
     needs: [lint, unit, integration, image]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -124,16 +128,18 @@ jobs:
       id-token: write
     env:
       TAG: sha-${{ github.sha }}
+    # Pinned by commit: any step of a job holding id-token can assume the push
+    # role, and a tag can be moved to other code after the fact.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
           role-to-assume: ${{ vars.AWS_PUSH_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
       - id: ecr
-        uses: aws-actions/amazon-ecr-login@v2
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2
 
       # Tags in the repository are immutable, so a rerun of the same commit
       # would fail on push; the image is already there then.
