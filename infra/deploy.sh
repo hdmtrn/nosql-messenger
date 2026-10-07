@@ -29,6 +29,15 @@ git fetch --quiet --tags "${upstream%%/*}"
 sha=$(git rev-parse --verify --quiet "$ref^{commit}") || die "no such tag or commit: $ref"
 git merge-base --is-ancestor "$sha" "$upstream" || die "$ref is not on $upstream"
 
+# The template comes from the remote main as well, never from the working tree,
+# which may be another branch or hold uncommitted edits. On a rollback this
+# keeps the infrastructure current and takes only the image back.
+workdir=$(mktemp -d)
+trap 'rm -rf "$workdir"' EXIT
+template="$workdir/app.yaml"
+git show "$upstream:infra/app.yaml" > "$template"
+template_commit=$(git rev-parse --short "$upstream")
+
 release=""
 if git show-ref --verify --quiet "refs/tags/$ref"; then
   release=$ref
@@ -51,9 +60,10 @@ certificate=$(aws ssm get-parameter --name "$PARAMETER_PREFIX/certificate-arn" \
 account=$(aws sts get-caller-identity --query Account --output text)
 region=$(aws configure get region || true)
 
-echo "Commit:  $sha ${release:+($release)}"
-echo "Image:   $image_tag ($digest)"
-echo "Stack:   $STACK in account $account, region ${region:-from the environment}"
+echo "Commit:   $sha ${release:+($release)}"
+echo "Image:    $image_tag ($digest)"
+echo "Template: infra/app.yaml at $upstream ($template_commit)"
+echo "Stack:    $STACK in account $account, region ${region:-from the environment}"
 read -r -p "Deploy? [y/N] " answer
 [ "$answer" = y ] || die "cancelled"
 
@@ -82,7 +92,7 @@ fi
 # is rolled back by the circuit breaker, and the stack update fails with it.
 aws cloudformation deploy \
   --stack-name "$STACK" \
-  --template-file infra/app.yaml \
+  --template-file "$template" \
   --role-arn "$cfn_role" \
   --parameter-overrides ImageTag="$image_tag" CertificateArn="$certificate" \
   --no-fail-on-empty-changeset

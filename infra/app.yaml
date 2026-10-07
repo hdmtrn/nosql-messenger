@@ -89,10 +89,13 @@ Resources:
       SecurityGroups:
         - !Ref LoadBalancerSecurityGroup
       LoadBalancerAttributes:
-        # Server pings every socket each 30 s (pingPeriod in ws.go), so an open
-        # socket is never idle this long; the margin covers a late ping.
+        # Below the server's IdleTimeout of 60 s (main.go), so the ALB drops an
+        # idle connection to a task before the server does; the other way round
+        # it may send a request into a connection the server is closing, and
+        # answer it with 502. Above pingPeriod of 30 s (ws.go), so an open
+        # socket is never idle this long.
         - Key: idle_timeout.timeout_seconds
-          Value: "120"
+          Value: "50"
 
   TargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
