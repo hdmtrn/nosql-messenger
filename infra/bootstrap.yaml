@@ -5,10 +5,13 @@ Description: >-
   application are torn down between demos. Deployed by hand, never from CI.
 
 Parameters:
+  # GitHub signs this repository's tokens with owner and repository ids next
+  # to the names, as the repository's OIDC settings choose. The ids never
+  # change, so a repository recreated under the same name gets no access.
   GitHubRepo:
     Type: String
-    Default: hdmtrn/nosql-messenger
-    Description: owner/name of the repository whose CI may push images.
+    Default: hdmtrn@173386343/nosql-messenger@1380244670
+    Description: owner@id/name@id of the repository whose CI may push images.
   AppStackName:
     Type: String
     Default: messenger-app
