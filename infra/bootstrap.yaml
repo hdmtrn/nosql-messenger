@@ -175,6 +175,13 @@ Resources:
                   - ecs:TagResource
                   - ecs:UntagResource
                   - ecs:ListTagsForResource
+                  - ecs:PutClusterCapacityProviders
+                  - ecs:UpdateClusterSettings
+                  # The service handler follows a deployment through these and
+                  # stops one that is rolled back.
+                  - ecs:ListServiceDeployments
+                  - ecs:DescribeServiceDeployments
+                  - ecs:StopServiceDeployment
                 Resource: "*"
               - Effect: Allow
                 Action: elasticloadbalancing:*
@@ -190,6 +197,12 @@ Resources:
                   - ec2:RevokeSecurityGroupEgress
                   - ec2:CreateTags
                   - ec2:DeleteTags
+                  - ec2:UpdateSecurityGroupRuleDescriptionsIngress
+                  - ec2:UpdateSecurityGroupRuleDescriptionsEgress
+                  # Called by ELB on the caller's behalf when the ALB gets its
+                  # security group; not a Describe, and missing from the
+                  # resource schema, so only a real create showed it.
+                  - ec2:GetSecurityGroupsForVpc
                 Resource: "*"
               # Cloud Map keeps a private namespace as a Route 53 hosted zone.
               - Effect: Allow
@@ -213,9 +226,16 @@ Resources:
                   - logs:TagResource
                   - logs:UntagResource
                   - logs:ListTagsForResource
+                  - logs:GetDataProtectionPolicy
+                  - logs:DeleteDataProtectionPolicy
                 Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/ecs/${AppStackName}*
               - Effect: Allow
-                Action: logs:DescribeLogGroups
+                Action:
+                  - logs:DescribeLogGroups
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeIndexPolicies
+                  # The cluster handler reads key metadata; no use of a key.
+                  - kms:DescribeKey
                 Resource: "*"
               # The one role the stack hands out, and only to ECS tasks.
               - Effect: Allow
@@ -224,6 +244,10 @@ Resources:
                 Condition:
                   StringEquals:
                     iam:PassedToService: ecs-tasks.amazonaws.com
+              # The task definition handler reads that role before passing it.
+              - Effect: Allow
+                Action: iam:GetRole
+                Resource: !GetAtt TaskExecutionRole.Arn
               - Effect: Allow
                 Action: iam:CreateServiceLinkedRole
                 Resource: "*"
