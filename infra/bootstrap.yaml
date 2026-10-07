@@ -1,18 +1,22 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
   Long-lived pieces of the messenger deployment: the image repository, the NAT
-  address, and the roles GitHub Actions assumes. Cheap enough to keep while the
-  network and the application are torn down between demos.
+  address, and the roles. Cheap enough to keep while the network and the
+  application are torn down between demos. Deployed by hand, never from CI.
 
 Parameters:
   GitHubRepo:
     Type: String
     Default: hdmtrn/nosql-messenger
-    Description: owner/name of the repository whose workflows may assume the roles.
+    Description: owner/name of the repository whose CI may push images.
   AppStackName:
     Type: String
     Default: messenger-app
-    Description: Name of the application stack the deploy workflow updates.
+    Description: Name of the application stack deploy.sh creates and updates.
+  ParameterPrefix:
+    Type: String
+    Default: /messenger
+    Description: SSM path holding the settings and secrets the tasks read.
   CreateOidcProvider:
     Type: String
     AllowedValues: ["true", "false"]
@@ -76,7 +80,8 @@ Resources:
       ClientIdList:
         - sts.amazonaws.com
 
-  # Assumed by CI on main only: pushes the image of every commit that passed.
+  # The only way from GitHub into the account: CI on main pushes the image of
+  # every commit that passed. Deploying is done by hand with deploy.sh.
   PushRole:
     Type: AWS::IAM::Role
     Properties:
@@ -109,9 +114,10 @@ Resources:
                   - ecr:DescribeImages
                 Resource: !GetAtt Repository.Arn
 
-  # Assumed by the deploy workflow: from a release tag, or from main when run by
-  # hand. It may only touch the application stack, through CfnExecutionRole.
-  DeployRole:
+  # Used by ECS, not by the code: pulls the image, writes the logs and reads the
+  # SSM parameters into the containers' environment. Here rather than in the
+  # app stack, so that CloudFormation never needs to create a role.
+  TaskExecutionRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
@@ -119,45 +125,22 @@ Resources:
         Statement:
           - Effect: Allow
             Principal:
-              Federated: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
-            Action: sts:AssumeRoleWithWebIdentity
-            Condition:
-              StringEquals:
-                token.actions.githubusercontent.com:aud: sts.amazonaws.com
-              StringLike:
-                token.actions.githubusercontent.com:sub:
-                  - !Sub repo:${GitHubRepo}:ref:refs/tags/v*
-                  - !Sub repo:${GitHubRepo}:ref:refs/heads/main
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
       Policies:
-        - PolicyName: deploy-app-stack
+        - PolicyName: read-settings
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
               - Effect: Allow
-                Action:
-                  - cloudformation:DescribeStacks
-                  - cloudformation:DescribeStackEvents
-                  - cloudformation:CreateChangeSet
-                  - cloudformation:DescribeChangeSet
-                  - cloudformation:ExecuteChangeSet
-                  - cloudformation:DeleteChangeSet
-                Resource: !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AppStackName}/*
-              - Effect: Allow
-                Action: cloudformation:GetTemplateSummary
-                Resource: "*"
-              - Effect: Allow
-                Action: iam:PassRole
-                Resource: !GetAtt CfnExecutionRole.Arn
-              # Reading the image of a commit and adding the release tag to it.
-              - Effect: Allow
-                Action:
-                  - ecr:DescribeImages
-                  - ecr:BatchGetImage
-                  - ecr:PutImage
-                Resource: !GetAtt Repository.Arn
+                Action: ssm:GetParameters
+                Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${ParameterPrefix}/*
 
-  # What CloudFormation itself acts as when it builds the application stack, so
-  # the deploy role does not need these rights.
+  # What CloudFormation acts as when deploy.sh updates the application stack.
+  # Only the services that stack is made of: a template, whoever wrote it,
+  # reaches nothing else in the account and creates no IAM.
   CfnExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -168,31 +151,76 @@ Resources:
             Principal:
               Service: cloudformation.amazonaws.com
             Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - !Sub arn:${AWS::Partition}:iam::aws:policy/PowerUserAccess
       Policies:
-        # PowerUserAccess leaves out IAM; the stack creates its task roles, and
-        # CloudFormation names them after the stack.
-        - PolicyName: app-stack-roles
+        - PolicyName: app-stack
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
               - Effect: Allow
                 Action:
-                  - iam:CreateRole
-                  - iam:DeleteRole
-                  - iam:GetRole
-                  - iam:PassRole
-                  - iam:TagRole
-                  - iam:UntagRole
-                  - iam:AttachRolePolicy
-                  - iam:DetachRolePolicy
-                  - iam:PutRolePolicy
-                  - iam:DeleteRolePolicy
-                  - iam:GetRolePolicy
-                  - iam:ListRolePolicies
-                  - iam:ListAttachedRolePolicies
-                Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${AppStackName}-*
+                  - ecs:CreateCluster
+                  - ecs:DeleteCluster
+                  - ecs:DescribeClusters
+                  - ecs:UpdateCluster
+                  - ecs:RegisterTaskDefinition
+                  - ecs:DeregisterTaskDefinition
+                  - ecs:DescribeTaskDefinition
+                  - ecs:CreateService
+                  - ecs:UpdateService
+                  - ecs:DeleteService
+                  - ecs:DescribeServices
+                  - ecs:TagResource
+                  - ecs:UntagResource
+                  - ecs:ListTagsForResource
+                Resource: "*"
+              - Effect: Allow
+                Action: elasticloadbalancing:*
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - ec2:Describe*
+                  - ec2:CreateSecurityGroup
+                  - ec2:DeleteSecurityGroup
+                  - ec2:AuthorizeSecurityGroupIngress
+                  - ec2:RevokeSecurityGroupIngress
+                  - ec2:AuthorizeSecurityGroupEgress
+                  - ec2:RevokeSecurityGroupEgress
+                  - ec2:CreateTags
+                  - ec2:DeleteTags
+                Resource: "*"
+              # Cloud Map keeps a private namespace as a Route 53 hosted zone.
+              - Effect: Allow
+                Action:
+                  - servicediscovery:*
+                  - route53:CreateHostedZone
+                  - route53:DeleteHostedZone
+                  - route53:GetHostedZone
+                  - route53:ListHostedZonesByName
+                  - route53:ChangeResourceRecordSets
+                  - route53:ListResourceRecordSets
+                  - route53:GetChange
+                  - route53:ChangeTagsForResource
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:DeleteLogGroup
+                  - logs:PutRetentionPolicy
+                  - logs:DeleteRetentionPolicy
+                  - logs:TagResource
+                  - logs:UntagResource
+                  - logs:ListTagsForResource
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/ecs/${AppStackName}*
+              - Effect: Allow
+                Action: logs:DescribeLogGroups
+                Resource: "*"
+              # The one role the stack hands out, and only to ECS tasks.
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt TaskExecutionRole.Arn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: ecs-tasks.amazonaws.com
               - Effect: Allow
                 Action: iam:CreateServiceLinkedRole
                 Resource: "*"
@@ -214,9 +242,11 @@ Outputs:
   NatPublicIp:
     Description: Add this address to the Atlas IP access list.
     Value: !Ref NatAddress
+  TaskExecutionRoleArn:
+    Value: !GetAtt TaskExecutionRole.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-TaskExecutionRoleArn
   PushRoleArn:
     Value: !GetAtt PushRole.Arn
-  DeployRoleArn:
-    Value: !GetAtt DeployRole.Arn
   CfnExecutionRoleArn:
     Value: !GetAtt CfnExecutionRole.Arn
