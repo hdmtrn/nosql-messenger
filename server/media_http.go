@@ -27,6 +27,18 @@ func (s *server) saveUpload(w http.ResponseWriter, r *http.Request, owner bson.O
 	if !s.limits.allow(w, r, limitUploads, owner.Hex()) {
 		return Media{}, false
 	}
+	switch err := s.media.CheckRoom(r.Context(), owner); {
+	case errors.Is(err, errStorageFull):
+		writeError(w, http.StatusInsufficientStorage, "there is no room left for pictures")
+		return Media{}, false
+	case errors.Is(err, errUserStorageFull):
+		writeError(w, http.StatusInsufficientStorage, "you have used your 50 MB for pictures")
+		return Media{}, false
+	case err != nil:
+		log.Printf("checking room for media: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return Media{}, false
+	}
 	extendDeadlines(w)
 	body := http.MaxBytesReader(w, r.Body, limit)
 

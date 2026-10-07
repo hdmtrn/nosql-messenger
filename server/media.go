@@ -25,6 +25,14 @@ const (
 	mediaMaxSide   = 10_000
 	mediaMaxPixels = 40_000_000
 
+	// What pictures may take of the database, which holds every message as
+	// well: Atlas M0 has 512 MB in all. Past it uploads are refused, and
+	// messages keep their room. Checked before an upload, so the uploads
+	// already in flight can overshoot it by up to mediaMaxBytes each.
+	mediaStorageMaxBytes = 300 << 20
+	// One account's share of it, so that a single user cannot use it all up.
+	mediaUserMaxBytes = 50 << 20
+
 	mediaUnsentTTL     = 24 * time.Hour
 	mediaSweepInterval = time.Hour
 
@@ -36,6 +44,8 @@ var (
 	errMediaNotFound    = errors.New("media not found")
 	errUnsupportedMedia = errors.New("unsupported media type")
 	errImageTooLarge    = errors.New("image is too large")
+	errStorageFull      = errors.New("storage for pictures is full")
+	errUserStorageFull  = errors.New("the user's storage for pictures is full")
 )
 
 type Media struct {
@@ -49,6 +59,10 @@ type Media struct {
 	ChannelID   *bson.ObjectID `bson:"channel_id,omitempty"`
 	CreatedAt   time.Time      `bson:"created_at"`
 	ExpiresAt   *time.Time     `bson:"expires_at,omitempty"`
+
+	// Bytes this record added to storage: zero for a forwarded copy, which
+	// names the original's file, and for records stored before it was counted.
+	Size int64 `bson:"size"`
 }
 
 type Attachment struct {
@@ -88,6 +102,8 @@ func (s *mediaStore) ensureIndexes(ctx context.Context) error {
 		{Keys: bson.D{{Key: "channel_id", Value: 1}}},
 		// Serves "does anything still point at these bytes" before a file is deleted.
 		{Keys: bson.D{{Key: "file_id", Value: 1}}},
+		// Serves summing one user's pictures before an upload.
+		{Keys: bson.D{{Key: "owner_id", Value: 1}}},
 	})
 	return err
 }
@@ -105,7 +121,8 @@ func (s *mediaStore) Save(ctx context.Context, owner bson.ObjectID, kind string,
 		return Media{}, errImageTooLarge
 	}
 
-	fileID, err := s.db.GridFSBucket().UploadFromStream(ctx, "", io.MultiReader(&head, body))
+	stored := &countingReader{r: io.MultiReader(&head, body)}
+	fileID, err := s.db.GridFSBucket().UploadFromStream(ctx, "", stored)
 	if err != nil {
 		return Media{}, fmt.Errorf("uploading file: %w", err)
 	}
@@ -118,6 +135,7 @@ func (s *mediaStore) Save(ctx context.Context, owner bson.ObjectID, kind string,
 		ContentType: "image/" + format,
 		Width:       cfg.Width,
 		Height:      cfg.Height,
+		Size:        stored.n,
 		ChannelID:   channel,
 		CreatedAt:   time.Now(),
 	}
@@ -130,6 +148,58 @@ func (s *mediaStore) Save(ctx context.Context, owner bson.ObjectID, kind string,
 		return Media{}, fmt.Errorf("inserting media: %w", err)
 	}
 	return m, nil
+}
+
+// CheckRoom refuses an upload once the stored files reach mediaStorageMaxBytes,
+// or owner's pictures reach mediaUserMaxBytes. The total comes from the files
+// themselves, so it counts those stored before sizes were recorded.
+func (s *mediaStore) CheckRoom(ctx context.Context, owner bson.ObjectID) error {
+	total, err := sumField(ctx, s.db.Collection("fs.files"), bson.M{}, "length")
+	if err != nil {
+		return fmt.Errorf("summing stored files: %w", err)
+	}
+	if total >= mediaStorageMaxBytes {
+		return errStorageFull
+	}
+	mine, err := sumField(ctx, s.col, bson.M{"owner_id": owner}, "size")
+	if err != nil {
+		return fmt.Errorf("summing the user's media: %w", err)
+	}
+	if mine >= mediaUserMaxBytes {
+		return errUserStorageFull
+	}
+	return nil
+}
+
+func sumField(ctx context.Context, col *mongo.Collection, filter bson.M, field string) (int64, error) {
+	cur, err := col.Aggregate(ctx, mongo.Pipeline{
+		{{Key: "$match", Value: filter}},
+		{{Key: "$group", Value: bson.M{"_id": nil, "total": bson.M{"$sum": "$" + field}}}},
+	})
+	if err != nil {
+		return 0, err
+	}
+	var out []struct {
+		Total int64 `bson:"total"`
+	}
+	if err := cur.All(ctx, &out); err != nil {
+		return 0, err
+	}
+	if len(out) == 0 {
+		return 0, nil
+	}
+	return out[0].Total, nil
+}
+
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
 }
 
 func (s *mediaStore) ByID(ctx context.Context, id bson.ObjectID) (Media, error) {
@@ -220,6 +290,8 @@ func (s *mediaStore) CopyTo(ctx context.Context, from []Attachment, owner, chann
 		c.OwnerID = owner
 		c.ChannelID = &channel
 		c.CreatedAt = now
+		// The copy names the same bytes, so it takes no room of its own.
+		c.Size = 0
 		copies = append(copies, c)
 		out = append(out, c.Attachment())
 	}

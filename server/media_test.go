@@ -60,6 +60,57 @@ func TestUploadRejectsWhatIsNotAnImage(t *testing.T) {
 	}
 }
 
+func TestUploadsStopShortOfTheStorageLimits(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	s := &server{media: newMediaStore(db)}
+	if err := s.media.ensureIndexes(ctx); err != nil {
+		t.Fatalf("indexes: %v", err)
+	}
+	alice, bob := person("alice"), person("bob")
+	img := testPNG(t, 2, 2)
+
+	code, body := uploadMedia(s, img, alice)
+	if code != http.StatusCreated {
+		t.Fatalf("first upload: got %d %s, want 201", code, body)
+	}
+	var att Attachment
+	if err := json.Unmarshal(body, &att); err != nil {
+		t.Fatalf("decoding attachment: %v", err)
+	}
+	m, err := s.media.ByID(ctx, att.ID)
+	if err != nil {
+		t.Fatalf("loading media: %v", err)
+	}
+	if m.Size != int64(len(img)) {
+		t.Fatalf("recorded size is %d, want %d", m.Size, len(img))
+	}
+
+	// Alice reaching her share stops her alone.
+	full := Media{ID: bson.NewObjectID(), FileID: bson.NewObjectID(), OwnerID: alice.UserID,
+		Kind: mediaKindAttachment, Size: mediaUserMaxBytes, CreatedAt: time.Now()}
+	if _, err := s.media.col.InsertOne(ctx, full); err != nil {
+		t.Fatalf("inserting a record: %v", err)
+	}
+	if code, body := uploadMedia(s, img, alice); code != http.StatusInsufficientStorage {
+		t.Fatalf("alice over her share: got %d %s, want 507", code, body)
+	}
+	if code, body := uploadMedia(s, img, bob); code != http.StatusCreated {
+		t.Fatalf("bob while alice is over her share: got %d %s, want 201", code, body)
+	}
+
+	// The stored files reaching the total stop everyone. Counted from the files,
+	// so a file with no recorded size counts too.
+	if _, err := db.Collection("fs.files").InsertOne(ctx, bson.M{
+		"_id": bson.NewObjectID(), "length": int64(mediaStorageMaxBytes), "chunkSize": 255 << 10, "uploadDate": time.Now(),
+	}); err != nil {
+		t.Fatalf("inserting a file: %v", err)
+	}
+	if code, body := uploadMedia(s, img, bob); code != http.StatusInsufficientStorage {
+		t.Fatalf("bob with storage full: got %d %s, want 507", code, body)
+	}
+}
+
 func TestMediaIsReadableOnlyWhereItWasSent(t *testing.T) {
 	ctx := context.Background()
 	db := testDB(t)
@@ -432,6 +483,9 @@ func TestForwardCopiesThePictureRecordNotTheBytes(t *testing.T) {
 		t.Fatalf("forwarded attachments are %+v, want one 5x3 picture under a new id", copied.Attachments)
 	}
 	copyID := copied.Attachments[0].ID.Hex()
+	if c, err := s.media.ByID(ctx, copied.Attachments[0].ID); err != nil || c.Size != 0 {
+		t.Fatalf("forwarded copy: size %d, err %v; want size 0, it adds no bytes", c.Size, err)
+	}
 
 	if code, _ := getMedia(s, copyID, carol); code != http.StatusOK {
 		t.Fatalf("carol reading the forwarded picture: got %d, want 200", code)

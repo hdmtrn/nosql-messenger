@@ -132,5 +132,5 @@ func (s *server) routes() http.Handler {
 
 	mux.HandleFunc("GET /", serveWeb)
 
-	return withLogging(mux)
+	return withLogging(withBrowserDefences(mux))
 }
