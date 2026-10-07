@@ -2,7 +2,8 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
   The messenger on ECS Fargate: the application nodes behind an ALB and Redis
   as the bus between them. MongoDB is Atlas, outside this stack. A new version
-  is a deploy of this template with another ImageTag.
+  is a deploy of this template with another ImageTag, by infra/deploy.sh. The
+  stack creates no IAM: the one role it hands out comes from bootstrap.
 
 Parameters:
   ImageTag:
@@ -35,29 +36,6 @@ Resources:
     Properties:
       LogGroupName: !Sub /ecs/${AWS::StackName}
       RetentionInDays: 14
-
-  # Used by ECS itself, not by the code: pulls the image, writes the logs and
-  # reads the SSM parameters into the containers' environment.
-  ExecutionRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: ecs-tasks.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
-      Policies:
-        - PolicyName: read-settings
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action: ssm:GetParameters
-                Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${ParameterPrefix}/*
 
   LoadBalancerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -193,7 +171,8 @@ Resources:
       RuntimePlatform:
         CpuArchitecture: ARM64
         OperatingSystemFamily: LINUX
-      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      ExecutionRoleArn: !ImportValue
+        Fn::Sub: ${BootstrapStackName}-TaskExecutionRoleArn
       ContainerDefinitions:
         - Name: redis
           # The Docker Hub library image through ECR Public: no anonymous pull
@@ -260,7 +239,8 @@ Resources:
       RuntimePlatform:
         CpuArchitecture: ARM64
         OperatingSystemFamily: LINUX
-      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      ExecutionRoleArn: !ImportValue
+        Fn::Sub: ${BootstrapStackName}-TaskExecutionRoleArn
       ContainerDefinitions:
         - Name: app
           Image: !Sub
