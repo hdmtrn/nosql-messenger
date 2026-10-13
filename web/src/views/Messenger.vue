@@ -86,6 +86,7 @@ watch(() => [props.me.display_name, props.me.avatar_id], () => rememberUser(prop
 function paneFromUrl() {
   if (location.pathname === '/profile') {
     showProfile.value = true
+    fromLeft.value = true
     return
   }
   const match = location.pathname.match(/^(?:\/c\/([^/]+))?(?:\/(info)|\/(requests)|\/u\/([^/]+))?$/)
@@ -117,6 +118,20 @@ function paneToUrl() {
 const atList = ref(true)
 // Set for one frame when the slide should not play.
 const instant = ref(false)
+// A screen comes in from the side it was opened at. The profile is opened by the
+// avatar at the list's left edge, so it comes from the left and pushes the list
+// right; chats, requests and panels come from the right. The stage waits on the
+// other side for one frame, without a slide, before it comes in.
+const fromLeft = ref(false)
+function enterFrom(left) {
+  if (fromLeft.value === left) return Promise.resolve()
+  instant.value = true
+  fromLeft.value = left
+  return new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => {
+    instant.value = false
+    done()
+  })))
+}
 
 const sideOpen = computed(() => !showProfile.value
   && ((showInfo.value && !!active.value) || !!person.value || showRequests.value))
@@ -145,6 +160,7 @@ function toList() {
     activeId.value = null
     showProfile.value = false
     closeSides()
+    enterFrom(false)
   }, SLIDE_MS)
 }
 
@@ -385,7 +401,7 @@ async function send(text, attachments = []) {
   }))
   if (entries.length) {
     messages.value = [...messages.value, ...entries]
-    conversation.value?.toBottom()
+    conversation.value?.follow(true)
   }
   // The entries are read back from the list: Vue wraps them there, and a change
   // made through the plain objects would not reach the screen.
@@ -394,7 +410,7 @@ async function send(text, attachments = []) {
 
   if (forwarding) {
     queueForward(action.message, channelId)
-    if (activeId.value === channelId) conversation.value?.toBottom()
+    if (activeId.value === channelId) conversation.value?.follow(true)
   }
 }
 
@@ -562,7 +578,7 @@ function receive(msg) {
     return
   }
   messages.value = inOrder([...messages.value, { ...msg, status: 'delivered' }])
-  conversation.value?.toBottom()
+  conversation.value?.follow(msg.author.id === props.me.id)
   markRead()
 }
 
@@ -729,7 +745,7 @@ async function catchUp() {
   const fresh = found.filter((m) => !known(m)).map((m) => ({ ...m, status: 'delivered' }))
   if (fresh.length) {
     messages.value = inOrder([...messages.value, ...fresh])
-    conversation.value?.toBottom()
+    conversation.value?.follow(false)
   }
   markRead()
 }
@@ -804,7 +820,8 @@ function toggleRequests() {
   if (open) atList.value = false
 }
 
-function openProfile() {
+async function openProfile() {
+  if (phone.value) await enterFrom(true)
   showProfile.value = true
   atList.value = false
 }
@@ -902,6 +919,7 @@ onUnmounted(() => {
     'screen--phone': phone,
     'screen--stage': stageShown,
     'screen--covered': depth === 2,
+    'screen--from-left': phone && fromLeft,
     'screen--instant': instant || !panesRestored,
   }">
     <div class="columns">
@@ -1203,6 +1221,10 @@ onUnmounted(() => {
 }
 .screen--stage .stage { transform: none; }
 .screen--stage .chat-list { transform: translateX(-100%); }
+/* the profile's way in and out, mirrored */
+.screen--from-left .stage { transform: translateX(-100%); }
+.screen--from-left.screen--stage .stage { transform: none; }
+.screen--from-left.screen--stage .chat-list { transform: translateX(100%); }
 .screen--phone .empty { display: none; }
 /* A panel over the chat pushes the chat a fifth of the way out, as Telegram's
    right column moves the middle one. */
