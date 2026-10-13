@@ -1166,6 +1166,9 @@ onUnmounted(() => {
    over from the right, as Telegram's mobile columns do (Main.scss). */
 /* Pinned to what is visible above the keyboard (viewport.js), not to the page
    iOS pans behind it; 100dvh until the first measurement. */
+/* The page behind shows for a moment while the keyboard moves; on a phone it is
+   the panels' white, so that moment does not read as a gap. */
+:global(body:has(.screen--phone)) { background: var(--surface-panel); }
 .screen--phone {
   position: fixed;
   top: var(--app-top, 0);
