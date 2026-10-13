@@ -255,6 +255,14 @@ Resources:
             - ContainerPort: 8080
           # shutdownTimeout in main.go is 20 s; ECS kills the process after this.
           StopTimeout: 25
+          # Without it ECS shows the task's health as UNKNOWN and leaves a hung
+          # process running; the ALB checks the same path from outside.
+          HealthCheck:
+            Command: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+            Interval: 10
+            Timeout: 3
+            Retries: 3
+            StartPeriod: 10
           Environment:
             - Name: REDIS_ADDR
               Value: redis.messenger.internal:6379
