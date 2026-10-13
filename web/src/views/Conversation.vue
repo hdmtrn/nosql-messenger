@@ -260,11 +260,12 @@ function updateFloatingDay() {
 function onScroll() {
   if (!feed.value) return
   if (feed.value.scrollTop < 80) emit('load-older')
-  // Only a hand moves the feed off its newest message. Safari, with the keyboard
-  // up, puts back a scroll it did not start, and the feed is pinned again.
-  const gap = distanceFromBottom() - feed.value.clientHeight
-  if (byHand) atBottom = gap < AT_BOTTOM_PX
-  else if (atBottom && gap > 1) feed.value.scrollTop = feed.value.scrollHeight
+  // a hand takes over from a slide under way
+  if (byHand && scrollFrame) {
+    cancelAnimationFrame(scrollFrame)
+    scrollFrame = 0
+  }
+  if (!scrollFrame) remember()
   if (!byHand) return
   updateFloatingDay()
   scrolling.value = true
@@ -272,29 +273,98 @@ function onScroll() {
   idleTimer = setTimeout(() => { scrolling.value = false; byHand = false }, 1000)
 }
 
-// A feed read at its newest message stays there when it gets shorter, as the
-// keyboard comes up, or taller: Telegram keeps the last line above the field.
-const AT_BOTTOM_PX = 40
-let atBottom = true
+/* ---------- staying at the newest message, as Telegram Web A does ---------- */
+
+// Whether the feed is at its newest message is read from where it was last left,
+// not worked out again after a change: by then the change has moved it, and Safari
+// with the keyboard up even scrolls it back on its own. Telegram's numbers
+// (MessageList.tsx): within 50 px counts as the bottom, within 7 px snaps to it.
+const BOTTOM_PX = 50
+const SNAP_PX = 7
+const gapNow = () => (feed.value ? feed.value.scrollHeight - feed.value.scrollTop - feed.value.clientHeight : 0)
 const distanceFromBottom = () => (feed.value ? feed.value.scrollHeight - feed.value.scrollTop : 0)
+let gap = 0
+const snapped = ref(true)
+
+function remember() {
+  gap = gapNow()
+  snapped.value = gap <= SNAP_PX
+}
+
+// A feed at its newest message stays there when it gets shorter, as the keyboard
+// comes up, or taller.
 const feedSize = new ResizeObserver(() => {
-  if (atBottom && feed.value) feed.value.scrollTop = feed.value.scrollHeight
+  if (feed.value && gap <= BOTTOM_PX && !scrollFrame) toEnd()
 })
 onMounted(() => feedSize.observe(feed.value))
-onUnmounted(() => feedSize.disconnect())
+onUnmounted(() => { feedSize.disconnect(); cancelAnimationFrame(scrollFrame) })
 
-// The pane owns the scroll box, so it owns keeping the view at the bottom.
+function toEnd() {
+  feed.value.scrollTop = feed.value.scrollHeight
+  remember()
+}
+
+// Telegram's animateScroll: 300 to 600 ms by distance, and a curve that starts
+// fast and settles, so a new message slides up into place rather than jumping.
+// Setting the position every frame also outlasts Safari's scroll back.
+const SCROLL_MIN_MS = 300
+const SCROLL_MAX_MS = 600
+const SCROLL_MAX_PX = 800
+let scrollFrame = 0
+
+function slideToEnd() {
+  cancelAnimationFrame(scrollFrame)
+  const from = feed.value.scrollTop
+  const path = feed.value.scrollHeight - feed.value.clientHeight - from
+  if (path <= 1) {
+    toEnd()
+    return
+  }
+  const distance = Math.min(path, SCROLL_MAX_PX)
+  const duration = SCROLL_MIN_MS + (distance / SCROLL_MAX_PX) * (SCROLL_MAX_MS - SCROLL_MIN_MS)
+  const ease = (t) => 1 - (1 - t) ** (distance <= 300 ? 3.5 : 6)
+  const started = performance.now()
+  snapped.value = false
+  const step = (now) => {
+    if (!feed.value) return
+    const t = Math.min((now - started) / duration, 1)
+    // the end is read every frame, in case the feed grew or shrank meanwhile
+    const end = feed.value.scrollHeight - feed.value.clientHeight
+    feed.value.scrollTop = end - (end - from) * (1 - ease(t))
+    if (t < 1) {
+      scrollFrame = requestAnimationFrame(step)
+      return
+    }
+    scrollFrame = 0
+    toEnd()
+  }
+  scrollFrame = requestAnimationFrame(step)
+}
+
+// The chat opens at its newest message at once.
 async function toBottom() {
+  cancelAnimationFrame(scrollFrame)
+  scrollFrame = 0
   await nextTick()
-  if (feed.value) feed.value.scrollTop = feed.value.scrollHeight
-  atBottom = true
+  if (feed.value) toEnd()
+}
+
+// New messages at the end: your own always bring the feed down to them, someone
+// else's only if you were at the bottom, so reading further up is left alone.
+// Called before the new messages are drawn, which is when "at the bottom" holds.
+async function follow(own) {
+  const was = own || gap <= BOTTOM_PX
+  await nextTick()
+  if (was && feed.value) slideToEnd()
 }
 
 // Restores the reading position after older messages are prepended above.
 async function keepPosition(before) {
-  atBottom = false
   await nextTick()
-  if (feed.value) feed.value.scrollTop = feed.value.scrollHeight - before
+  if (feed.value) {
+    feed.value.scrollTop = feed.value.scrollHeight - before
+    remember()
+  }
 }
 
 watch(() => props.channel.id, toBottom)
@@ -307,7 +377,6 @@ async function highlight(id) {
   await nextTick()
   const el = feed.value?.querySelector(`[data-id="${id}"]`)
   if (!el) return
-  atBottom = false
   el.scrollIntoView({ block: 'center', behavior: 'smooth' })
   lit.value = id
   clearTimeout(litTimer)
@@ -319,7 +388,7 @@ function openQuote(m) {
   else emit('find', m.reply_to)
 }
 
-defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom })
+defineExpose({ highlight, toBottom, follow, keepPosition, distanceFromBottom })
 </script>
 
 <template>
@@ -342,7 +411,7 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom })
     </PaneHeader>
 
     <div class="feed-box">
-    <div ref="feed" class="feed" @scroll="onScroll" @wheel.passive="onHand" @touchmove.passive="onHand"
+    <div ref="feed" class="feed" :class="{ 'with-bottom-snap': snapped }" @scroll="onScroll" @wheel.passive="onHand" @touchmove.passive="onHand"
          @pointerdown="$event.pointerType === 'mouse' && onHand()" @keydown="onHand">
       <p v-if="!messages.length" class="empty">
         No messages yet
@@ -381,6 +450,7 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom })
         @forwarded-author="m.forwarded.author.id === me.id || emit('person', m.forwarded.author.username)"
       ><MessageText :text="m.text" @invite="emit('invite', $event)" /></MessageBubble>
       </template>
+      <div class="feed-end" aria-hidden="true" />
     </div>
     <div class="day floating" :class="{ shown: scrolling && floatingDay }" aria-hidden="true">
       <span class="day-pill">{{ floatingDay }}</span>
@@ -445,9 +515,10 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom })
   color: var(--text-muted);
 }
 .feed {
+  --feed-pad-y: 22px;
   flex: 1;
   overflow-y: auto;
-  padding: 22px 28px;
+  padding: var(--feed-pad-y) 28px;
   display: flex;
   flex-direction: column;
   /* spacing inside a run; the first bubble of a run adds its own margin on top */
@@ -485,6 +556,19 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom })
   z-index: 1;
 }
 .day.floating.shown { opacity: 1; }
+/* Telegram's bottom snap: at the newest message the browser itself holds the feed
+   there, whatever moves it; switched off while a slide is under way. */
+.feed.with-bottom-snap { scroll-snap-type: y proximity; }
+.feed-end {
+  flex: none;
+  height: 0;
+  /* cancels the feed's gap, so the end sits right under the last message */
+  margin-top: -4px;
+  scroll-snap-align: end;
+  /* reaches over the feed's bottom padding, which the snap would otherwise stop
+     short of, as Telegram's scroll-padding-bottom does */
+  scroll-margin-bottom: var(--feed-pad-y);
+}
 /* short conversations hug the bottom; long ones still scroll from the top */
 .feed > :first-child { margin-top: auto; }
 .message { border-radius: var(--radius-bubble); }
@@ -562,7 +646,10 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom })
 /* Edge to edge, with Telegram's 8px side inset for the feed (--middle-panel-inline-padding). */
 @media (max-width: 600px), (max-width: 950px) and (max-height: 450px) {
   .conversation { border-radius: 0; }
-  .feed { padding: 12px max(8px, env(safe-area-inset-right)) 12px max(8px, env(safe-area-inset-left)); }
+  .feed {
+    --feed-pad-y: 12px;
+    padding: var(--feed-pad-y) max(8px, env(safe-area-inset-right)) var(--feed-pad-y) max(8px, env(safe-area-inset-left));
+  }
   .message::before { inset: -8px -8px; }
   .pending { gap: 8px; margin-bottom: 8px; padding: 4px 4px 4px 12px; }
 }
