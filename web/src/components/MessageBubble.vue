@@ -2,7 +2,6 @@
 import { computed } from 'vue'
 import SgAvatar from './SgAvatar.vue'
 import SgButton from './SgButton.vue'
-import SgSpinner from './SgSpinner.vue'
 import { albumLayout } from '../album'
 
 const props = defineProps({
@@ -33,14 +32,17 @@ defineEmits(['retry', 'discard', 'author', 'quote', 'forwarded-author', 'picture
 
 const AVATAR = 36
 
-const stateLabel = computed(() =>
-  props.status === 'sending' ? 'Sending' : props.status === 'failed' ? 'Not sent' : null
-)
+// A message on its way is drawn as it will stay, as in Telegram: only the clock by
+// its time says it has not arrived. One that failed is the one to notice.
+const stateLabel = computed(() => (props.status === 'failed' ? 'Not sent' : null))
 // The header is now down to the author's name, so it exists only on the first
 // message of a run in a group channel — or to explain a delivery problem.
 const showHeader = computed(() => (props.head && !!props.author) || stateLabel.value !== null)
 
-const showStamp = computed(() => props.status === 'sending' || !!props.time)
+const showStamp = computed(() => !!props.time)
+// Your own messages carry a clock until the server has them, then a tick, in the
+// same room, so the bubble keeps its width when one becomes the other.
+const tick = computed(() => props.own && props.status !== 'failed')
 
 // One picture keeps its proportions inside a 280px box. Several become an album
 // laid out by their proportions, the way Telegram does it. Both state the shape
@@ -81,7 +83,7 @@ function tileVars(tile) {
 const pictureUrl = (a) => a.preview || `/media/${a.id}`
 
 const avatarTone = computed(() =>
-  props.own && props.status !== 'delivered' ? props.status : 'blue'
+  props.own && props.status === 'failed' ? 'failed' : 'blue'
 )
 // Pictures decide how wide the bubble is, and the text under them wraps inside
 // that width — the rule every messenger follows. The other way round, a long
@@ -96,7 +98,7 @@ const PADDING_X = 12
 const bubbleClass = computed(() => [props.status, {
   own: props.own,
   // a blue bubble: quotes, forwards and the clock are drawn in white on it
-  'on-blue': props.own && props.status === 'delivered',
+  'on-blue': props.own && props.status !== 'failed',
   media: mediaWidth.value > 0,
   // The flat corner is the tail pointing at the avatar, so only the head has one.
   tail: props.head && props.avatar,
@@ -157,12 +159,19 @@ const bubbleVars = computed(() =>
         <slot />
         <template v-if="showStamp">
           <span aria-hidden="true" class="meta stamp-room">
-            <SgSpinner v-if="status === 'sending'" />
-            <template v-else>{{ time }}</template>
+            {{ time }}<span v-if="tick" class="tick" />
           </span>
           <span class="meta stamp">
-            <SgSpinner v-if="status === 'sending'" />
-            <template v-else>{{ time }}</template>
+            {{ time }}
+            <svg v-if="tick" class="tick" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                 :aria-label="status === 'sending' ? 'Sending' : 'Sent'" role="img">
+              <template v-if="status === 'sending'">
+                <circle cx="12" cy="12" r="8" />
+                <path d="M12 8v4l2.5 2" />
+              </template>
+              <path v-else d="M5 12.5l4.5 4.5L19 7.5" />
+            </svg>
           </span>
         </template>
       </div>
@@ -219,12 +228,19 @@ const bubbleVars = computed(() =>
 .bubble.media { max-width: min(var(--media-width), 85%); }
 .bubble.tail { border-radius: 0 var(--radius-bubble) var(--radius-bubble) var(--radius-bubble); }
 .bubble.tail.own { border-radius: var(--radius-bubble) 0 var(--radius-bubble) var(--radius-bubble); }
-.bubble.delivered { background: var(--surface-sunken); color: var(--text-primary); }
-.bubble.delivered.own { background: var(--surface-accent); color: #fff; }
-.bubble.sending,
+.bubble.delivered,
+.bubble.sending { background: var(--surface-sunken); color: var(--text-primary); }
+.bubble.delivered.own,
+.bubble.sending.own { background: var(--surface-accent); color: #fff; }
 .bubble.failed { background: var(--surface-panel); color: var(--text-primary); }
-.bubble.sending { box-shadow: inset 0 0 0 2px var(--border-active); }
 .bubble.failed { box-shadow: inset 0 0 0 2px var(--border-error); }
+.tick {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin-left: 4px;
+  align-self: center;
+}
 /* The clock rides on the last line of the text, Telegram-style: an invisible copy
    at the end of the text reserves room on that line, and the visible clock is
    pinned into the bubble's corner over it. A long message keeps its full width on

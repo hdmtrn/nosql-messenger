@@ -2,7 +2,9 @@
 <html lang="en">
   <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+    <!-- No zoom, as in Telegram Web A: a field taking focus or a double tap would scale the
+         app, and a scaled phone layout no longer fits its screen. iOS still allows a pinch. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
     <title>Messenger</title>
   </head>
   <body>

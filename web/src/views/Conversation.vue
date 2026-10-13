@@ -239,7 +239,8 @@ function dayLabel(iso) {
 // The date of the day at the top of the feed floats over it while someone
 // scrolls it, once that day's own separator has gone above the edge, and fades
 // when it stops. Only a hand counts: the jump to the bottom on opening a chat
-// is a scroll too, and the date would flash over the messages.
+// is a scroll too, and the date would flash over the messages. A finger counts
+// once it moves; a tap that closes the keyboard is not a scroll.
 const floatingDay = ref('')
 const scrolling = ref(false)
 let idleTimer = null
@@ -259,7 +260,11 @@ function updateFloatingDay() {
 function onScroll() {
   if (!feed.value) return
   if (feed.value.scrollTop < 80) emit('load-older')
-  atBottom = distanceFromBottom() - feed.value.clientHeight < AT_BOTTOM_PX
+  // Only a hand moves the feed off its newest message. Safari, with the keyboard
+  // up, puts back a scroll it did not start, and the feed is pinned again.
+  const gap = distanceFromBottom() - feed.value.clientHeight
+  if (byHand) atBottom = gap < AT_BOTTOM_PX
+  else if (atBottom && gap > 1) feed.value.scrollTop = feed.value.scrollHeight
   if (!byHand) return
   updateFloatingDay()
   scrolling.value = true
@@ -287,6 +292,7 @@ async function toBottom() {
 
 // Restores the reading position after older messages are prepended above.
 async function keepPosition(before) {
+  atBottom = false
   await nextTick()
   if (feed.value) feed.value.scrollTop = feed.value.scrollHeight - before
 }
@@ -301,6 +307,7 @@ async function highlight(id) {
   await nextTick()
   const el = feed.value?.querySelector(`[data-id="${id}"]`)
   if (!el) return
+  atBottom = false
   el.scrollIntoView({ block: 'center', behavior: 'smooth' })
   lit.value = id
   clearTimeout(litTimer)
@@ -335,8 +342,8 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom })
     </PaneHeader>
 
     <div class="feed-box">
-    <div ref="feed" class="feed" @scroll="onScroll" @wheel.passive="onHand" @touchstart.passive="onHand"
-         @pointerdown="onHand" @keydown="onHand">
+    <div ref="feed" class="feed" @scroll="onScroll" @wheel.passive="onHand" @touchmove.passive="onHand"
+         @pointerdown="$event.pointerType === 'mouse' && onHand()" @keydown="onHand">
       <p v-if="!messages.length" class="empty">
         No messages yet
       </p>
@@ -352,7 +359,7 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom })
         :initials="initials(displayName(m.author.username))"
         :avatar-src="avatarUrl(m.author.username)"
         :attachments="m.attachments"
-        :time="m.status && m.status !== 'delivered' ? '' : clock(m.created_at)"
+        :time="m.status === 'failed' ? '' : clock(m.created_at)"
         :ring="!!person && m.author.username === person"
         :forwarded="m.forwarded ? displayName(m.forwarded.author.username) : ''"
         :quote="quote"
