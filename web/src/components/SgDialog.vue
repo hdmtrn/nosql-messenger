@@ -22,7 +22,8 @@ defineEmits(['close'])
   z-index: 10;
 }
 .dialog {
-  width: 420px;
+  /* a phone keeps 16px of the page on each side */
+  width: min(420px, 100% - 32px);
   background: var(--surface-panel);
   border-radius: var(--radius-panel);
   padding: var(--pad-panel);

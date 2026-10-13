@@ -1,7 +1,9 @@
 <script setup>
+import BackButton from '../components/BackButton.vue'
 import SgAvatar from '../components/SgAvatar.vue'
 import SgButton from '../components/SgButton.vue'
 import { avatarUrl, displayName, initials } from '../naming'
+import { phone } from '../viewport'
 
 // Both lists belong to the messenger, which keeps them current on every
 // friends event; the panel only shows them and passes the answers up.
@@ -15,8 +17,9 @@ const emit = defineEmits(['close', 'respond', 'person'])
 <template>
   <aside class="requests-panel">
     <div class="top">
+      <BackButton v-if="phone" @click="emit('close')" />
       <h2 class="heading">Friend requests</h2>
-      <SgButton variant="outline" size="sm" @click="emit('close')">Close</SgButton>
+      <SgButton v-if="!phone" variant="outline" size="sm" @click="emit('close')">Close</SgButton>
     </div>
 
     <span class="label section">Incoming</span>

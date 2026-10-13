@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { api, waitText } from '../api'
+import BackButton from '../components/BackButton.vue'
 import SgAvatar from '../components/SgAvatar.vue'
 import SgButton from '../components/SgButton.vue'
 import SgDialog from '../components/SgDialog.vue'
@@ -8,9 +9,10 @@ import SgInput from '../components/SgInput.vue'
 import MediaViewer from '../components/MediaViewer.vue'
 import { avatarUrl, initials } from '../naming'
 import { toJpeg } from '../images'
+import { phone } from '../viewport'
 
 const props = defineProps({ me: { type: Object, required: true } })
-const emit = defineEmits(['saved', 'log-out', 'deleted'])
+const emit = defineEmits(['saved', 'log-out', 'deleted', 'back'])
 
 const displayName = ref(props.me.display_name)
 const bio = ref(props.me.bio || '')
@@ -122,6 +124,7 @@ async function deleteAccount() {
     <div class="column">
 
       <header class="top">
+        <BackButton v-if="phone" @click="emit('back')" />
         <h1 class="heading">Profile</h1>
       </header>
 
@@ -375,4 +378,23 @@ async function deleteAccount() {
   cursor: pointer;
 }
 .remove:hover { color: var(--status-error); }
+@media (max-width: 600px), (max-width: 950px) and (max-height: 450px) {
+  .profile {
+    padding: max(4px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+  }
+  .top { gap: 4px; }
+  /* No room beside the portrait for the fields: it stands above them, as in
+     Telegram's settings, and Save goes under them. */
+  .card {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 16px;
+    padding: 24px 20px 20px;
+  }
+  .card > .sg-button { align-self: flex-end; }
+  .row { padding: 0 20px; }
+  .divider { margin: 0 20px; }
+  .session { padding: 8px 20px; }
+  .error { padding: 0 20px; }
+}
 </style>

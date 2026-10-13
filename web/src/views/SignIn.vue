@@ -4,6 +4,7 @@ import { api, waitText } from '../api'
 import SgButton from '../components/SgButton.vue'
 import SgInput from '../components/SgInput.vue'
 import ChannelGlyph from '../components/ChannelGlyph.vue'
+import { phone } from '../viewport'
 
 const emit = defineEmits(['signed-in'])
 
@@ -70,7 +71,7 @@ async function submit() {
         Messenger
       </span>
       <div class="brand-mark">
-        <ChannelGlyph :size="190" tone="onBlue" />
+        <ChannelGlyph :size="phone ? 40 : 190" tone="onBlue" />
       </div>
     </section>
 
@@ -140,6 +141,7 @@ async function submit() {
 <style scoped>
 .screen {
   height: 100vh;
+  height: 100dvh;
   display: flex;
   gap: 16px;
   padding: 16px;
@@ -198,5 +200,29 @@ async function submit() {
   margin: 0;
   font: var(--text-meta);
   color: var(--grey);
+}
+/* A phone stacks the two: the brand shrinks to a strip over the form, and the
+   page scrolls when the keyboard leaves the form too little room. */
+@media (max-width: 600px), (max-width: 950px) and (max-height: 450px) {
+  .screen {
+    height: auto;
+    min-height: 100dvh;
+    flex-direction: column;
+    gap: 8px;
+    padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+  }
+  .brand {
+    flex: none;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+  }
+  .brand-mark { flex: none; }
+  .pane {
+    flex: 1;
+    place-items: start center;
+    padding: 32px 16px;
+  }
 }
 </style>

@@ -50,4 +50,18 @@ defineProps({
 .sg-button--ghost:disabled,
 .sg-button.sg-button--mutedText:disabled { background: transparent; color: var(--text-disabled); box-shadow: none; }
 .sg-button--outline:disabled { box-shadow: inset 0 0 0 1px var(--border-muted); }
+/* On touch screens the hit area grows to 48px, Material's target, while the
+   drawn button grows less, so a row of them keeps its rhythm. */
+@media (pointer: coarse) {
+  .sg-button { position: relative; }
+  .sg-button--sm { height: 36px; padding: 0 14px; }
+  .sg-button--md { height: 44px; }
+  .sg-button--sm::after,
+  .sg-button--md::after {
+    content: '';
+    position: absolute;
+    inset: -6px 0;
+  }
+  .sg-button--md::after { inset: -2px 0; }
+}
 </style>

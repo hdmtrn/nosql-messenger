@@ -3,8 +3,10 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api, patiently, waitText } from '../api'
 import { createSocket } from '../socket'
 import { avatarUrl, channelAvatarUrl, channelTitle, displayName, initials, rememberUser } from '../naming'
+import { newId } from '../ids'
 import { takePendingInvite } from '../pending'
 import ChannelRail from '../components/ChannelRail.vue'
+import ChatList from '../components/ChatList.vue'
 import SgButton from '../components/SgButton.vue'
 import SgDialog from '../components/SgDialog.vue'
 import SgInput from '../components/SgInput.vue'
@@ -13,6 +15,7 @@ import InfoPanel from './InfoPanel.vue'
 import Profile from './Profile.vue'
 import RequestsPanel from './RequestsPanel.vue'
 import UserPanel from './UserPanel.vue'
+import { SLIDE_MS, phone } from '../viewport'
 
 const props = defineProps({ me: { type: Object, required: true } })
 const emit = defineEmits(['log-out', 'profile-changed', 'session-ended'])
@@ -58,6 +61,10 @@ const dialogError = ref('')
 const active = computed(() => channels.value.find((c) => c.id === activeId.value) || null)
 const activeTitle = computed(() => channelTitle(active.value, props.me.id))
 
+// What the other chats hold unread, for the arrow back to the list.
+const otherUnread = computed(() => Object.entries(unread.value)
+  .reduce((n, [id, k]) => (id === activeId.value ? n : n + k), 0))
+
 // Our own messages are looked up by username like anyone else's; a rename in the
 // profile has to reach them without a reload.
 watch(() => [props.me.display_name, props.me.avatar_id], () => rememberUser(props.me), { immediate: true })
@@ -86,6 +93,7 @@ function paneFromUrl() {
 }
 
 function paneToUrl() {
+  if (phone.value && atList.value) return '/'
   if (showProfile.value) return '/profile'
   const chat = activeId.value ? `/c/${activeId.value}` : ''
   // The info panel shows only with its chat; a person's page shows either way.
@@ -95,11 +103,114 @@ function paneToUrl() {
   return chat || '/'
 }
 
-// replaceState rather than pushState: switching chats should not pile up
-// entries that the back button would then have to walk through.
-watch([activeId, showProfile, showInfo, person, showRequests], () => {
-  const path = paneToUrl()
-  if (location.pathname !== path) history.replaceState(null, '', path)
+/* ---------- phone screens ---------- */
+
+// A phone shows one screen at a time: the list, then the stage over it (a chat,
+// the profile, or a panel opened from the list), then a panel over the chat.
+// atList turns ahead of the state, so the stage keeps what it showed while it
+// slides away; toList clears the state once it has.
+const atList = ref(true)
+// Set for one frame when the slide should not play.
+const instant = ref(false)
+
+const sideOpen = computed(() => !showProfile.value
+  && ((showInfo.value && !!active.value) || !!person.value || showRequests.value))
+const stageShown = computed(() => !atList.value && (showProfile.value || !!active.value || sideOpen.value))
+const depth = computed(() => {
+  if (!phone.value || !stageShown.value) return 0
+  return sideOpen.value && active.value ? 2 : 1
+})
+
+// A panel slides over a chat on its own; opened from a phone's list it rides in
+// with the stage, and a slide of its own inside that would arrive twice as late.
+const sideSlides = computed(() => panesRestored.value && !instant.value && (!phone.value || !!active.value))
+
+function closeSides() {
+  showInfo.value = false
+  person.value = ''
+  showRequests.value = false
+}
+
+let listTimer = null
+function toList() {
+  atList.value = true
+  clearTimeout(listTimer)
+  listTimer = setTimeout(() => {
+    if (!atList.value) return
+    activeId.value = null
+    showProfile.value = false
+    closeSides()
+  }, SLIDE_MS)
+}
+
+// A side panel's own Close: on a phone it is a step back like any other.
+function closeSide(close) {
+  if (phone.value) back()
+  else close()
+}
+
+// Every screen deeper on a phone is a history entry, so the arrow, Android's
+// back button and iOS's edge swipe all take the same step, as in Telegram.
+// replaceState still covers everything at one depth: switching chats should not
+// pile up entries that the back button would then have to walk through.
+let fromPop = false
+let ignoredPops = 0
+
+function back() {
+  if (history.state?.depth > 0) history.back()
+  else stepBackTo(depth.value - 1)
+}
+
+function stepBackTo(target) {
+  if (target <= 0) toList()
+  else if (depth.value === 2) closeSides()
+}
+
+// iOS plays its edge swipe back itself; sliding again after it would show the
+// move twice, so that step is instant (Telegram's useHistoryBack does the same).
+const edge = { on: false, endedAt: 0 }
+function onTouchStart(e) { edge.on = e.touches[0].clientX < 30 }
+function onTouchEnd() {
+  if (edge.on) edge.endedAt = Date.now()
+  edge.on = false
+}
+
+function onPop(e) {
+  if (ignoredPops > 0) {
+    ignoredPops--
+    if (location.pathname !== paneToUrl()) history.replaceState(history.state, '', paneToUrl())
+    return
+  }
+  const target = e.state?.depth ?? 0
+  if (!phone.value || target >= depth.value) return
+  fromPop = true
+  nextTick(() => { fromPop = false })
+  if (edge.on || Date.now() - edge.endedAt < 500) {
+    instant.value = true
+    requestAnimationFrame(() => requestAnimationFrame(() => { instant.value = false }))
+  }
+  stepBackTo(target)
+}
+
+watch([() => paneToUrl(), depth], ([path, d], [, was]) => {
+  if (phone.value && !fromPop && d > was) {
+    for (let i = was + 1; i <= d; i++) history.pushState({ depth: i }, '', path)
+    return
+  }
+  // Closed from inside the app: the browser steps back too, or its back button
+  // would have a screen to close that is no longer there.
+  const at = history.state?.depth || 0
+  if (phone.value && !fromPop && d < was && at > d) {
+    ignoredPops++
+    history.go(d - at)
+    return
+  }
+  if (location.pathname !== path) history.replaceState(history.state, '', path)
+})
+
+// Turning into a phone opens on whatever was open on the wider screen.
+watch(phone, (on) => {
+  if (on) atList.value = !(activeId.value || showProfile.value || person.value || showRequests.value)
 })
 
 /* ---------- channels ---------- */
@@ -120,6 +231,9 @@ async function loadChannels() {
 async function selectChannel(id) {
   if (pendingAction.value && pendingAction.value.channelId !== id) pendingAction.value = null
   showProfile.value = false
+  // A chat picked from a panel replaces that panel on a phone, as Telegram's Message button does.
+  if (phone.value) closeSides()
+  atList.value = false
   activeId.value = id
   hasOlder.value = true
   const page = (await api.messages({ channel_id: id })).reverse()
@@ -162,6 +276,7 @@ async function leaveChannel() {
   channels.value = channels.value.filter((c) => c.id !== id)
   messages.value = []
   activeId.value = null
+  atList.value = true
 }
 
 /* ---------- history ---------- */
@@ -254,7 +369,7 @@ async function send(text, attachments = []) {
   if (text.trim() && !groups.length) groups.push([])
 
   const entries = groups.map((group, i) => ({
-    client_msg_id: crypto.randomUUID(),
+    client_msg_id: newId(),
     channel_id: channelId,
     text: i === groups.length - 1 ? text : '',
     attachments: group,
@@ -318,7 +433,7 @@ async function pickForward(message, channelId) {
 // "Forwarded from"; the server's answer replaces it.
 function queueForward(message, channelId) {
   const entry = {
-    client_msg_id: crypto.randomUUID(),
+    client_msg_id: newId(),
     channel_id: channelId,
     sourceId: message.id,
     text: message.text,
@@ -388,10 +503,12 @@ function catchUpChannels() {
 
 function receive(msg) {
   // The socket can miss nothing from here on, or the server's bus came back:
-  // fetch what came in meanwhile, and the channels joined meanwhile.
+  // fetch what came in meanwhile, and the channels joined meanwhile. Friends
+  // too: a phone drops the socket whenever the browser goes to the background.
   if (msg.type === 'ready' || msg.type === 'resync') {
     catchUpChannels()
     catchUp()
+    loadPeople()
     return
   }
   // Typing shares the channel's stream with messages and is told apart by its
@@ -419,6 +536,7 @@ function receive(msg) {
   // The message is what the typing was for.
   forgetTyping(msg.channel_id, msg.author.id)
   if (!channels.value.some((c) => c.id === msg.channel_id)) catchUpChannels()
+  noteLast(msg)
   const ch = msg.channel_id
   lastSeq.value = { ...lastSeq.value, [ch]: Math.max(lastSeq.value[ch] || 0, msg.seq || 0) }
   // What we wrote ourselves, from this tab or another, is read.
@@ -441,6 +559,15 @@ function receive(msg) {
   messages.value = inOrder([...messages.value, { ...msg, status: 'delivered' }])
   conversation.value?.toBottom()
   markRead()
+}
+
+// The list shows each chat's newest message, in the server's short form.
+function noteLast(msg) {
+  channels.value = channels.value.map((c) => {
+    if (c.id !== msg.channel_id || (c.last_message?.seq || 0) > (msg.seq || 0)) return c
+    const { id, author, text, created_at, seq } = msg
+    return { ...c, last_message: { id, author, text, created_at, seq, attachments: (msg.attachments || []).length } }
+  })
 }
 
 /* ---------- typing ---------- */
@@ -652,6 +779,12 @@ function toggleRequests() {
   showInfo.value = false
   person.value = ''
   showRequests.value = open
+  if (open) atList.value = false
+}
+
+function openProfile() {
+  showProfile.value = true
+  atList.value = false
 }
 
 // An invite followed from a message, by the same path as one followed from the
@@ -668,6 +801,7 @@ function openPerson(username) {
   showInfo.value = false
   showRequests.value = false
   person.value = username
+  atList.value = false
 }
 
 const relation = computed(() => {
@@ -690,11 +824,22 @@ function onVisible() {
 
 onMounted(async () => {
   document.addEventListener('visibilitychange', onVisible)
+  window.addEventListener('popstate', onPop)
+  window.addEventListener('touchstart', onTouchStart, { passive: true })
+  window.addEventListener('touchend', onTouchEnd, { passive: true })
+  window.addEventListener('touchcancel', onTouchEnd, { passive: true })
   paneFromUrl()
+  // A reload deep inside lands on the list first, and the screens it shows are
+  // pushed over it, so the back button walks out the way it would have walked in.
+  if (phone.value) history.replaceState({ depth: 0 }, '', '/')
+  atList.value = !(activeId.value || showProfile.value || person.value || showRequests.value)
   const invite = takePendingInvite()
   if (invite) {
     const joined = await api.followInvite(invite).catch(() => null)
-    if (joined) activeId.value = joined.channel_id
+    if (joined) {
+      activeId.value = joined.channel_id
+      atList.value = false
+    }
   }
 
   await loadChannels()
@@ -721,15 +866,44 @@ onUnmounted(() => {
   socket && socket.close()
   typingTimers.forEach(clearTimeout)
   clearTimeout(readTimer)
+  clearTimeout(listTimer)
   document.removeEventListener('visibilitychange', onVisible)
+  window.removeEventListener('popstate', onPop)
+  window.removeEventListener('touchstart', onTouchStart)
+  window.removeEventListener('touchend', onTouchEnd)
+  window.removeEventListener('touchcancel', onTouchEnd)
 })
 </script>
 
 <template>
-  <div class="screen">
+  <div class="screen" :class="{
+    'screen--phone': phone,
+    'screen--stage': stageShown,
+    'screen--covered': depth === 2,
+    'screen--instant': instant || !panesRestored,
+  }">
     <div class="columns">
 
+      <ChatList
+        v-if="phone"
+        :inert="stageShown"
+        :me="me"
+        :channels="channels"
+        :unread="unread"
+        :friends="friends"
+        :requests="requests"
+        :sent-to="sentTo"
+        @select="selectChannel"
+        @create="dialog = 'create'"
+        @open-direct="openDirect"
+        @add-friend="addFriend"
+        @requests="toggleRequests"
+        @profile="openProfile"
+        @person="openPerson"
+      />
+
       <ChannelRail
+        v-else
         :me="me"
         :channels="channels"
         :active-id="activeId"
@@ -744,16 +918,17 @@ onUnmounted(() => {
         @open-direct="openDirect"
         @add-friend="addFriend"
         @requests="toggleRequests"
-        @profile="showProfile = true"
+        @profile="openProfile"
         @person="openPerson"
       />
 
       <!-- Everything right of the rail. On a narrow window a side panel covers this
            box exactly, so the feed under it keeps its width and scroll position. -->
-      <div class="stage">
+      <div class="stage" :inert="phone && !stageShown">
       <Profile
         v-if="showProfile"
         :me="me"
+        @back="back"
         @saved="emit('profile-changed')"
         @log-out="emit('log-out')"
         @deleted="emit('log-out')"
@@ -768,6 +943,8 @@ onUnmounted(() => {
         :messages="messages"
         :person="person"
         :info-open="showInfo"
+        :back-count="otherUnread"
+        @back="back"
         @send="send"
         @invite="joinByInvite"
         @retry="deliver"
@@ -793,14 +970,14 @@ onUnmounted(() => {
 
       <!-- The side panels slide like the rail collapses. v-if alone would remove them
            in one frame; Transition keeps the node until the width has closed. -->
-      <Transition name="side" :css="panesRestored">
+      <Transition name="side" :css="sideSlides">
         <div v-if="showInfo && active && !showProfile" class="side">
           <InfoPanel
             :me="me"
             :channel="active"
             :title="activeTitle"
             :friend="friends.some((f) => f.username === activeTitle)"
-            @close="showInfo = false"
+            @close="closeSide(() => showInfo = false)"
             @leave="showInfo = false; confirmLeave = true"
             @select="selectChannel"
             @person="openPerson"
@@ -810,12 +987,12 @@ onUnmounted(() => {
         </div>
       </Transition>
 
-      <Transition name="side" :css="panesRestored">
+      <Transition name="side" :css="sideSlides">
         <div v-if="person && !showProfile" class="side">
           <UserPanel
             :username="person"
             :relation="relation"
-            @close="person = ''"
+            @close="closeSide(() => person = '')"
             @message="openDirect"
             @befriend="addFriend"
             @unfriend="removeFriend"
@@ -824,12 +1001,12 @@ onUnmounted(() => {
         </div>
       </Transition>
 
-      <Transition name="side" :css="panesRestored">
+      <Transition name="side" :css="sideSlides">
         <div v-if="showRequests && !showProfile" class="side">
           <RequestsPanel
             :incoming="requests"
             :sent="sentTo"
-            @close="showRequests = false"
+            @close="closeSide(() => showRequests = false)"
             @respond="respond"
             @person="openPerson"
           />
@@ -869,8 +1046,12 @@ onUnmounted(() => {
 
 <style scoped>
 .screen {
+  /* Telegram's --layer-transition; SLIDE_MS in viewport.js is the same 300ms */
+  --slide: 300ms cubic-bezier(0.33, 1, 0.68, 1);
   position: relative;
   height: 100vh;
+  /* the height left once the browser's own bars, and on Android the keyboard, are out */
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   background: var(--paper);
@@ -953,6 +1134,71 @@ onUnmounted(() => {
   .side-enter-from,
   .side-leave-to {
     margin-left: 0;
+  }
+}
+
+/* A phone: the list and the stage fill the screen in turn, and the stage slides
+   over from the right, as Telegram's mobile columns do (Main.scss). */
+/* Pinned to what is visible above the keyboard (viewport.js), not to the page
+   iOS pans behind it; 100dvh until the first measurement. */
+.screen--phone {
+  position: fixed;
+  top: var(--app-top, 0);
+  left: 0;
+  right: 0;
+  height: var(--app-height, 100dvh);
+  padding: 0;
+}
+.screen--phone .columns {
+  position: relative;
+  gap: 0;
+  overflow: hidden;
+}
+.screen--phone .chat-list,
+.screen--phone .stage {
+  position: absolute;
+  inset: 0;
+  transition: transform var(--slide);
+}
+.screen--phone .stage {
+  gap: 0;
+  background: var(--surface-page);
+  transform: translateX(100%);
+}
+.screen--stage .stage { transform: none; }
+.screen--stage .chat-list { transform: translateX(-100%); }
+.screen--phone .empty { display: none; }
+/* A panel over the chat pushes the chat a fifth of the way out, as Telegram's
+   right column moves the middle one. */
+.screen--phone .stage > .conversation { transition: transform var(--slide); }
+.screen--covered .stage > .conversation { transform: translateX(-20%); }
+.screen--phone .side {
+  padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) 0 max(8px, env(safe-area-inset-left));
+}
+.screen--phone .side > :deep(aside) {
+  padding-bottom: calc(8px + env(safe-area-inset-bottom));
+}
+.screen--phone .side-enter-active,
+.screen--phone .side-leave-active {
+  transition: transform var(--slide);
+}
+.screen--phone .side-enter-from,
+.screen--phone .side-leave-to {
+  opacity: 1;
+  transform: translateX(100%);
+}
+.screen--instant .chat-list,
+.screen--instant .stage,
+.screen--instant .stage > .conversation {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .screen--phone .chat-list,
+  .screen--phone .stage,
+  .screen--phone .stage > .conversation,
+  .screen--phone .side-enter-active,
+  .screen--phone .side-leave-active {
+    transition: none;
   }
 }
 </style>

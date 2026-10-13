@@ -3,8 +3,8 @@ import { computed, onUnmounted, ref, watch } from 'vue'
 import ChannelRow from './ChannelRow.vue'
 import SgAvatar from './SgAvatar.vue'
 import SgButton from './SgButton.vue'
-import { DELETED_NAME, avatarUrl, channelAvatarUrl, displayName, initials, otherMember, rememberUser } from '../naming'
-import { api } from '../api'
+import { DELETED_NAME, avatarUrl, channelAvatarUrl, displayName, initials, otherMember } from '../naming'
+import { usePeopleSearch } from '../search'
 
 const props = defineProps({
   me: { type: Object, required: true },
@@ -57,21 +57,7 @@ watch(collapsed, (value) => {
   }
 })
 
-const query = ref('')
-const found = ref([])
-let timer = null
-
-// The field searches and nothing else: what it finds is people, and what you do
-// with them is add or message, depending on whether you are friends already.
-function search() {
-  clearTimeout(timer)
-  timer = setTimeout(async () => {
-    const q = query.value.trim()
-    const hits = q ? await api.searchUsers(q).catch(() => []) : []
-    for (const u of hits) rememberUser(u)
-    found.value = hits.filter((u) => u.id !== props.me.id)
-  }, 200)
-}
+const { query, found, search } = usePeopleSearch(() => props.me.id)
 
 const named = computed(() => props.channels.filter((c) => c.kind !== 'direct'))
 

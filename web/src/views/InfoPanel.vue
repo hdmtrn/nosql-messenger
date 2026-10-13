@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { api } from '../api'
+import BackButton from '../components/BackButton.vue'
 import ChannelGlyph from '../components/ChannelGlyph.vue'
 import SgAvatar from '../components/SgAvatar.vue'
 import SgButton from '../components/SgButton.vue'
@@ -10,6 +11,7 @@ import RemoveFriendDialog from '../components/RemoveFriendDialog.vue'
 import { avatarUrl, channelAvatarUrl, displayName, initials, otherMember } from '../naming'
 import { toJpeg } from '../images'
 import { inviteLink } from '../pending'
+import { phone } from '../viewport'
 
 const props = defineProps({
   me: { type: Object, required: true },
@@ -132,10 +134,11 @@ async function removeAvatar() {
 <template>
   <aside class="info-panel">
     <div class="top">
+      <BackButton v-if="phone" @click="emit('close')" />
       <h2 class="heading">
         {{ direct() ? 'About' : 'Channel' }}
       </h2>
-      <SgButton variant="outline" size="sm" @click="emit('close')">Close</SgButton>
+      <SgButton v-if="!phone" variant="outline" size="sm" @click="emit('close')">Close</SgButton>
     </div>
 
     <div class="card summary">

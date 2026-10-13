@@ -12,10 +12,12 @@ const props = defineProps({
 })
 const emit = defineEmits(['reply', 'copy', 'forward', 'close'])
 
+// Touch screens get 48px rows, the target Material asks for; a mouse keeps 44.
+const ITEM = window.matchMedia('(pointer: coarse)').matches ? 48 : 44
 const WIDTH = 220
-const HEIGHT = 170
+const HEIGHT = 170 + 3 * (ITEM - 44)
 const SUB_WIDTH = 260
-const ROW = 46
+const ROW = ITEM + 2
 const SUB_MAX = 340
 const GAP = 8
 const MARGIN = 8
@@ -29,15 +31,20 @@ const left = Math.min(props.x, window.innerWidth - WIDTH - MARGIN)
 const top = Math.min(props.y, window.innerHeight - HEIGHT - MARGIN)
 
 // The chat list unfolds beside the Forward row: to the right when it fits,
-// otherwise to the left, and lifted when it would run past the bottom.
+// otherwise to the left, and lifted when it would run past the bottom. A phone
+// has room for neither, so there the list takes the menu's own place.
 const sub = computed(() => {
   const height = Math.min(props.targets.length * ROW + 16, SUB_MAX)
-  // Forward is the third row: 8px padding plus two 44px rows and their 2px gaps.
-  const rowTop = 100
+  const right = left + WIDTH + GAP + SUB_WIDTH <= window.innerWidth - MARGIN
+  const inPlace = !right && left - GAP - SUB_WIDTH < MARGIN
+  // Forward is the third row: 8px padding plus two rows and their 2px gaps.
+  const rowTop = inPlace ? 0 : 8 + 2 * ROW
   const shift = Math.min(0, window.innerHeight - MARGIN - (top + rowTop + height))
   return {
     top: rowTop + shift,
-    right: left + WIDTH + GAP + SUB_WIDTH <= window.innerWidth - MARGIN,
+    left: inPlace ? Math.min(0, window.innerWidth - MARGIN - SUB_WIDTH - left) : 0,
+    right,
+    inPlace,
   }
 })
 
@@ -75,7 +82,7 @@ onUnmounted(() => {
 <template>
   <Teleport to="body">
     <div ref="root" class="anchor" :style="{ '--left': left + 'px', '--top': top + 'px' }">
-      <div role="menu" class="panel main">
+      <div v-show="!(subOpen && sub.inPlace)" role="menu" class="panel main">
         <button type="button" role="menuitem" class="item"
                 @mouseenter="subOpen = false" @click="emit('reply')">Reply</button>
         <button type="button" role="menuitem" class="item"
@@ -89,7 +96,8 @@ onUnmounted(() => {
       </div>
 
       <div v-if="subOpen" role="menu" aria-label="Forward to" class="panel sub"
-           :class="sub.right ? 'to-right' : 'to-left'" :style="{ '--sub-top': sub.top + 'px' }"
+           :class="sub.inPlace ? 'in-place' : sub.right ? 'to-right' : 'to-left'"
+           :style="{ '--sub-top': sub.top + 'px', '--sub-left': sub.left + 'px' }"
            @keydown.left.prevent="subOpen = false">
         <p v-if="!targets.length" class="note">No other chats</p>
         <button v-for="t in targets" :key="t.id" type="button" role="menuitem" class="item"
@@ -132,6 +140,7 @@ onUnmounted(() => {
 }
 .to-right { left: 228px; }
 .to-left { right: 228px; }
+.in-place { left: var(--sub-left); }
 .grow { flex: 1; }
 .item {
   display: flex;
@@ -168,5 +177,7 @@ onUnmounted(() => {
   font: 500 13px/1.3 var(--font-ui);
   color: rgba(255, 255, 255, 0.72);
 }
-
+@media (pointer: coarse) {
+  .item { height: 48px; }
+}
 </style>

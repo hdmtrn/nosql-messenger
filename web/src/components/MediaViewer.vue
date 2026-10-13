@@ -100,6 +100,7 @@ function touchEnd(e) {
 .picture {
   max-width: 100%;
   max-height: calc(100vh - 88px);
+  max-height: calc(100dvh - 88px);
   object-fit: contain;
   border-radius: 8px;
   cursor: pointer;

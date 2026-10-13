@@ -1,4 +1,6 @@
 <script setup>
+import BackButton from './BackButton.vue'
+
 defineProps({
   title: String,
   subtitle: String,
@@ -6,12 +8,16 @@ defineProps({
   subtitleAccent: Boolean,
   // The info panel is open: the arrow turns back towards the feed, like the rail's ‹ ›.
   open: Boolean,
+  // A phone leads with the way back to the list, and the unread waiting there.
+  back: Boolean,
+  backCount: { type: Number, default: 0 },
 })
-defineEmits(['info'])
+defineEmits(['info', 'back'])
 </script>
 
 <template>
   <header class="pane-header">
+    <BackButton v-if="back" :count="backCount" @click="$emit('back')" />
     <button
       type="button"
       class="toggle"
@@ -48,6 +54,7 @@ defineEmits(['info'])
   border-bottom: 1px solid var(--border-muted);
 }
 .toggle {
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 16px;
@@ -58,6 +65,7 @@ defineEmits(['info'])
   text-align: left;
 }
 .titles {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -88,5 +96,33 @@ defineEmits(['info'])
   display: flex;
   align-items: center;
   gap: 12px;
+}
+/* Telegram's mobile header: 56px tall, a 40px avatar, the title at 17px. */
+@media (max-width: 600px), (max-width: 950px) and (max-height: 450px) {
+  .pane-header {
+    justify-content: flex-start;
+    gap: 4px;
+    min-height: 56px;
+    padding: max(4px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) 4px max(4px, env(safe-area-inset-left));
+  }
+  .toggle {
+    flex: 1;
+    gap: 12px;
+    min-height: 48px;
+  }
+  .title {
+    font: var(--weight-semibold) 17px/1.25 var(--font-ui);
+    letter-spacing: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .title-row { min-width: 0; }
+  .arrow { display: none; }
+  .subtitle {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 </style>
