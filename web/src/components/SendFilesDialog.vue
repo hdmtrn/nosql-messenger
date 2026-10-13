@@ -40,6 +40,19 @@ function pick(event) {
   event.target.value = ''
 }
 
+// As in the composer: no v-model, which holds back a word still being composed,
+// and the comment is taken from the field when it goes.
+function send() {
+  if (field.value) comment.value = field.value.value
+  emit('send')
+}
+
+function onEnter(event) {
+  if (event.isComposing) return
+  event.preventDefault()
+  send()
+}
+
 function paste(event) {
   if (!event.clipboardData.files.length) return
   event.preventDefault()
@@ -80,14 +93,15 @@ function paste(event) {
         <footer class="foot">
           <input
             ref="field"
-            v-model="comment"
+            :value="comment"
             class="comment"
             placeholder="Add a comment…"
             :maxlength="maxLength"
+            @input="comment = $event.target.value"
             @paste="paste"
-            @keydown.enter.exact.prevent="emit('send')"
+            @keydown.enter.exact="onEnter"
           >
-          <button type="button" class="send" :disabled="!canSend" @click="emit('send')">Send</button>
+          <button type="button" class="send" :disabled="!canSend" @click="send">Send</button>
         </footer>
       </div>
     </div>

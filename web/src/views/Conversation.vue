@@ -239,7 +239,8 @@ function dayLabel(iso) {
 // The date of the day at the top of the feed floats over it while someone
 // scrolls it, once that day's own separator has gone above the edge, and fades
 // when it stops. Only a hand counts: the jump to the bottom on opening a chat
-// is a scroll too, and the date would flash over the messages.
+// is a scroll too, and the date would flash over the messages. A finger counts
+// once it moves; a tap that closes the keyboard is not a scroll.
 const floatingDay = ref('')
 const scrolling = ref(false)
 let idleTimer = null
@@ -335,8 +336,8 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom })
     </PaneHeader>
 
     <div class="feed-box">
-    <div ref="feed" class="feed" @scroll="onScroll" @wheel.passive="onHand" @touchstart.passive="onHand"
-         @pointerdown="onHand" @keydown="onHand">
+    <div ref="feed" class="feed" @scroll="onScroll" @wheel.passive="onHand" @touchmove.passive="onHand"
+         @pointerdown="$event.pointerType === 'mouse' && onHand()" @keydown="onHand">
       <p v-if="!messages.length" class="empty">
         No messages yet
       </p>
@@ -352,7 +353,7 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom })
         :initials="initials(displayName(m.author.username))"
         :avatar-src="avatarUrl(m.author.username)"
         :attachments="m.attachments"
-        :time="m.status && m.status !== 'delivered' ? '' : clock(m.created_at)"
+        :time="m.status === 'failed' ? '' : clock(m.created_at)"
         :ring="!!person && m.author.username === person"
         :forwarded="m.forwarded ? displayName(m.forwarded.author.username) : ''"
         :quote="quote"

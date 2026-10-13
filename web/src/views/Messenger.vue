@@ -1167,8 +1167,16 @@ onUnmounted(() => {
 /* Pinned to what is visible above the keyboard (viewport.js), not to the page
    iOS pans behind it; 100dvh until the first measurement. */
 /* The page behind shows for a moment while the keyboard moves; on a phone it is
-   the panels' white, so that moment does not read as a gap. */
+   the panels' white, so that moment does not read as a gap. It does not scroll
+   either, as Telegram Web A's html and body do not: the panes scroll inside, and a
+   page that moves takes the fixed screen with it. */
 :global(body:has(.screen--phone)) { background: var(--surface-panel); }
+:global(html:has(.screen--phone)),
+:global(body:has(.screen--phone)) {
+  height: 100%;
+  overflow: hidden;
+  touch-action: manipulation;
+}
 .screen--phone {
   position: fixed;
   top: var(--app-top, 0);

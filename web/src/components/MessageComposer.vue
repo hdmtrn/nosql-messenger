@@ -148,10 +148,27 @@ function sendFiles() {
   input.value?.focus()
 }
 
+// The text is read from the field, not from text: v-model holds back the word an
+// input method is still composing, and Android's keyboard composes every word.
+// Clearing the field by hand ends that composition, so the word does not come back.
 function send() {
+  if (input.value) text.value = input.value.value
   if (!canSend.value) return
   emit('send', text.value, [])
   text.value = ''
+  if (input.value) input.value.value = ''
+}
+
+function onInput(event) {
+  text.value = event.target.value
+  emit('typing')
+}
+
+// Enter that picks a word in a Chinese or Japanese input method is not Send.
+function onEnter(event) {
+  if (event.isComposing) return
+  event.preventDefault()
+  send()
 }
 </script>
 
@@ -183,7 +200,7 @@ function send() {
                @change="pick">
         <input
           ref="input"
-          v-model="text"
+          :value="text"
           :disabled="disabled"
           :placeholder="placeholder"
           :maxlength="maxLength"
@@ -192,8 +209,8 @@ function send() {
           @focus="focused = true"
           @blur="focused = false"
           @paste="paste"
-          @input="emit('typing')"
-          @keydown.enter.exact.prevent="send"
+          @input="onInput"
+          @keydown.enter.exact="onEnter"
         >
       </div>
       <!-- mousedown would take the focus from the field and close a phone's keyboard after every message -->
