@@ -1,12 +1,14 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { api } from '../api'
+import BackButton from '../components/BackButton.vue'
 import ChannelGlyph from '../components/ChannelGlyph.vue'
 import SgAvatar from '../components/SgAvatar.vue'
 import SgButton from '../components/SgButton.vue'
 import RemoveFriendDialog from '../components/RemoveFriendDialog.vue'
 import MediaViewer from '../components/MediaViewer.vue'
 import { DELETED_NAME, avatarUrl, channelAvatarUrl, initials } from '../naming'
+import { phone } from '../viewport'
 
 const props = defineProps({
   username: { type: String, required: true },
@@ -53,8 +55,9 @@ const name = computed(() => (gone.value ? DELETED_NAME : person.value ? person.v
 <template>
   <aside class="user-panel">
     <div class="top">
+      <BackButton v-if="phone" @click="emit('close')" />
       <h2 class="heading">About</h2>
-      <SgButton variant="outline" size="sm" @click="emit('close')">Close</SgButton>
+      <SgButton v-if="!phone" variant="outline" size="sm" @click="emit('close')">Close</SgButton>
     </div>
 
     <!-- laid out like your own profile card: avatar on the left, everything flush left -->

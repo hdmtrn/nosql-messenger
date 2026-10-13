@@ -9,6 +9,7 @@ import SgAvatar from '../components/SgAvatar.vue'
 import ChannelGlyph from '../components/ChannelGlyph.vue'
 import MediaViewer from '../components/MediaViewer.vue'
 import { avatarUrl, channelAvatarUrl, displayName, initials, messagePreview, otherMember } from '../naming'
+import { phone } from '../viewport'
 
 const props = defineProps({
   me: { type: Object, required: true },
@@ -27,10 +28,12 @@ const props = defineProps({
   typing: { type: Array, default: () => [] },
   // { online, last_seen } of the other person in a direct chat; null elsewhere.
   presence: { type: Object, default: null },
+  // Unread in the other chats, on the phone's arrow back to the list.
+  backCount: { type: Number, default: 0 },
 })
 
 const emit = defineEmits(['send', 'retry', 'discard', 'load-older', 'info', 'person',
-  'reply', 'forward', 'cancel-pending', 'find', 'typing', 'invite'])
+  'reply', 'forward', 'cancel-pending', 'find', 'typing', 'invite', 'back'])
 
 const feed = ref(null)
 const composer = ref(null)
@@ -102,6 +105,36 @@ function quoteOf(m, byId) {
   if (orig === null) return { missing: true }
   return { author: sourceAuthor(orig), text: messagePreview(orig) }
 }
+// A held finger opens the menu: touch screens have no right click, and iOS
+// Safari never fires contextmenu. 200 ms, and any move cancels it, as
+// Telegram's long tap (LONG_TAP_DURATION_MS), so a scroll never opens it.
+const LONG_PRESS_MS = 200
+let press = null
+
+function pressStart(m, e) {
+  pressCancel()
+  if (e.touches.length !== 1 || !m.id) return
+  const { clientX, clientY } = e.touches[0]
+  const held = { fired: false }
+  held.timer = setTimeout(() => {
+    held.fired = true
+    openMenu(m, clientX, clientY)
+  }, LONG_PRESS_MS)
+  press = held
+}
+function pressMove() {
+  if (press && !press.fired) pressCancel()
+}
+function pressCancel() {
+  if (press) clearTimeout(press.timer)
+  press = null
+}
+// The lift that ends a long press is not a tap: it must not open the picture or link under the finger.
+function pressEnd(e) {
+  if (press?.fired) e.preventDefault()
+  pressCancel()
+}
+
 function openMenuAtBubble(m, e) {
   const box = e.currentTarget.getBoundingClientRect()
   openMenu(m, box.left + 48, box.bottom)
@@ -272,11 +305,14 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
                           : channel.member_count + (channel.member_count === 1 ? ' member' : ' members'))"
       :subtitle-accent="!!typingLine || presence?.online === true"
       :open="infoOpen"
+      :back="phone"
+      :back-count="backCount"
       @info="emit('info')"
+      @back="emit('back')"
     >
       <template #mark>
-        <SgAvatar v-if="direct()" :initials="initials(displayName(title))" :src="avatarUrl(title)" :size="44" />
-        <ChannelGlyph v-else :src="channelAvatarUrl(channel)" :size="44" tone="blue" />
+        <SgAvatar v-if="direct()" :initials="initials(displayName(title))" :src="avatarUrl(title)" :size="phone ? 40 : 44" />
+        <ChannelGlyph v-else :src="channelAvatarUrl(channel)" :size="phone ? 40 : 44" tone="blue" />
       </template>
     </PaneHeader>
 
@@ -308,6 +344,10 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
         :class="{ lit: lit && lit === m.id, 'run-start': head && i > 0 && !day, tight: direct() }"
         :data-id="m.id"
         @contextmenu.prevent="openMenu(m, $event.clientX, $event.clientY)"
+        @touchstart.passive="pressStart(m, $event)"
+        @touchmove.passive="pressMove"
+        @touchend="pressEnd"
+        @touchcancel="pressCancel"
         @keydown.enter.self="openMenuAtBubble(m, $event)"
         @author="emit('person', m.author.username)"
         @quote="openQuote(m)"
@@ -483,4 +523,21 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
   cursor: pointer;
 }
 .cancel:hover { background: var(--surface-panel); color: var(--text-primary); }
+/* A finger held on a bubble opens our menu; the browser's text selection and
+   its own picture menu would open on top of it. Copy text is in our menu. */
+@media (pointer: coarse) {
+  .message {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  .cancel { width: 48px; height: 48px; }
+}
+/* Edge to edge, with Telegram's 8px side inset for the feed (--middle-panel-inline-padding). */
+@media (max-width: 600px), (max-width: 950px) and (max-height: 450px) {
+  .conversation { border-radius: 0; }
+  .feed { padding: 12px max(8px, env(safe-area-inset-right)) 12px max(8px, env(safe-area-inset-left)); }
+  .message::before { inset: -8px -8px; }
+  .pending { gap: 8px; margin-bottom: 8px; padding: 4px 4px 4px 12px; }
+}
 </style>

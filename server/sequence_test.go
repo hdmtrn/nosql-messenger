@@ -159,6 +159,42 @@ func TestReadPositions(t *testing.T) {
 	}
 }
 
+// The list carries each channel's newest message, cut to one row's worth.
+func TestTheChannelListCarriesTheNewestMessage(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	channels, messages := newMessageTestStores(t, db)
+	owner := person("owner")
+	quiet := createChannel(t, channels, "quiet", owner)
+	busy := createChannel(t, channels, "busy", owner)
+	h := NewHub()
+	s := &server{channels: channels, messages: messages, hub: h, bus: h}
+
+	long := strings.Repeat("я", lastMessagePreviewLen+20)
+	for i, text := range []string{"first", long} {
+		callMessageHandler(t, s.handleSendMessage, "", map[string]string{
+			"channel_id": busy.ID.Hex(), "text": text, "client_msg_id": string(rune('a' + i)),
+		}, owner)
+	}
+
+	list, err := channels.ForUser(ctx, owner.UserID, bson.ObjectID{}, 0)
+	if err != nil || len(list) != 2 {
+		t.Fatalf("listing: %v %+v", err, list)
+	}
+	byID := map[bson.ObjectID]Channel{list[0].ID: list[0], list[1].ID: list[1]}
+	if last := byID[quiet.ID].LastMessage; last != nil {
+		t.Fatalf("a channel with no messages has a last one: %+v", last)
+	}
+	last := byID[busy.ID].LastMessage
+	if last == nil || last.Seq != 2 || last.Author.Username != "owner" || last.CreatedAt.IsZero() {
+		t.Fatalf("last message %+v, want the second one by owner", last)
+	}
+	// Cut by characters, not bytes: half a Cyrillic letter is not valid UTF-8.
+	if last.Text != long[:len("я")*lastMessagePreviewLen] {
+		t.Fatalf("text cut to %d characters, want %d", len([]rune(last.Text)), lastMessagePreviewLen)
+	}
+}
+
 // A publish that fails is remembered, and the next one that goes through tells
 // every node to resync.
 func TestALostPublishTellsEveryNodeToResync(t *testing.T) {

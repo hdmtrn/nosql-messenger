@@ -2,6 +2,7 @@
 import { computed, reactive, ref } from 'vue'
 import { api, patiently } from '../api'
 import { prepareForSending } from '../images'
+import { newId } from '../ids'
 import SendFilesDialog from './SendFilesDialog.vue'
 
 const props = defineProps({
@@ -42,7 +43,7 @@ function addFiles(list) {
   for (const file of list) {
     if (file.type && !file.type.startsWith('image/')) continue
     const item = reactive({
-      key: crypto.randomUUID(),
+      key: newId(),
       url: URL.createObjectURL(file),
       name: file.name || 'Pasted image',
       size: file.size,
@@ -187,6 +188,7 @@ function send() {
           :placeholder="placeholder"
           :maxlength="maxLength"
           class="text"
+          enterkeyhint="send"
           @focus="focused = true"
           @blur="focused = false"
           @paste="paste"
@@ -194,13 +196,22 @@ function send() {
           @keydown.enter.exact.prevent="send"
         >
       </div>
+      <!-- mousedown would take the focus from the field and close a phone's keyboard after every message -->
       <button
         type="button"
         :disabled="!canSend"
         class="send"
+        aria-label="Send"
         :class="{ blocked: disabled || uploading, dimmed: disabled || uploading || broken }"
+        @mousedown.prevent
         @click="send"
-      >Send</button>
+      >
+        <span class="send-label">Send</span>
+        <svg class="send-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 19V5M6 11l6-6 6 6" />
+        </svg>
+      </button>
     </div>
   </div>
 </template>
@@ -262,4 +273,27 @@ function send() {
 }
 .attach:hover:not(:disabled) { color: var(--blue); }
 .attach:disabled { cursor: not-allowed; opacity: 0.5; }
+.send-icon { display: none; }
+@media (pointer: coarse) {
+  /* 12px of padding round the 20px clip makes the 44px Apple asks for */
+  .attach { padding: 12px; margin-left: -6px; }
+}
+/* A phone keeps the width for the text: Send becomes a round 48px button, and
+   the row clears the home indicator. */
+@media (max-width: 600px), (max-width: 950px) and (max-height: 450px) {
+  .message-composer {
+    padding: 8px max(8px, env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+  }
+  .controls { gap: 8px; }
+  .field { padding: 0 16px 0 4px; gap: 4px; }
+  .send {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 48px;
+    padding: 0;
+  }
+  .send-label { display: none; }
+  .send-icon { display: block; }
+}
 </style>

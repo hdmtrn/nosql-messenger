@@ -25,6 +25,9 @@ const (
 
 	channelsPageSize = 100
 	channelsMaxLimit = 200
+
+	// A list row shows one line of the newest message; more is bytes nobody reads.
+	lastMessagePreviewLen = 100
 )
 
 type ChannelMember struct {
@@ -32,6 +35,16 @@ type ChannelMember struct {
 	Username string        `bson:"username"   json:"username"`
 	Role     string        `bson:"role"       json:"role"`
 	JoinedAt time.Time     `bson:"joined_at"  json:"joined_at"`
+}
+
+// LastMessage is what the channel list shows of a channel's newest message.
+type LastMessage struct {
+	ID          bson.ObjectID `bson:"id"          json:"id"`
+	Author      MessageAuthor `bson:"author"      json:"author"`
+	Text        string        `bson:"text"        json:"text"`
+	CreatedAt   time.Time     `bson:"created_at"  json:"created_at"`
+	Seq         int64         `bson:"seq"         json:"seq"`
+	Attachments int           `bson:"attachments" json:"attachments,omitempty"`
 }
 
 type Channel struct {
@@ -53,6 +66,9 @@ type Channel struct {
 	// ReadSeq is how far the person asking has read; only the channel list
 	// fills it in, from the reads collection.
 	ReadSeq int64 `bson:"read_seq,omitempty" json:"read_seq"`
+	// LastMessage is the newest message, cut short; only the channel list
+	// fills it in, from the messages collection.
+	LastMessage *LastMessage `bson:"last_message,omitempty" json:"last_message,omitempty"`
 
 	// DirectKey is the sorted pair of participants, which makes "the conversation
 	// between these two" a value the database can enforce as unique.
@@ -178,7 +194,32 @@ func (s *channelStore) ForUser(ctx context.Context, userID bson.ObjectID, after 
 			"as":           "read",
 		}},
 		{"$addFields": bson.M{"read_seq": bson.M{"$first": "$read.read_seq"}}},
-		{"$project": bson.M{"read": 0}},
+		// Read, not copied in on send: a number is handed out before its insert,
+		// which can still fail. $exists lets this use the partial (channel_id, seq) index.
+		{"$lookup": bson.M{
+			"from":         "messages",
+			"localField":   "_id",
+			"foreignField": "channel_id",
+			"pipeline": bson.A{
+				bson.M{"$match": bson.M{"seq": bson.M{"$exists": true}}},
+				bson.M{"$sort": bson.M{"seq": -1}},
+				bson.M{"$limit": 1},
+				bson.M{"$project": bson.M{
+					"_id":        0,
+					"id":         "$_id",
+					"author":     1,
+					"created_at": 1,
+					"seq":        1,
+					"text": bson.M{"$substrCP": bson.A{
+						bson.M{"$ifNull": bson.A{"$text", ""}}, 0, lastMessagePreviewLen,
+					}},
+					"attachments": bson.M{"$size": bson.M{"$ifNull": bson.A{"$attachments", bson.A{}}}},
+				}},
+			},
+			"as": "last",
+		}},
+		{"$addFields": bson.M{"last_message": bson.M{"$first": "$last"}}},
+		{"$project": bson.M{"read": 0, "last": 0}},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("listing channels: %w", err)
