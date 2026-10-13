@@ -236,11 +236,15 @@ function dayLabel(iso) {
   return at.toLocaleDateString('en', { month: 'long', day: 'numeric', year })
 }
 
-// The date of the day at the top of the feed floats over it while it scrolls,
-// once that day's own separator has gone above the edge, and fades when it stops.
+// The date of the day at the top of the feed floats over it while someone
+// scrolls it, once that day's own separator has gone above the edge, and fades
+// when it stops. Only a hand counts: the jump to the bottom on opening a chat
+// is a scroll too, and the date would flash over the messages.
 const floatingDay = ref('')
 const scrolling = ref(false)
 let idleTimer = null
+let byHand = false
+const onHand = () => { byHand = true }
 
 function updateFloatingDay() {
   const top = feed.value.scrollTop
@@ -255,16 +259,30 @@ function updateFloatingDay() {
 function onScroll() {
   if (!feed.value) return
   if (feed.value.scrollTop < 80) emit('load-older')
+  atBottom = distanceFromBottom() - feed.value.clientHeight < AT_BOTTOM_PX
+  if (!byHand) return
   updateFloatingDay()
   scrolling.value = true
   clearTimeout(idleTimer)
-  idleTimer = setTimeout(() => (scrolling.value = false), 1000)
+  idleTimer = setTimeout(() => { scrolling.value = false; byHand = false }, 1000)
 }
+
+// A feed read at its newest message stays there when it gets shorter, as the
+// keyboard comes up, or taller: Telegram keeps the last line above the field.
+const AT_BOTTOM_PX = 40
+let atBottom = true
+const distanceFromBottom = () => (feed.value ? feed.value.scrollHeight - feed.value.scrollTop : 0)
+const feedSize = new ResizeObserver(() => {
+  if (atBottom && feed.value) feed.value.scrollTop = feed.value.scrollHeight
+})
+onMounted(() => feedSize.observe(feed.value))
+onUnmounted(() => feedSize.disconnect())
 
 // The pane owns the scroll box, so it owns keeping the view at the bottom.
 async function toBottom() {
   await nextTick()
   if (feed.value) feed.value.scrollTop = feed.value.scrollHeight
+  atBottom = true
 }
 
 // Restores the reading position after older messages are prepended above.
@@ -294,7 +312,7 @@ function openQuote(m) {
   else emit('find', m.reply_to)
 }
 
-defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (feed.value ? feed.value.scrollHeight - feed.value.scrollTop : 0) })
+defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom })
 </script>
 
 <template>
@@ -317,7 +335,8 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
     </PaneHeader>
 
     <div class="feed-box">
-    <div ref="feed" class="feed" @scroll="onScroll">
+    <div ref="feed" class="feed" @scroll="onScroll" @wheel.passive="onHand" @touchstart.passive="onHand"
+         @pointerdown="onHand" @keydown="onHand">
       <p v-if="!messages.length" class="empty">
         No messages yet
       </p>
