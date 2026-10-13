@@ -16,7 +16,8 @@ const (
 	friendAccepted = "accepted"
 	friendDeclined = "declined"
 
-	friendsMaxLimit = 200
+	friendsMaxLimit  = 200
+	friendNoteMaxLen = 200
 )
 
 type FriendParty struct {
@@ -25,12 +26,14 @@ type FriendParty struct {
 }
 
 type FriendRequest struct {
-	ID          bson.ObjectID `bson:"_id,omitempty"          json:"id"`
-	From        FriendParty   `bson:"from"                   json:"from"`
-	To          FriendParty   `bson:"to"                     json:"to"`
-	Status      string        `bson:"status"                 json:"status"`
-	CreatedAt   time.Time     `bson:"created_at"             json:"created_at"`
-	RespondedAt *time.Time    `bson:"responded_at,omitempty" json:"responded_at,omitempty"`
+	ID     bson.ObjectID `bson:"_id,omitempty"          json:"id"`
+	From   FriendParty   `bson:"from"                   json:"from"`
+	To     FriendParty   `bson:"to"                     json:"to"`
+	Status string        `bson:"status"                 json:"status"`
+	// Note says who is asking and why; the one asked decides on it.
+	Note        string     `bson:"note,omitempty"         json:"note,omitempty"`
+	CreatedAt   time.Time  `bson:"created_at"             json:"created_at"`
+	RespondedAt *time.Time `bson:"responded_at,omitempty" json:"responded_at,omitempty"`
 }
 
 var (
@@ -93,7 +96,7 @@ func (s *friendStore) AreFriends(ctx context.Context, a, b bson.ObjectID) (bool,
 	return true, nil
 }
 
-func (s *friendStore) Send(ctx context.Context, from Session, to *User) (FriendRequest, error) {
+func (s *friendStore) Send(ctx context.Context, from Session, to *User, note string) (FriendRequest, error) {
 	if from.UserID == to.ID {
 		return FriendRequest{}, errFriendSelf
 	}
@@ -103,6 +106,7 @@ func (s *friendStore) Send(ctx context.Context, from Session, to *User) (FriendR
 	case err == nil && existing.Status == friendAccepted:
 		return FriendRequest{}, errFriendAlready
 	case err == nil && existing.To.ID == from.UserID:
+		// The note is dropped: it introduces a request, and this one is an answer.
 		return s.Respond(ctx, existing.ID, from, friendAccepted)
 	case err == nil:
 		return FriendRequest{}, errFriendPending
@@ -114,6 +118,7 @@ func (s *friendStore) Send(ctx context.Context, from Session, to *User) (FriendR
 		From:      FriendParty{ID: from.UserID, Username: from.Username},
 		To:        FriendParty{ID: to.ID, Username: to.Username},
 		Status:    friendPending,
+		Note:      note,
 		CreatedAt: time.Now(),
 	}
 

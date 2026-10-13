@@ -5,6 +5,7 @@ import { createSocket } from '../socket'
 import { avatarUrl, channelAvatarUrl, channelTitle, displayName, initials, rememberUser } from '../naming'
 import { takePendingInvite } from '../pending'
 import ChannelRail from '../components/ChannelRail.vue'
+import FriendRequestDialog from '../components/FriendRequestDialog.vue'
 import SgButton from '../components/SgButton.vue'
 import SgDialog from '../components/SgDialog.vue'
 import SgInput from '../components/SgInput.vue'
@@ -31,6 +32,10 @@ const unread = computed(() => Object.fromEntries(
 const friends = ref([])
 const requests = ref([])
 const sentTo = ref([])
+const outgoing = ref([])
+// Username a request with a note is being written to, and why the server refused it.
+const noteFor = ref('')
+const noteError = ref('')
 const connection = ref('offline')
 const showProfile = ref(false)
 const showInfo = ref(false)
@@ -626,14 +631,31 @@ async function loadPeople() {
   ])
   friends.value = list
   requests.value = pending.incoming
-  sentTo.value = pending.outgoing.map((r) => r.to.username)
+  outgoing.value = pending.outgoing || []
+  sentTo.value = outgoing.value.map((r) => r.to.username)
 }
 
-async function addFriend(username) {
+// Answering a request needs no note, so only a new one asks for it first.
+function addFriend(username) {
+  if (requests.value.some((r) => r.from.username === username)) {
+    sendRequest(username, '')
+    return
+  }
+  noteError.value = ''
+  noteFor.value = username
+}
+
+async function sendRequest(username, note) {
   try {
-    await api.sendFriendRequest(username)
+    await api.sendFriendRequest(username, note)
+    noteFor.value = ''
   } catch (e) {
-    // Other refusals change nothing on screen; a limit is worth saying, with when it lifts.
+    // A refused note stays open to be fixed; a limit is worth saying, with when it lifts.
+    if (e.status === 400) {
+      noteError.value = e.message
+      return
+    }
+    noteFor.value = ''
     if (e.status === 429) tooMany.value = e.retryAfter ? `in ${waitText(e.retryAfter)}` : 'later'
   }
   loadPeople()
@@ -828,7 +850,7 @@ onUnmounted(() => {
         <div v-if="showRequests && !showProfile" class="side">
           <RequestsPanel
             :incoming="requests"
-            :sent="sentTo"
+            :sent="outgoing"
             @close="showRequests = false"
             @respond="respond"
             @person="openPerson"
@@ -848,6 +870,9 @@ onUnmounted(() => {
         <SgButton variant="outline" @click="confirmLeave = false">Cancel</SgButton>
       </div>
     </SgDialog>
+
+    <FriendRequestDialog v-if="noteFor" :name="displayName(noteFor)" :error="noteError"
+                         @close="noteFor = ''" @send="(note) => sendRequest(noteFor, note)" />
 
     <SgDialog v-if="tooMany" title="Too many friend requests" @close="tooMany = ''">
       <p class="dialog-text">Try again {{ tooMany }}.</p>

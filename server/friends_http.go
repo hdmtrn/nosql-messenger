@@ -4,12 +4,15 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strings"
+	"unicode/utf8"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
 type friendRequestBody struct {
 	Username string `json:"username"`
+	Note     string `json:"note"`
 }
 
 // A friendship changed for these two: a request arrived, or one was answered.
@@ -39,6 +42,11 @@ func (s *server) handleSendFriendRequest(w http.ResponseWriter, r *http.Request,
 	if !decodeJSON(w, r, &body) {
 		return
 	}
+	note := strings.TrimSpace(body.Note)
+	if utf8.RuneCountInString(note) > friendNoteMaxLen {
+		writeError(w, http.StatusBadRequest, "note must be at most 200 characters")
+		return
+	}
 
 	target, err := s.users.GetByUsername(r.Context(), body.Username)
 	if errors.Is(err, errUserNotFound) {
@@ -54,7 +62,7 @@ func (s *server) handleSendFriendRequest(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	req, err := s.friends.Send(r.Context(), sess, target)
+	req, err := s.friends.Send(r.Context(), sess, target, note)
 	switch {
 	case err == nil:
 	case errors.Is(err, errFriendSelf):
