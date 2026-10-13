@@ -597,10 +597,10 @@ func TestPresenceAnswersOnlyAboutPeopleYouKnow(t *testing.T) {
 	if err := s.channels.AddMember(ctx, ch.ID, mate); err != nil {
 		t.Fatalf("adding the channel mate: %v", err)
 	}
-	if _, err := s.friends.Send(ctx, me, &User{ID: buddy.UserID, Username: buddy.Username}); err != nil {
+	if _, err := s.friends.Send(ctx, me, &User{ID: buddy.UserID, Username: buddy.Username}, ""); err != nil {
 		t.Fatalf("sending the friend request: %v", err)
 	}
-	if _, err := s.friends.Send(ctx, buddy, &User{ID: me.UserID, Username: me.Username}); err != nil {
+	if _, err := s.friends.Send(ctx, buddy, &User{ID: me.UserID, Username: me.Username}, ""); err != nil {
 		t.Fatalf("accepting the friend request: %v", err)
 	}
 

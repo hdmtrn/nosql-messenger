@@ -37,7 +37,7 @@ func newDirectFixture(t *testing.T) directFixture {
 			t.Fatalf("creating %s: %v", u.Username, err)
 		}
 	}
-	req, err := friends.Send(ctx, f.session(f.alice), &f.bob)
+	req, err := friends.Send(ctx, f.session(f.alice), &f.bob, "")
 	if err != nil {
 		t.Fatalf("friend request: %v", err)
 	}

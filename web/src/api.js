@@ -84,7 +84,7 @@ export const api = {
   revokeSession: (id) => request('DELETE', `/auth/sessions/${id}`),
 
   friendRequests: () => request('GET', '/friends/requests'),
-  sendFriendRequest: (username) => request('POST', '/friends/requests', { username }),
+  sendFriendRequest: (username, note = '') => request('POST', '/friends/requests', { username, note }),
   acceptFriendRequest: (id) => request('POST', `/friends/requests/${id}/accept`),
   declineFriendRequest: (id) => request('POST', `/friends/requests/${id}/decline`),
   friends: () => request('GET', '/friends'),

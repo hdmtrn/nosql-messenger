@@ -145,7 +145,7 @@ const typingLine = computed(() => {
 // "5 minutes ago" would otherwise freeze at what it said when the event came.
 const now = ref(Date.now())
 const ticker = setInterval(() => { now.value = Date.now() }, 60_000)
-onUnmounted(() => clearInterval(ticker))
+onUnmounted(() => { clearInterval(ticker); clearTimeout(idleTimer) })
 
 function lastSeenLine(iso) {
   const at = new Date(iso)
@@ -173,16 +173,18 @@ const presenceLine = computed(() => {
 const RUN_BREAK_MS = 5 * 60 * 1000
 
 // Consecutive messages from one author collapse into a run, and only its first
-// message carries the avatar, the name and the clock.
+// message carries the avatar, the name and the clock. A new day starts a run too,
+// under its own date.
 const rows = computed(() => {
   const byId = new Map(props.messages.map((m) => [m.id, m]))
   return props.messages.map((m, i) => {
     const prev = props.messages[i - 1]
+    const day = !prev || dayKey(prev.created_at) !== dayKey(m.created_at) ? dayLabel(m.created_at) : ''
     const head =
-      !prev ||
+      !!day ||
       prev.author.id !== m.author.id ||
       new Date(m.created_at) - new Date(prev.created_at) > RUN_BREAK_MS
-    return { m, head, quote: quoteOf(m, byId) }
+    return { m, head, day, quote: quoteOf(m, byId) }
   })
 })
 
@@ -191,8 +193,39 @@ function clock(iso) {
   return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
 }
 
+// A message still being sent has no server time yet; it belongs to today.
+const dayKey = (iso) => (iso ? new Date(iso) : new Date()).toDateString()
+
+// As Telegram writes it: "October 12", and with the year once it is not this one.
+function dayLabel(iso) {
+  const at = iso ? new Date(iso) : new Date()
+  const year = at.getFullYear() === new Date().getFullYear() ? undefined : 'numeric'
+  return at.toLocaleDateString('en', { month: 'long', day: 'numeric', year })
+}
+
+// The date of the day at the top of the feed floats over it while it scrolls,
+// once that day's own separator has gone above the edge, and fades when it stops.
+const floatingDay = ref('')
+const scrolling = ref(false)
+let idleTimer = null
+
+function updateFloatingDay() {
+  const top = feed.value.scrollTop
+  let label = ''
+  for (const el of feed.value.querySelectorAll('.day')) {
+    if (el.offsetTop >= top) break
+    label = el.textContent.trim()
+  }
+  floatingDay.value = label
+}
+
 function onScroll() {
-  if (feed.value && feed.value.scrollTop < 80) emit('load-older')
+  if (!feed.value) return
+  if (feed.value.scrollTop < 80) emit('load-older')
+  updateFloatingDay()
+  scrolling.value = true
+  clearTimeout(idleTimer)
+  idleTimer = setTimeout(() => (scrolling.value = false), 1000)
 }
 
 // The pane owns the scroll box, so it owns keeping the view at the bottom.
@@ -247,14 +280,15 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
       </template>
     </PaneHeader>
 
+    <div class="feed-box">
     <div ref="feed" class="feed" @scroll="onScroll">
       <p v-if="!messages.length" class="empty">
         No messages yet
       </p>
 
+      <template v-for="({ m, head, day, quote }, i) in rows" :key="m.id || m.client_msg_id">
+      <div v-if="day" class="day"><span class="day-pill">{{ day }}</span></div>
       <MessageBubble
-        v-for="({ m, head, quote }, i) in rows"
-        :key="m.id || m.client_msg_id"
         :own="m.author.id === me.id"
         :head="head"
         :avatar="!direct()"
@@ -271,7 +305,7 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
         @discard="emit('discard', m)"
         :tabindex="m.id ? 0 : undefined"
         class="message"
-        :class="{ lit: lit && lit === m.id, 'run-start': head && i > 0, tight: direct() }"
+        :class="{ lit: lit && lit === m.id, 'run-start': head && i > 0 && !day, tight: direct() }"
         :data-id="m.id"
         @contextmenu.prevent="openMenu(m, $event.clientX, $event.clientY)"
         @keydown.enter.self="openMenuAtBubble(m, $event)"
@@ -280,6 +314,11 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
         @picture="openPicture(m, $event)"
         @forwarded-author="m.forwarded.author.id === me.id || emit('person', m.forwarded.author.username)"
       ><MessageText :text="m.text" @invite="emit('invite', $event)" /></MessageBubble>
+      </template>
+    </div>
+    <div class="day floating" :class="{ shown: scrolling && floatingDay }" aria-hidden="true">
+      <span class="day-pill">{{ floatingDay }}</span>
+    </div>
     </div>
 
     <MediaViewer
@@ -348,6 +387,38 @@ defineExpose({ highlight, toBottom, keepPosition, distanceFromBottom: () => (fee
   /* spacing inside a run; the first bubble of a run adds its own margin on top */
   gap: 4px;
 }
+/* The feed scrolls inside this box, which holds the floating date still over it. */
+.feed-box {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+.day {
+  display: flex;
+  justify-content: center;
+  margin: 18px 0 6px;
+}
+.day-pill {
+  padding: 4px 12px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  font: var(--text-meta);
+}
+.day.floating {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  margin: 10px 0 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  z-index: 1;
+}
+.day.floating.shown { opacity: 1; }
 /* short conversations hug the bottom; long ones still scroll from the top */
 .feed > :first-child { margin-top: auto; }
 .message { border-radius: var(--radius-bubble); }
