@@ -32,7 +32,7 @@ const emit = defineEmits(['close', 'respond', 'person'])
         </button>
         <SgButton variant="primary" size="sm" @click="emit('respond', r.id, 'accept')">Accept</SgButton>
         <SgButton variant="outline" size="sm" @click="emit('respond', r.id, 'decline')">Decline</SgButton>
-        <p v-if="r.note" class="note" :title="r.note">{{ r.note }}</p>
+        <p v-if="r.note" class="note">{{ r.note }}</p>
       </div>
     </div>
 
@@ -44,7 +44,7 @@ const emit = defineEmits(['close', 'respond', 'person'])
           <SgAvatar :initials="initials(displayName(r.to.username))" :src="avatarUrl(r.to.username)" :size="32" />
           <span class="who-name">{{ displayName(r.to.username) }}</span>
         </button>
-        <p v-if="r.note" class="note" :title="r.note">{{ r.note }}</p>
+        <p v-if="r.note" class="note">{{ r.note }}</p>
       </div>
     </div>
   </aside>
@@ -104,18 +104,14 @@ const emit = defineEmits(['close', 'respond', 'person'])
   background: none;
   cursor: pointer;
 }
-/* The note takes a line of its own under the name, clear of the buttons, and
-   is read at a glance here; the whole of it is in the tooltip. */
+/* The note takes a line of its own under the name, clear of the buttons, and is
+   shown whole: a touch screen has no tooltip, and 200 characters fit in a few lines. */
 .note {
   flex-basis: 100%;
   margin: 0;
   padding-left: 44px;
   font: var(--text-meta);
   color: var(--text-muted);
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
   overflow-wrap: anywhere;
 }
 .who-name {
