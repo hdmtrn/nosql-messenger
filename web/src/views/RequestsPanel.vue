@@ -9,7 +9,7 @@ import { phone } from '../viewport'
 // friends event; the panel only shows them and passes the answers up.
 defineProps({
   incoming: { type: Array, default: () => [] }, // requests, as the server sends them
-  sent: { type: Array, default: () => [] }, // usernames
+  sent: { type: Array, default: () => [] }, // requests, as the server sends them
 })
 const emit = defineEmits(['close', 'respond', 'person'])
 </script>
@@ -32,17 +32,19 @@ const emit = defineEmits(['close', 'respond', 'person'])
         </button>
         <SgButton variant="primary" size="sm" @click="emit('respond', r.id, 'accept')">Accept</SgButton>
         <SgButton variant="outline" size="sm" @click="emit('respond', r.id, 'decline')">Decline</SgButton>
+        <p v-if="r.note" class="note" :title="r.note">{{ r.note }}</p>
       </div>
     </div>
 
     <span class="label section">Sent</span>
     <div class="card list">
       <p v-if="!sent.length" class="row none">None</p>
-      <div v-for="u in sent" :key="u" class="row">
-        <button type="button" class="who" @click="emit('person', u)">
-          <SgAvatar :initials="initials(displayName(u))" :src="avatarUrl(u)" :size="32" />
-          <span class="who-name">{{ displayName(u) }}</span>
+      <div v-for="r in sent" :key="r.id" class="row">
+        <button type="button" class="who" @click="emit('person', r.to.username)">
+          <SgAvatar :initials="initials(displayName(r.to.username))" :src="avatarUrl(r.to.username)" :size="32" />
+          <span class="who-name">{{ displayName(r.to.username) }}</span>
         </button>
+        <p v-if="r.note" class="note" :title="r.note">{{ r.note }}</p>
       </div>
     </div>
   </aside>
@@ -80,8 +82,10 @@ const emit = defineEmits(['close', 'respond', 'person'])
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 16px 0 24px;
-  height: 52px;
+  flex-wrap: wrap;
+  row-gap: 4px;
+  padding: 10px 16px 10px 24px;
+  min-height: 52px;
 }
 .none {
   margin: 0;
@@ -99,6 +103,20 @@ const emit = defineEmits(['close', 'respond', 'person'])
   border: none;
   background: none;
   cursor: pointer;
+}
+/* The note takes a line of its own under the name, clear of the buttons, and
+   is read at a glance here; the whole of it is in the tooltip. */
+.note {
+  flex-basis: 100%;
+  margin: 0;
+  padding-left: 44px;
+  font: var(--text-meta);
+  color: var(--text-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 .who-name {
   flex: 1;

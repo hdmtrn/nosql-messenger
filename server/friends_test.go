@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -93,7 +94,7 @@ func TestRemovingAFriendKeepsTheConversation(t *testing.T) {
 					t.Fatalf("creating %s: %v", u.Username, err)
 				}
 			}
-			req, err := friends.Send(ctx, mara, &User{ID: nik.UserID, Username: nik.Username})
+			req, err := friends.Send(ctx, mara, &User{ID: nik.UserID, Username: nik.Username}, "")
 			if err != nil {
 				t.Fatalf("sending: %v", err)
 			}
@@ -140,7 +141,7 @@ func TestRemovingAFriendKeepsTheConversation(t *testing.T) {
 				}
 			}
 
-			if _, err := friends.Send(ctx, nik, &User{ID: mara.UserID, Username: mara.Username}); err != nil {
+			if _, err := friends.Send(ctx, nik, &User{ID: mara.UserID, Username: mara.Username}, ""); err != nil {
 				t.Fatalf("asking again after removing: %v", err)
 			}
 		})
@@ -158,6 +159,49 @@ func removeFriend(s *server, by Session, id bson.ObjectID) (int, []byte) {
 func sendFriendRequest(s *server, from Session, username string) (int, []byte) {
 	body := bytes.NewReader([]byte(`{"username":"` + username + `"}`))
 	r := httptest.NewRequest(http.MethodPost, "/friends/requests", body)
+	w := httptest.NewRecorder()
+	s.handleSendFriendRequest(w, r, from)
+	return w.Code, w.Body.Bytes()
+}
+
+// The note travels with the request to the one asked, and one too long to read
+// at a glance is refused rather than cut, so the sender sees what was sent.
+func TestFriendRequestCarriesItsNote(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	users, friends := newUserStore(db), newFriendStore(db)
+	if err := friends.ensureIndexes(ctx); err != nil {
+		t.Fatalf("indexes: %v", err)
+	}
+	s := &server{users: users, friends: friends}
+
+	mara := Session{UserID: bson.NewObjectID(), Username: "mara"}
+	nik := Session{UserID: bson.NewObjectID(), Username: "nik"}
+	for _, u := range []Session{mara, nik} {
+		if err := users.Create(ctx, &User{ID: u.UserID, Username: u.Username, DisplayName: u.Username}); err != nil {
+			t.Fatalf("creating %s: %v", u.Username, err)
+		}
+	}
+
+	long := `{"username":"nik","note":"` + strings.Repeat("я", friendNoteMaxLen+1) + `"}`
+	if code, body := postFriendRequest(s, mara, long); code != http.StatusBadRequest {
+		t.Fatalf("a %d-character note gave %d, want 400: %s", friendNoteMaxLen+1, code, body)
+	}
+
+	if code, body := postFriendRequest(s, mara, `{"username":"nik","note":"  from the NoSQL course  "}`); code != http.StatusCreated {
+		t.Fatalf("sending gave %d, want 201: %s", code, body)
+	}
+	incoming, err := friends.Incoming(ctx, nik.UserID)
+	if err != nil {
+		t.Fatalf("incoming: %v", err)
+	}
+	if len(incoming) != 1 || incoming[0].Note != "from the NoSQL course" {
+		t.Fatalf("nik sees %+v, want one request with the trimmed note", incoming)
+	}
+}
+
+func postFriendRequest(s *server, from Session, body string) (int, []byte) {
+	r := httptest.NewRequest(http.MethodPost, "/friends/requests", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	s.handleSendFriendRequest(w, r, from)
 	return w.Code, w.Body.Bytes()

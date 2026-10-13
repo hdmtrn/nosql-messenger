@@ -79,14 +79,14 @@ func newAccountFixture(t *testing.T) accountFixture {
 		t.Fatalf("session: %v", err)
 	}
 
-	req, err := friends.Send(ctx, asSession(f.alice), &f.bob)
+	req, err := friends.Send(ctx, asSession(f.alice), &f.bob, "")
 	if err != nil {
 		t.Fatalf("friend request: %v", err)
 	}
 	if _, err := friends.Respond(ctx, req.ID, asSession(f.bob), friendAccepted); err != nil {
 		t.Fatalf("accepting: %v", err)
 	}
-	if _, err := friends.Send(ctx, asSession(carol), &f.alice); err != nil {
+	if _, err := friends.Send(ctx, asSession(carol), &f.alice, ""); err != nil {
 		t.Fatalf("friend request: %v", err)
 	}
 
