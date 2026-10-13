@@ -112,7 +112,11 @@ const isPending = (username) => props.sentTo.includes(username)
 
     <div class="top">
       <div v-if="!collapsed" class="search">
-        <span aria-hidden="true" class="search-icon">⌕</span>
+        <svg class="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" />
+          <path d="M16.5 16.5L21 21" />
+        </svg>
         <input
           v-model="query"
           placeholder="Search"
@@ -232,6 +236,8 @@ const isPending = (username) => props.sentTo.includes(username)
   display: flex;
   align-items: center;
   gap: 4px;
+  /* the same 16px as the rail's sides, so the field does not touch a highlighted row */
+  margin-bottom: 16px;
 }
 .search {
   flex: 1;
@@ -244,7 +250,7 @@ const isPending = (username) => props.sentTo.includes(username)
   background: var(--surface-panel);
   border-radius: var(--radius-pill);
 }
-.search-icon { color: var(--grey); }
+.search-icon { flex: none; color: var(--grey); }
 .search-input {
   flex: 1;
   min-width: 0;
@@ -300,7 +306,7 @@ const isPending = (username) => props.sentTo.includes(username)
   flex: none;
   display: flex;
   align-items: center;
-  height: 16px;
+  height: 24px;
   padding: 0 8px;
 }
 .divider {
