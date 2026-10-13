@@ -7,7 +7,7 @@ defineProps({ name: { type: String, required: true }, error: String })
 const emit = defineEmits(['send', 'close'])
 
 // The server's limit, counted the way it counts: by characters, after trimming.
-const MAX = 200
+const limit = 200
 const note = ref('')
 const length = computed(() => [...note.value.trim()].length)
 </script>
@@ -19,10 +19,10 @@ const length = computed(() => [...note.value.trim()].length)
       <label class="field">
         <span class="label">Message (optional)</span>
         <textarea v-model="note" class="note" rows="3" placeholder="Say who you are or where you met" />
-        <span class="meta" :class="{ over: length > MAX }">{{ error || `${length}/${MAX}` }}</span>
+        <span class="meta" :class="{ over: length > limit }">{{ error || `${length}/${limit}` }}</span>
       </label>
       <div class="dialog-actions">
-        <SgButton variant="primary" :disabled="length > MAX" @click="emit('send', note.trim())">Send request</SgButton>
+        <SgButton variant="primary" :disabled="length > limit" @click="emit('send', note.trim())">Send request</SgButton>
         <SgButton variant="outline" @click="emit('close')">Cancel</SgButton>
       </div>
     </SgDialog>
