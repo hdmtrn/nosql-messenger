@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 	"go.mongodb.org/mongo-driver/v2/bson"
 )
@@ -113,6 +114,16 @@ type bus struct {
 
 	// A publish failed and no node has been told yet.
 	lost atomic.Bool
+
+	// For the metrics scrape. A publish counts once, on the node that sent it;
+	// received counts every channel frame that came back from Redis here.
+	published     atomic.Uint64
+	publishFailed atomic.Uint64
+	received      atomic.Uint64
+	gaps          atomic.Uint64
+	// From a message's created_at to its arrival here; nil in buses built as
+	// literals by tests, which never run dispatch.
+	deliveryLatency prometheus.Histogram
 }
 
 func newBus(ctx context.Context, hub *Hub) (*bus, error) {
@@ -157,6 +168,8 @@ func newBusWith(ctx context.Context, hub *Hub, opts *redis.Options) (*bus, error
 		hub:     hub,
 		pending: make(map[string]bool),
 		wake:    make(chan struct{}, 1),
+
+		deliveryLatency: newDeliveryLatency(),
 	}, nil
 }
 
@@ -174,10 +187,12 @@ func (b *bus) publish(topic string, payload any) {
 	ctx, cancel := context.WithTimeout(context.Background(), publishTimeout)
 	defer cancel()
 	if err := b.rdb.Publish(ctx, topic, payload).Err(); err != nil {
+		b.publishFailed.Add(1)
 		b.lost.Store(true)
 		log.Printf("bus: publishing to %s: %v", topic, err)
 		return
 	}
+	b.published.Add(1)
 	b.announceIfLost(ctx)
 }
 
@@ -333,6 +348,8 @@ func (b *bus) Run(ctx context.Context) {
 func (b *bus) dispatch(m *redis.Message) {
 	switch {
 	case strings.HasPrefix(m.Channel, channelTopic):
+		b.received.Add(1)
+		b.observeDelivery(m.Payload)
 		b.hub.Publish(strings.TrimPrefix(m.Channel, channelTopic), []byte(m.Payload))
 	case m.Channel == sessionTopic:
 		if b.onSessionRevoked != nil {
@@ -352,6 +369,22 @@ func (b *bus) dispatch(m *redis.Message) {
 			b.hub.Unsubscribe(c.UserID, c.ChID)
 		}
 	}
+}
+
+// observeDelivery measures a message from the moment the server accepted it,
+// before the MongoDB write, to its arrival on this node. Every other frame on a
+// channel topic carries a type and is skipped. The clocks are two nodes'
+// clocks: on Fargate they agree to well under a millisecond, in compose they
+// need not, so a negative difference counts as zero.
+func (b *bus) observeDelivery(payload string) {
+	var f struct {
+		Type      string    `json:"type"`
+		CreatedAt time.Time `json:"created_at"`
+	}
+	if err := json.Unmarshal([]byte(payload), &f); err != nil || f.Type != "" || f.CreatedAt.IsZero() {
+		return
+	}
+	b.deliveryLatency.Observe(max(time.Since(f.CreatedAt).Seconds(), 0))
 }
 
 // confirmed counts a subscription off. The permanent topics are subscribed once,
@@ -381,6 +414,7 @@ func (b *bus) confirmed(m *redis.Subscription) {
 // gap hands a possible loss to onGap, off Run's goroutine: rebuilding reads
 // MongoDB, and Run must keep reading Redis meanwhile.
 func (b *bus) gap() {
+	b.gaps.Add(1)
 	if b.onGap == nil {
 		b.hub.SendAll(resyncFrame)
 		return

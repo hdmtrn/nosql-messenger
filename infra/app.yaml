@@ -37,6 +37,14 @@ Resources:
       LogGroupName: !Sub /ecs/${AWS::StackName}
       RetentionInDays: 14
 
+  # EMF events from the metrics collector. CloudWatch turns them into metrics
+  # on arrival, and the metrics outlive the events, so a day is enough.
+  MetricsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${AWS::StackName}-metrics
+      RetentionInDays: 1
+
   LoadBalancerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -244,6 +252,9 @@ Resources:
         OperatingSystemFamily: LINUX
       ExecutionRoleArn: !ImportValue
         Fn::Sub: ${BootstrapStackName}-TaskExecutionRoleArn
+      # For the metrics collector; the app itself calls no AWS API.
+      TaskRoleArn: !ImportValue
+        Fn::Sub: ${BootstrapStackName}-AppTaskRoleArn
       ContainerDefinitions:
         - Name: app
           Image: !Sub
@@ -288,6 +299,58 @@ Resources:
               awslogs-group: !Ref LogGroup
               awslogs-region: !Ref AWS::Region
               awslogs-stream-prefix: app
+        # Scrapes the app's /metrics on 127.0.0.1:9090, which it can reach
+        # because the task's containers share one network namespace, and writes
+        # them to CloudWatch as EMF. Only messenger_* goes out: every metric is
+        # billed, and the Go runtime ones alone are dozens. Not essential: the
+        # app keeps serving if the collector dies.
+        - Name: metrics
+          Image: public.ecr.aws/aws-observability/aws-otel-collector:v0.50.0
+          Essential: false
+          MemoryReservation: 64
+          Command: ["--config=env:OTEL_CONFIG"]
+          Environment:
+            - Name: OTEL_CONFIG
+              Value: !Sub |
+                receivers:
+                  prometheus:
+                    config:
+                      global:
+                        scrape_interval: 60s
+                      scrape_configs:
+                        - job_name: messenger
+                          # The native histogram travels only over protobuf.
+                          scrape_protocols: [PrometheusProto, PrometheusText0.0.4]
+                          scrape_native_histograms: true
+                          static_configs:
+                            - targets: ["127.0.0.1:9090"]
+                processors:
+                  filter:
+                    metrics:
+                      include:
+                        match_type: regexp
+                        metric_names: ["^messenger_.*"]
+                  # Prometheus counts from the process start; CloudWatch wants
+                  # what happened in the minute.
+                  cumulative_to_delta: {}
+                exporters:
+                  awsemf:
+                    namespace: messenger
+                    log_group_name: ${MetricsLogGroup}
+                    log_stream_name: metrics
+                    dimension_rollup_option: NoDimensionRollup
+                service:
+                  pipelines:
+                    metrics:
+                      receivers: [prometheus]
+                      processors: [filter, cumulative_to_delta]
+                      exporters: [awsemf]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: metrics
 
   AppService:
     Type: AWS::ECS::Service

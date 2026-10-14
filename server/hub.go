@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -67,6 +68,10 @@ type Hub struct {
 	// Set by CloseAll when the process is going away. A handler that upgraded
 	// just before it would otherwise connect a socket nobody closes.
 	closed bool
+
+	// Moved under mu but read by the metrics scrape without it.
+	framesSent  atomic.Uint64
+	slowDropped atomic.Uint64
 }
 
 func NewHub() *Hub {
@@ -114,6 +119,17 @@ func (h *Hub) Subscribers() []*Subscriber {
 		}
 	}
 	return all
+}
+
+// Counts reports how many sockets and how many distinct users this node holds.
+func (h *Hub) Counts() (sockets, users int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	for _, subs := range h.byUser {
+		sockets += len(subs)
+	}
+	return sockets, len(h.byUser)
 }
 
 // ChannelsOf copies the socket's channels, which is who has to hear that its
@@ -286,7 +302,9 @@ func (h *Hub) deliver(c *Subscriber, msg []byte) {
 	}
 	select {
 	case c.send <- msg:
+		h.framesSent.Add(1)
 	default:
+		h.slowDropped.Add(1)
 		h.drop(c)
 	}
 }

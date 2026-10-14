@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -303,5 +305,62 @@ func TestBurstOfConnectionsLosesNoSubscription(t *testing.T) {
 				len(missing), len(all), missing[0])
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// One publish counts once where it was sent and once where it arrived.
+func TestBusCountsPublishesAndArrivals(t *testing.T) {
+	_, busA := testInstance(t)
+	hubB, busB := testInstance(t)
+	chID := "metrics-" + bson.NewObjectID().Hex()
+
+	reader := newSubscriber("u1")
+	hubB.Connect(reader, []string{chID})
+	waitForSubscribers(t, busB, channelTopic+chID, 1)
+
+	busA.Publish(chID, []byte("{}"))
+	select {
+	case <-reader.send:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the message never crossed to the second instance")
+	}
+
+	if body := scrape(t, metricsHandler(newMetrics(nil, busA, nil))); !strings.Contains(body, "\nmessenger_bus_published_total 1\n") {
+		t.Fatal("the sending node did not count its publish")
+	}
+	if body := scrape(t, metricsHandler(newMetrics(nil, busB, nil))); !strings.Contains(body, "\nmessenger_bus_received_total 1\n") {
+		t.Fatal("the receiving node did not count the arrival")
+	}
+}
+
+// A message is timed on arrival; a typing frame on the same channel is not.
+func TestOnlyMessagesAreTimedOnArrival(t *testing.T) {
+	_, busA := testInstance(t)
+	hubB, busB := testInstance(t)
+	chID := "latency-" + bson.NewObjectID().Hex()
+
+	reader := newSubscriber("u1")
+	hubB.Connect(reader, []string{chID})
+	waitForSubscribers(t, busB, channelTopic+chID, 1)
+
+	msg, _ := json.Marshal(Message{Text: "hi", CreatedAt: time.Now()})
+	busA.Publish(chID, []byte(`{"type":"typing","created_at":"2020-01-01T00:00:00Z"}`))
+	busA.Publish(chID, msg)
+	for range 2 {
+		select {
+		case <-reader.send:
+		case <-time.After(2 * time.Second):
+			t.Fatal("a frame never crossed to the second instance")
+		}
+	}
+
+	body := scrape(t, metricsHandler(newMetrics(nil, busB, nil)))
+	if !strings.Contains(body, "\nmessenger_delivery_latency_seconds_count 1\n") {
+		t.Fatal("not exactly one frame was timed")
+	}
+	// Two instances on one machine share a clock, so the message is well under
+	// a second; the typing frame, had it been timed, would be years.
+	if !strings.Contains(body, "\nmessenger_delivery_latency_seconds_bucket{le=\"1\"} 1\n") {
+		t.Fatal("the timed frame took over a second")
 	}
 }
