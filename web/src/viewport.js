@@ -15,6 +15,11 @@ query.addEventListener('change', (e) => { phone.value = e.matches })
 // Screens slide in this long, Telegram's --layer-transition.
 export const SLIDE_MS = 300
 
+// Resolves once a screen opened now has slid in. What a screen loads is put in
+// after that: content redrawn inside a moving layer drops its frames on a phone,
+// and the screen seems to vanish and jump back halfway.
+export const afterSlide = () => new Promise((done) => setTimeout(done, phone.value ? SLIDE_MS : 0))
+
 // iOS Safari does not shrink the page for the keyboard: it pans the page up to
 // show the field, and the chat's header leaves the screen. A phone's screen is
 // pinned to the part above the keyboard instead, as Telegram's windowSize.ts

@@ -19,6 +19,8 @@ const props = defineProps({
   // username whose page is open beside the feed
   person: { type: String, default: '' },
   infoOpen: Boolean,
+  // The first page of a chat not seen yet this session is on its way.
+  loading: Boolean,
   forwardTargets: { type: Array, default: () => [] },
   // { kind: 'reply' | 'forward', message } waiting above the field until Send.
   pending: { type: Object, default: null },
@@ -413,7 +415,7 @@ defineExpose({ highlight, toBottom, follow, keepPosition, distanceFromBottom })
     <div class="feed-box">
     <div ref="feed" class="feed" :class="{ 'with-bottom-snap': snapped }" @scroll="onScroll" @wheel.passive="onHand" @touchmove.passive="onHand"
          @pointerdown="$event.pointerType === 'mouse' && onHand()" @keydown="onHand">
-      <p v-if="!messages.length" class="empty">
+      <p v-if="!messages.length && !loading" class="empty">
         No messages yet
       </p>
 

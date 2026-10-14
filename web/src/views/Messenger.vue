@@ -16,7 +16,7 @@ import InfoPanel from './InfoPanel.vue'
 import Profile from './Profile.vue'
 import RequestsPanel from './RequestsPanel.vue'
 import UserPanel from './UserPanel.vue'
-import { SLIDE_MS, phone } from '../viewport'
+import { SLIDE_MS, afterSlide, phone } from '../viewport'
 
 const props = defineProps({ me: { type: Object, required: true } })
 const emit = defineEmits(['log-out', 'profile-changed', 'session-ended'])
@@ -254,16 +254,34 @@ async function selectChannel(id) {
   showProfile.value = false
   // A chat picked from a panel replaces that panel on a phone, as Telegram's Message button does.
   if (phone.value) closeSides()
+  const sliding = phone.value && atList.value
   atList.value = false
   activeId.value = id
   hasOlder.value = true
-  const page = (await api.messages({ channel_id: id })).reverse()
+  // The chat comes in with what was last seen of it, as Telegram draws from its
+  // cache, and the server's answer goes in once the slide is over.
+  messages.value = seen.get(id) || []
+  loading.value = !seen.has(id)
+  conversation.value?.toBottom()
+  const [page] = await Promise.all([
+    api.messages({ channel_id: id }).then((list) => list.reverse()),
+    sliding ? afterSlide() : null,
+  ])
   // Clicked elsewhere while this was loading: the answer belongs to another chat.
   if (activeId.value !== id) return
-  messages.value = page
+  // what was sent meanwhile is still on its way, and stays
+  const going = messages.value.filter((m) => m.status === 'sending' || m.status === 'failed')
+  messages.value = [...page, ...going]
+  loading.value = false
   conversation.value?.toBottom()
   markRead()
 }
+
+// What was last shown of each chat this session, to open it with; a chat not in
+// it opens blank rather than claiming to have no messages.
+const seen = new Map()
+const loading = ref(false)
+watch(messages, (list) => { if (activeId.value) seen.set(activeId.value, list) })
 
 async function runDialog(action) {
   dialogError.value = ''
@@ -981,6 +999,7 @@ onUnmounted(() => {
         :channel="active"
         :title="activeTitle"
         :messages="messages"
+        :loading="loading"
         :person="person"
         :info-open="showInfo"
         :back-count="otherUnread"
@@ -1213,6 +1232,10 @@ onUnmounted(() => {
   position: absolute;
   inset: 0;
   transition: transform var(--slide);
+  /* Kept on layers of their own, not promoted when a slide starts and dropped
+     when it ends: on iOS that hand-over shows as a blank frame at either end. */
+  will-change: transform;
+  backface-visibility: hidden;
 }
 .screen--phone .stage {
   gap: 0;
@@ -1228,7 +1251,10 @@ onUnmounted(() => {
 .screen--phone .empty { display: none; }
 /* A panel over the chat pushes the chat a fifth of the way out, as Telegram's
    right column moves the middle one. */
-.screen--phone .stage > .conversation { transition: transform var(--slide); }
+.screen--phone .stage > .conversation {
+  transition: transform var(--slide);
+  will-change: transform;
+}
 .screen--covered .stage > .conversation { transform: translateX(-20%); }
 .screen--phone .side {
   padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) 0 max(8px, env(safe-area-inset-left));
