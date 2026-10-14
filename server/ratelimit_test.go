@@ -509,3 +509,20 @@ func TestFriendRequestsStopAtTheLimits(t *testing.T) {
 		t.Fatalf("nik's request got %d %s, want 201", code, body)
 	}
 }
+
+// A refusal is counted under the name of the limit that refused it.
+func TestRefusalsAreCountedByLimit(t *testing.T) {
+	l := testLimiter(t)
+	fill(t, l, limitMessages, "ann")
+
+	rec := httptest.NewRecorder()
+	if l.allow(rec, httptest.NewRequest(http.MethodPost, "/", nil), limitMessages, "ann") {
+		t.Fatal("a full limit let the request through")
+	}
+
+	rec = httptest.NewRecorder()
+	metricsHandler(newMetrics(nil, nil, l)).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if want := `messenger_rate_limited_total{limit="messages"} 1`; !strings.Contains(rec.Body.String(), want) {
+		t.Fatalf("metrics lack %s", want)
+	}
+}

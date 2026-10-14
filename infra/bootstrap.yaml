@@ -141,6 +141,35 @@ Resources:
                 Action: ssm:GetParameters
                 Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${ParameterPrefix}/*
 
+  # Used by the code inside the app task, which is only the metrics collector:
+  # it writes metrics as EMF log events to one log group of the app stack, and
+  # CloudWatch extracts them. Nothing else in the task calls AWS.
+  AppTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+            # Only tasks of this account can take it.
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: write-metrics
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:DescribeLogStreams
+                  - logs:PutLogEvents
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/ecs/${AppStackName}-metrics:*
+
   # What CloudFormation acts as when deploy.sh updates the application stack.
   # Only the services that stack is made of: a template, whoever wrote it,
   # reaches nothing else in the account and creates no IAM.
@@ -237,17 +266,21 @@ Resources:
                   # The cluster handler reads key metadata; no use of a key.
                   - kms:DescribeKey
                 Resource: "*"
-              # The one role the stack hands out, and only to ECS tasks.
+              # The two roles the stack hands out, and only to ECS tasks.
               - Effect: Allow
                 Action: iam:PassRole
-                Resource: !GetAtt TaskExecutionRole.Arn
+                Resource:
+                  - !GetAtt TaskExecutionRole.Arn
+                  - !GetAtt AppTaskRole.Arn
                 Condition:
                   StringEquals:
                     iam:PassedToService: ecs-tasks.amazonaws.com
-              # The task definition handler reads that role before passing it.
+              # The task definition handler reads those roles before passing them.
               - Effect: Allow
                 Action: iam:GetRole
-                Resource: !GetAtt TaskExecutionRole.Arn
+                Resource:
+                  - !GetAtt TaskExecutionRole.Arn
+                  - !GetAtt AppTaskRole.Arn
               - Effect: Allow
                 Action: iam:CreateServiceLinkedRole
                 Resource: "*"
@@ -273,6 +306,10 @@ Outputs:
     Value: !GetAtt TaskExecutionRole.Arn
     Export:
       Name: !Sub ${AWS::StackName}-TaskExecutionRoleArn
+  AppTaskRoleArn:
+    Value: !GetAtt AppTaskRole.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-AppTaskRoleArn
   PushRoleArn:
     Value: !GetAtt PushRole.Arn
   CfnExecutionRoleArn:

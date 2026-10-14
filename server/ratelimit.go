@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -56,6 +57,10 @@ type limiter struct {
 	trustProxy bool
 
 	lastLog atomic.Int64
+
+	// Refusals by limit name, each an *atomic.Uint64, for the metrics scrape.
+	// A sync.Map because its zero value works in the literals tests build.
+	refused sync.Map
 }
 
 func newLimiter(trustProxy bool) *limiter {
@@ -126,6 +131,8 @@ func (l *limiter) clear(ctx context.Context, lim rateLimit, key string) {
 func (l *limiter) allow(w http.ResponseWriter, r *http.Request, lim rateLimit, key string) bool {
 	wait, ok := l.hit(r.Context(), lim, key)
 	if !ok {
+		n, _ := l.refused.LoadOrStore(lim.name, new(atomic.Uint64))
+		n.(*atomic.Uint64).Add(1)
 		writeTooMany(w, wait)
 	}
 	return ok

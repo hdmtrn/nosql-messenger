@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// internalAddr serves what must never face the internet: profiles and readiness
-// now, metrics later. Loopback keeps it inside the container, or inside the ECS task, where
+// internalAddr serves what must never face the internet: profiles, readiness
+// and metrics. Loopback keeps it inside the container, or inside the ECS task, where
 // a sidecar shares the network namespace and still reaches it; compose
 // publishes nothing for it.
 const internalAddr = "127.0.0.1:9090"
@@ -18,6 +18,9 @@ const internalAddr = "127.0.0.1:9090"
 func (s *server) internalRoutes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
+	// The bus counts only when it is the Redis one; tests publish through the hub.
+	b, _ := s.bus.(*bus)
+	mux.Handle("GET /metrics", metricsHandler(newMetrics(s.hub, b, s.limits)))
 	mux.HandleFunc("/debug/pprof/", pprof.Index)
 	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
 	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
