@@ -18,3 +18,6 @@ messenger
 
 # The thesis text is not code.
 thesis/
+
+# Passwords of the test accounts tools/chatload makes.
+chatload-accounts*.json
