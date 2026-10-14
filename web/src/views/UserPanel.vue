@@ -8,7 +8,7 @@ import SgButton from '../components/SgButton.vue'
 import RemoveFriendDialog from '../components/RemoveFriendDialog.vue'
 import MediaViewer from '../components/MediaViewer.vue'
 import { DELETED_NAME, avatarUrl, channelAvatarUrl, initials } from '../naming'
-import { phone } from '../viewport'
+import { afterSlide, phone } from '../viewport'
 
 const props = defineProps({
   username: { type: String, required: true },
@@ -37,6 +37,8 @@ async function load() {
   const [who, shared] = await Promise.all([
     api.user(props.username).catch(() => null),
     api.channelsInCommon(props.username).catch(() => []),
+    // put in once the panel has slid in, not while it moves
+    afterSlide(),
   ])
   if (mine !== asked) return
   person.value = who

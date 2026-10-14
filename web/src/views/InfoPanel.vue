@@ -11,7 +11,7 @@ import RemoveFriendDialog from '../components/RemoveFriendDialog.vue'
 import { avatarUrl, channelAvatarUrl, displayName, initials, otherMember } from '../naming'
 import { toJpeg } from '../images'
 import { inviteLink } from '../pending'
-import { phone } from '../viewport'
+import { afterSlide, phone } from '../viewport'
 
 const props = defineProps({
   me: { type: Object, required: true },
@@ -51,6 +51,8 @@ async function load() {
     const [who, shared] = await Promise.all([
       api.user(props.title).catch(() => null),
       api.channelsInCommon(props.title).catch(() => []),
+      // put in once the panel has slid in, not while it moves
+      afterSlide(),
     ])
     if (mine !== asked) return
     person.value = who
@@ -59,6 +61,7 @@ async function load() {
     const [full, link] = await Promise.all([
       api.channel(props.channel.id).catch(() => null),
       api.invite(props.channel.id).catch(() => null),
+      afterSlide(),
     ])
     if (mine !== asked) return
     members.value = full ? full.members || [] : []
